@@ -3,11 +3,13 @@ package v1_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -30,12 +32,11 @@ type pfAnswer struct {
 }
 
 var (
-	pfPriceSeam = readset.NewSeam[readset.PairKey, pfAnswer]("pf_prices", func(a pfAnswer) pfAnswer {
+	pfPriceSeam = readset.NewPairSeam[pfAnswer]("pf_prices", func(a pfAnswer) pfAnswer {
 		a.srcs = slices.Clone(a.srcs)
 		return a
 	})
 	pfTriSeam = readset.NewSeam[readset.PairKey, v1.CachedVWAP]("pf_triangulated", rsCloneVWAP)
-	pfFrzSeam = readset.NewSeam[readset.PairKey, struct{}]("pf_freeze", nil)
 )
 
 // pfFault is how every prefetch of a server misbehaves.
@@ -45,19 +46,25 @@ const (
 	pfOK      pfFault = iota
 	pfFail            // every prefetch read fails
 	pfPanic           // the prefetch panics
-	pfOverrun         // the prefetch outlives the planner's budget, ignoring its context
+	pfOverrun         // the prefetch outlives the planner's budget, waiting on its context
 	pfCancel          // the client goes away during the prefetch
 )
 
-// pfStats records what a decorated server's reads did: the reads rows made with a memo on ctx (fallthrough or expired)
-// and the keys a prefetch left unfilled.
+// pfStats records what a decorated server's reads did: the reads rows made with a memo on ctx (fallthrough or expired),
+// the keys a prefetch left unfilled and the reads each prefetch was asked for.
 type pfStats struct {
 	mu       sync.Mutex
 	fault    pfFault
-	release  chan struct{}
 	cancel   context.CancelFunc
 	fell     []pfRead
 	unfilled map[pfRead]bool
+	asked    [][]readset.PairRead
+	// overrun receives an overrunning fill's context once the planner has stopped waiting, and is closed when that
+	// context is done.
+	overrun     chan context.Context
+	overrunDone chan struct{}
+	// afterPrices runs once a price prefetch has filled.
+	afterPrices func()
 }
 
 type pfRead struct {
@@ -80,13 +87,19 @@ func (st *pfStats) left(seam string, k readset.PairKey) {
 	st.unfilled[pfRead{seam, k}] = true
 }
 
-// enter applies the fault; false means the prefetch reads nothing.
-func (st *pfStats) enter() bool {
+// enter records the ask and applies the fault; false means the prefetch reads nothing.
+func (st *pfStats) enter(ctx context.Context, reads []readset.PairRead) bool {
+	st.mu.Lock()
+	st.asked = append(st.asked, reads)
+	st.mu.Unlock()
 	switch st.fault {
 	case pfPanic:
 		panic("prefetch exploded")
 	case pfOverrun:
-		<-st.release
+		st.overrun <- ctx
+		<-ctx.Done()
+		close(st.overrunDone)
+		return false
 	case pfCancel:
 		st.cancel()
 		return false
@@ -113,8 +126,11 @@ func (p pfPrices) LatestPrice(ctx context.Context, a, q canonical.Asset) (v1.Pri
 // PrefetchLatestPrices memoises only a definite answer, as the store decorator below the gates does: a withheld verdict
 // depends on the row's own include_thin admission, and a failed read is no answer.
 func (p pfPrices) PrefetchLatestPrices(ctx context.Context, reads []readset.PairRead) {
-	if !p.st.enter() {
+	if !p.st.enter(ctx, reads) {
 		return
+	}
+	if p.st.afterPrices != nil {
+		defer p.st.afterPrices()
 	}
 	for _, r := range reads {
 		snap, srcs, stale, err := p.PriceReader.LatestPrice(ctx, r.Base, r.Quote)
@@ -141,7 +157,7 @@ func (l pfTri) LookupTriangulatedVWAP(ctx context.Context, base, quote canonical
 }
 
 func (l pfTri) PrefetchTriangulatedVWAP(ctx context.Context, reads []readset.PairRead) {
-	if !l.st.enter() {
+	if l.st.fault == pfOverrun || !l.st.enter(ctx, reads) {
 		return
 	}
 	for _, r := range reads {
@@ -161,37 +177,7 @@ func (l pfTriMeta) LookupCompositeMeta(ctx context.Context, base, quote canonica
 	return l.next.(v1.CompositeMetaLooker).LookupCompositeMeta(ctx, base, quote, window)
 }
 
-type pfFrz struct {
-	next v1.FrozenLooker
-	st   *pfStats
-}
-
-func (l pfFrz) FrozenForPair(ctx context.Context, asset, quote canonical.Asset) (bool, error) {
-	k := readset.Pair(asset, quote, 0)
-	_, frozen, err := pfFrzSeam.Read(ctx, k, func(ctx context.Context) (struct{}, bool, error) {
-		l.st.rowRead(ctx, "freeze", k)
-		frozen, err := l.next.FrozenForPair(ctx, asset, quote)
-		return struct{}{}, frozen, err
-	})
-	return frozen, err
-}
-
-func (l pfFrz) PrefetchFrozen(ctx context.Context, reads []readset.PairRead) {
-	if !l.st.enter() {
-		return
-	}
-	for _, r := range reads {
-		frozen, err := l.next.FrozenForPair(ctx, r.Base, r.Quote)
-		if l.st.fault == pfFail || err != nil {
-			pfFrzSeam.Failed()
-			l.st.left("freeze", r.Key())
-			continue
-		}
-		pfFrzSeam.Fill(ctx, r.Key(), struct{}{}, frozen)
-	}
-}
-
-// pfOptions is spec's wiring with every seam it has decorated with a prefetch.
+// pfOptions is spec's wiring with its price and triangulated seams decorated with a prefetch.
 func pfOptions(t *testing.T, spec eqSpec, st *pfStats) v1.Options {
 	t.Helper()
 	o := spec.build(t)
@@ -203,14 +189,27 @@ func pfOptions(t *testing.T, spec eqSpec, st *pfStats) v1.Options {
 	} else if o.Triangulated != nil {
 		o.Triangulated = pfTri{o.Triangulated, st}
 	}
-	if o.Freeze != nil {
-		o.Freeze = pfFrz{o.Freeze, st}
-	}
 	return o
 }
 
 func newPfStats(fault pfFault) *pfStats {
-	return &pfStats{fault: fault, release: make(chan struct{}), unfilled: map[pfRead]bool{}}
+	return &pfStats{fault: fault, unfilled: map[pfRead]bool{}, overrun: make(chan context.Context, 1), overrunDone: make(chan struct{})}
+}
+
+// pfPadded is req with unpriced ids appended up to the planner's 8-id floor, so the planner runs on every fixture.
+func pfPadded(req eqBatchRequest) eqBatchRequest {
+	distinct := map[string]bool{}
+	for _, id := range req.ids {
+		distinct[id] = true
+	}
+	ids := append([]string{}, req.ids...)
+	for i := 0; len(distinct) < 8; i++ {
+		id := eqID(fmt.Sprintf("PAD%d", i))
+		distinct[id] = true
+		ids = append(ids, id)
+	}
+	req.ids = ids
+	return req
 }
 
 func pfHits(seam string) float64 {
@@ -243,7 +242,7 @@ func pfInScope(t *testing.T, req eqBatchRequest, r pfRead) bool {
 }
 
 func TestPriceBatchPrefetch_GoldenIsByteIdenticalAndAnsweredFromTheMemo(t *testing.T) {
-	seams := []string{"pf_prices", "pf_triangulated", "pf_freeze"}
+	seams := []string{"pf_prices", "pf_triangulated"}
 	before := map[string]float64{}
 	for _, s := range seams {
 		before[s] = pfHits(s)
@@ -253,6 +252,7 @@ func TestPriceBatchPrefetch_GoldenIsByteIdenticalAndAnsweredFromTheMemo(t *testi
 			st := newPfStats(pfOK)
 			plain, on := v1.New(spec.build(t)).Handler(), v1.New(pfOptions(t, spec, st)).Handler()
 			for _, req := range eqGoldenRequests(spec) {
+				req = pfPadded(req)
 				st.fell = nil
 				if m := batchEnvelopeMismatch(t, plain, on, req); m != "" {
 					t.Errorf("%+v: planner on differs: %s", req, m)
@@ -276,7 +276,7 @@ func TestPriceBatchPrefetch_GoldenIsByteIdenticalAndAnsweredFromTheMemo(t *testi
 func TestPriceBatchPrefetch_RowEqualsSinglePrice(t *testing.T) {
 	eqRowsEqualSingles(t, func(t *testing.T, spec eqSpec) http.Handler {
 		return v1.New(pfOptions(t, spec, newPfStats(pfOK))).Handler()
-	})
+	}, func(ids []string) []string { return pfPadded(eqBatchRequest{ids: ids}).ids })
 }
 
 func pfUniverse(t *testing.T) eqSpec {
@@ -301,11 +301,9 @@ func TestPriceBatchPrefetch_FailingPrefetchNeverFailsTheRequest(t *testing.T) {
 	}{
 		{"every read fails", pfFail, reqs},
 		{"panic", pfPanic, reqs},
-		{"overruns its budget", pfOverrun, reqs[:1]},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := newPfStats(tc.fault)
-			defer close(st.release)
 			on := v1.New(pfOptions(t, spec, st)).Handler()
 			hits := pfHits("pf_prices")
 			for _, req := range tc.reqs {
@@ -331,5 +329,142 @@ func TestPriceBatchPrefetch_ClientGoneDuringPrefetchWritesNothing(t *testing.T) 
 	on.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil).WithContext(ctx))
 	if rec.Body.Len() != 0 {
 		t.Errorf("an aborted batch wrote %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// The budget stops the planner's wait, never the fill: a statement cancelled in flight costs pgx its connection. The
+// fill's context ends at readset.MaxAge.
+func TestPriceBatchPrefetch_BudgetStopsTheWaitNotTheFill(t *testing.T) {
+	spec := pfUniverse(t)
+	st := newPfStats(pfOverrun)
+	plain, on := v1.New(spec.build(t)).Handler(), v1.New(pfOptions(t, spec, st)).Handler()
+	start := time.Now()
+	if m := batchEnvelopeMismatch(t, plain, on, eqGoldenRequests(spec)[0]); m != "" {
+		t.Errorf("differs from no planner: %s", m)
+	}
+	if took := time.Since(start); took >= readset.MaxAge {
+		t.Fatalf("the request waited %v for a fill", took)
+	}
+	fctx := <-st.overrun
+	if err := fctx.Err(); err != nil {
+		t.Fatalf("the fill's context ended with the budget: %v", err)
+	}
+	select {
+	case <-st.overrunDone:
+	case <-time.After(2 * readset.MaxAge):
+		t.Fatal("the fill's context outlived readset.MaxAge")
+	}
+	if took := time.Since(start); !errors.Is(fctx.Err(), context.DeadlineExceeded) || took < readset.MaxAge {
+		t.Errorf("fill context ended after %v with %v, want readset.MaxAge's deadline", took, fctx.Err())
+	}
+}
+
+var pfFrzSeam = readset.NewSeam[readset.PairKey, struct{}]("pf_freeze", nil)
+
+// pfLateFreeze is a freeze looker that could prefetch, whose FRZH/fiat:USD marker is set only once armed.
+type pfLateFreeze struct {
+	next  v1.FrozenLooker
+	armed *atomic.Bool
+	asked *atomic.Int32
+}
+
+func (l pfLateFreeze) frozen(ctx context.Context, asset, quote canonical.Asset) (bool, error) {
+	if asset.String() == eqID("FRZH") && !l.armed.Load() {
+		return false, nil
+	}
+	return l.next.FrozenForPair(ctx, asset, quote)
+}
+
+func (l pfLateFreeze) FrozenForPair(ctx context.Context, asset, quote canonical.Asset) (bool, error) {
+	_, frozen, err := pfFrzSeam.Read(ctx, readset.Pair(asset, quote, 0), func(ctx context.Context) (struct{}, bool, error) {
+		f, err := l.frozen(ctx, asset, quote)
+		return struct{}{}, f, err
+	})
+	return frozen, err
+}
+
+func (l pfLateFreeze) PrefetchFrozen(ctx context.Context, reads []readset.PairRead) {
+	defer l.asked.Add(1) // counted once filled, so arming waits for a prefetch that ran
+	for _, r := range reads {
+		if f, err := l.frozen(ctx, r.Base, r.Quote); err == nil {
+			pfFrzSeam.Fill(ctx, r.Key(), struct{}{}, f)
+		}
+	}
+}
+
+// A row's freeze verdict is read after the price it judges: a marker set after the planner prefetched the price, but
+// before the row's freeze read, holds the row, while the price still comes from the memo.
+func TestPriceBatchPrefetch_FreezeIsReadAfterThePrice(t *testing.T) {
+	spec := pfUniverse(t)
+	st := newPfStats(pfOK)
+	o := pfOptions(t, spec, st)
+	var armed atomic.Bool
+	var asked atomic.Int32
+	o.Freeze = pfLateFreeze{next: o.Freeze, armed: &armed, asked: &asked}
+	st.afterPrices = func() {
+		for deadline := time.Now().Add(200 * time.Millisecond); asked.Load() == 0 && time.Now().Before(deadline); {
+			time.Sleep(5 * time.Millisecond)
+		}
+		armed.Store(true)
+	}
+	plain, on := v1.New(spec.build(t)).Handler(), v1.New(o).Handler()
+	hits := pfHits("pf_prices")
+	req := eqBatchRequest{ids: spec.ids, quote: "fiat:USD"}
+	if m := batchEnvelopeMismatch(t, plain, on, req); m != "" {
+		t.Errorf("a marker set after the prefetch was not seen: %s", m)
+	}
+	if asked.Load() != 0 {
+		t.Error("the planner prefetched the freeze marker")
+	}
+	if pfHits("pf_prices") == hits {
+		t.Error("no price came from the memo: the ordering was not exercised")
+	}
+}
+
+func pfCapped() float64 {
+	return testutil.ToFloat64(obs.APIPriceBatchPrefetchTotal.WithLabelValues("pf_prices", "capped"))
+}
+
+// The planner runs from 8 ids, and prefetches only the first 200 of a 1000-id POST.
+func TestPriceBatchPrefetch_IDBounds(t *testing.T) {
+	spec := pfUniverse(t)
+	for _, n := range []int{7, 8} {
+		st := newPfStats(pfOK)
+		on := v1.New(pfOptions(t, spec, st)).Handler()
+		rsServe(on, "/v1/price/batch?"+eqQuery(strings.Join(spec.ids[:n], ","), "fiat:USD", false, "asset_ids"))
+		if asked := len(st.asked) > 0; asked != (n >= 8) {
+			t.Errorf("%d ids: prefetched=%v", n, asked)
+		}
+	}
+
+	ids := append([]string{}, spec.ids...)
+	for i := len(ids); i < 1000; i++ {
+		ids = append(ids, eqID(fmt.Sprintf("B%d", i)))
+	}
+	st := newPfStats(pfOK)
+	plain, on := v1.New(spec.build(t)).Handler(), v1.New(pfOptions(t, spec, st)).Handler()
+	capped := pfCapped()
+	if m := batchEnvelopeMismatch(t, plain, on, eqBatchRequest{post: true, ids: ids, quote: "fiat:USD"}); m != "" {
+		t.Errorf("1000-id POST differs: %s", m)
+	}
+	if pfCapped() != capped {
+		t.Error("the memo capped")
+	}
+	head := map[string]bool{}
+	for _, id := range ids[:200] {
+		a, _ := canonical.ParseAsset(id)
+		for _, alias := range canonical.AssetAliases(a) {
+			head[alias.String()] = true
+		}
+	}
+	for _, reads := range st.asked {
+		for _, r := range reads {
+			if !head[r.Base.String()] {
+				t.Fatalf("prefetched %v, beyond the first 200 ids", r.Base)
+			}
+		}
+		if len(reads) < 200 {
+			t.Errorf("prefetched %d reads, want every spelling of the first 200 ids", len(reads))
+		}
 	}
 }

@@ -49,6 +49,8 @@ BINARIES := \
 #                              (operator fx_quotes corrections must carry a
 #                              positive derive generation) was compiled and
 #                              run by nothing until this was listed.
+#   - cmd/stellarindex-api/internal/wiring — the /v1/price/batch prefetch
+#                              end-to-end test over the production readers.
 # A tagged test outside this list is compiled and run by NO path;
 # test/controlwiring's TestEveryIntegrationTaggedTestIsInIntTestPkgs
 # fails the default suite when one appears.
@@ -58,7 +60,7 @@ BINARIES := \
 # duplicate would let a package added here run locally and
 # compile in CI but be executed by no shard). Add a package
 # here and every CI path picks it up.
-INT_TEST_PKGS := ./test/integration/... ./test/harness/... ./cmd/stellarindex-ops/... ./internal/ops/archive/... ./scripts/ops/...
+INT_TEST_PKGS := ./test/integration/... ./test/harness/... ./cmd/stellarindex-ops/... ./internal/ops/archive/... ./scripts/ops/... ./cmd/stellarindex-api/internal/wiring/...
 
 # ──────────────────────────────────────────────────────────────────
 # Help

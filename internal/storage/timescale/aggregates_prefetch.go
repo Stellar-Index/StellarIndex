@@ -25,7 +25,7 @@ type trailingKey struct {
 }
 
 var (
-	latestSeam   = readset.NewSeam[readset.PairKey, KeyResult[Vwap1mRow]]("latest_vwap_1m", cloneRowResult)
+	latestSeam   = readset.NewPairSeam[KeyResult[Vwap1mRow]]("latest_vwap_1m", cloneRowResult)
 	trailingSeam = readset.NewSeam[trailingKey, []Vwap1mRow]("trailing_vwap_1m", cloneRows)
 )
 

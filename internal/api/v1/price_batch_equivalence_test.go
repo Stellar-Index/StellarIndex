@@ -512,11 +512,13 @@ func eqAnchorHolds(o eqObservation, anchor string) bool {
 // TestPriceBatchEquivalence_RowEqualsSinglePrice: for every id, quote and include_thin setting, the batch row (or the
 // list that names the id) says exactly what /v1/price says for that id alone.
 func TestPriceBatchEquivalence_RowEqualsSinglePrice(t *testing.T) {
-	eqRowsEqualSingles(t, func(t *testing.T, spec eqSpec) http.Handler { return v1.New(spec.build(t)).Handler() })
+	eqRowsEqualSingles(t, func(t *testing.T, spec eqSpec) http.Handler { return v1.New(spec.build(t)).Handler() },
+		func(ids []string) []string { return ids })
 }
 
-// eqRowsEqualSingles checks every fixture's batch row against its single /v1/price answer on the server serve builds.
-func eqRowsEqualSingles(t *testing.T, serve func(*testing.T, eqSpec) http.Handler) {
+// eqRowsEqualSingles checks every fixture's batch row, in a batch of pad(ids), against its single /v1/price answer on
+// the server serve builds.
+func eqRowsEqualSingles(t *testing.T, serve func(*testing.T, eqSpec) http.Handler, pad func([]string) []string) {
 	t.Helper()
 	known, anchors := eqKnownDivergences(), eqAnchors()
 	seen := map[string]bool{}
@@ -528,7 +530,7 @@ func eqRowsEqualSingles(t *testing.T, serve func(*testing.T, eqSpec) http.Handle
 					key := eqKey(spec.name, id, quote, thin)
 					seen[key] = true
 					single := eqSingle(t, ts.URL, id, quote, thin)
-					batch := eqBatch(t, ts.URL, []string{id, id}, id, quote, thin)
+					batch := eqBatch(t, ts.URL, pad([]string{id, id}), id, quote, thin)
 					if a, ok := anchors[key]; ok && !eqAnchorHolds(single, a) {
 						t.Errorf("%s: /v1/price = %s %v, want %q: the fixture no longer exercises its path", key, single.verdict, single.fields, a)
 					}

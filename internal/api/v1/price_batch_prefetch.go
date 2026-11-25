@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricing/readset"
@@ -16,45 +17,60 @@ type (
 	triangulatedPrefetcher interface {
 		PrefetchTriangulatedVWAP(context.Context, []readset.PairRead)
 	}
-	frozenPrefetcher interface {
-		PrefetchFrozen(context.Context, []readset.PairRead)
-	}
 )
 
-// batchPrefetchBudget bounds the planner: a prefetch slower than this leaves too little of [readset.MaxAge] to be read.
-const batchPrefetchBudget = readset.MaxAge / 2
+const (
+	// batchPrefetchBudget bounds the wait for the fills: one slower than this leaves too little of [readset.MaxAge].
+	batchPrefetchBudget = readset.MaxAge / 2
+	// batchPrefetchMinIDs: below this a batch's per-row reads cost about what the prefetch round trips would.
+	batchPrefetchMinIDs = 8
+	// batchPrefetchMaxIDs: rows run 16 at a time, so later rows start after the 2 s expiry, and the memo caps at 8192 entries.
+	batchPrefetchMaxIDs = 200
+)
 
 // prefetchBatch returns ctx carrying a memo the batch's first read stages are prefetched into, before its rows start:
-// every alias spelling of every id against quote, as the row's alias walk, Redis VWAP fallback and freeze check ask.
+// every alias spelling of the first batchPrefetchMaxIDs ids against quote, as the row's alias walk and Redis VWAP
+// fallback ask. Every alias is read although the walk stops at its first fresh one: one more key in a set statement is
+// cheap, and a missing one costs that row its own round trip. The freeze marker is not prefetched: a row's freeze verdict
+// must be read after the price it judges.
 //
 // Invariant: each seam answers a key exactly as its single-key read would have at an instant no more than
 // [readset.MaxAge] before the read; any key not read, or read longer ago, is read as before — the prefetch changes
-// when reads happen, never what they return or how they are judged. A prefetch that fails, panics or overruns its
-// budget only leaves keys unfilled; it never fails the request.
+// when reads happen, never what they return or how they are judged. A fill that fails, panics or outlasts the budget
+// only leaves keys unfilled; it never fails the request.
 func (s *Server) prefetchBatch(ctx context.Context, ids []string, quote canonical.Asset) context.Context {
+	if len(ids) < batchPrefetchMinIDs {
+		return ctx
+	}
 	fills := s.batchPrefetchFills()
 	if len(fills) == 0 {
 		return ctx
 	}
-	reads, ok := batchPrefetchReads(ids, quote)
+	reads, ok := batchPrefetchReads(ids[:min(len(ids), batchPrefetchMaxIDs)], quote)
 	if !ok {
 		return ctx
 	}
 	m := readset.New()
-	pctx, cancel := context.WithTimeout(readset.With(ctx, m), batchPrefetchBudget)
-	defer cancel()
+	mctx := readset.With(ctx, m)
 	done := make(chan struct{}, len(fills))
 	for _, fill := range fills {
 		go func() {
 			defer func() { done <- struct{}{} }()
 			defer worker.Recover(s.logger, "api-price-batch-prefetch")
-			fill(pctx, reads)
+			// The budget stops only the wait: cancelling a statement in flight makes pgx discard its connection.
+			fctx, cancel := context.WithTimeout(context.WithoutCancel(mctx), readset.MaxAge)
+			defer cancel()
+			fill(fctx, reads)
 		}()
 	}
+	budget := time.NewTimer(batchPrefetchBudget)
+	defer budget.Stop()
 	for range fills {
 		select {
 		case <-done:
-		case <-pctx.Done(): // a fill still running past the budget only fills entries that will read as expired
+		case <-budget.C: // a late fill only fills entries that read as expired
+			return readset.With(ctx, m)
+		case <-ctx.Done():
 			return readset.With(ctx, m)
 		}
 	}
@@ -70,15 +86,12 @@ func (s *Server) batchPrefetchFills() []func(context.Context, []readset.PairRead
 	if p, ok := s.Triangulated.(triangulatedPrefetcher); ok {
 		out = append(out, p.PrefetchTriangulatedVWAP)
 	}
-	if p, ok := s.Freeze.(frozenPrefetcher); ok {
-		out = append(out, func(ctx context.Context, reads []readset.PairRead) { p.PrefetchFrozen(ctx, unwindowed(reads)) })
-	}
 	return out
 }
 
-// batchPrefetchReads is the (spelling, quote) reads a batch's rows begin with, windowed for the Redis VWAP fallback: per id,
-// [assetAliases] in the order [Server.readPriceWithAliasesServedOnce], [Server.tryRedisVWAPFallback] and
-// [Server.frozenAnyAlias] walk them. ok is false when an id would fail the batch, which then reads nothing.
+// batchPrefetchReads is the (spelling, quote) reads a batch's rows begin with, windowed for the Redis VWAP fallback: per
+// id, [assetAliases] in the order [Server.readPriceWithAliasesServedOnce] and [Server.tryRedisVWAPFallback] walk them.
+// ok is false when an id would fail the batch, which then reads nothing.
 func batchPrefetchReads(ids []string, quote canonical.Asset) (reads []readset.PairRead, ok bool) {
 	seen := map[readset.PairKey]bool{}
 	for _, raw := range ids {
@@ -104,4 +117,14 @@ func unwindowed(reads []readset.PairRead) []readset.PairRead {
 		out[i] = readset.PairRead{Base: r.Base, Quote: r.Quote}
 	}
 	return out
+}
+
+// memoCoversWalk reports whether ctx's memo answers every price read asset's alias walk against quote makes.
+func memoCoversWalk(ctx context.Context, asset, quote canonical.Asset) bool {
+	for _, a := range assetAliases(asset) {
+		if !a.Equal(quote) && !readset.Covers(ctx, a, quote) {
+			return false
+		}
+	}
+	return true
 }

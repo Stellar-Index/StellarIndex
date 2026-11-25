@@ -405,7 +405,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		if err != nil {
 			return fmt.Errorf("freeze looker: %w", err)
 		}
-		freezeLooker = wiring.PrefetchFreezeLooker{Looker: fl, RDB: rdb}
+		freezeLooker = fl
 		logger.Info("freeze looker wired")
 	}
 

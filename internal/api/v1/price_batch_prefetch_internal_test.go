@@ -13,7 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pricing/readset"
 )
 
-var pfiSeam = readset.NewSeam[readset.PairKey, string]("pf_internal", nil)
+var pfiSeam = readset.NewPairSeam[string]("pf_internal", nil)
 
 // pfiReader prices every pair at price through pfiSeam, holding each read until release closes.
 type pfiReader struct {
@@ -39,14 +39,37 @@ func (r *pfiReader) LatestPrice(ctx context.Context, a, q canonical.Asset) (Pric
 	return PriceSnapshot{AssetID: a.String(), Quote: q.String(), Price: v}, []string{"test"}, false, nil
 }
 
+func (r *pfiReader) memoReads() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, m := range r.memo {
+		if m {
+			n++
+		}
+	}
+	return n
+}
+
 func newPfiReader(price string) *pfiReader {
-	return &pfiReader{entered: make(chan struct{}, 4), release: make(chan struct{}), price: price}
+	return &pfiReader{entered: make(chan struct{}, 64), release: make(chan struct{}), price: price}
+}
+
+var pfiBTC = canonical.Asset{Type: canonical.AssetCrypto, Code: "BTC"}
+
+// pfiMemo is a memo whose clock is now, filled with pfiBTC/USD at "1.0" when fill is set.
+func pfiMemo(fill bool, now *atomic.Int64) context.Context {
+	m := readset.NewWithClock(func() time.Time { return time.Unix(0, now.Load()) })
+	ctx := readset.With(context.Background(), m)
+	if fill {
+		pfiSeam.Fill(ctx, readset.Pair(pfiBTC, defaultPriceQuote, 0), "1.0", true)
+	}
+	return ctx
 }
 
 // A follower that joins another request's row flight is answered from that request's prefetch only while it is at most
 // readset.MaxAge old; past that, the read falls through to the store.
 func TestBatchRowFlight_FollowerSeesAtMostMaxAgeOldPrefetch(t *testing.T) {
-	btc := canonical.Asset{Type: canonical.AssetCrypto, Code: "BTC"}
 	for _, tc := range []struct {
 		name string
 		age  time.Duration
@@ -61,9 +84,7 @@ func TestBatchRowFlight_FollowerSeesAtMostMaxAgeOldPrefetch(t *testing.T) {
 			t0 := time.Now()
 			var now atomic.Int64
 			now.Store(t0.UnixNano())
-			m := readset.NewWithClock(func() time.Time { return time.Unix(0, now.Load()) })
-			leaderCtx := readset.With(context.Background(), m)
-			pfiSeam.Fill(leaderCtx, readset.Pair(btc, defaultPriceQuote, 0), "1.0", true)
+			leaderCtx := pfiMemo(true, &now)
 
 			rows := make([]batchRowResult, 2)
 			var wg sync.WaitGroup
@@ -93,38 +114,59 @@ func TestBatchRowFlight_FollowerSeesAtMostMaxAgeOldPrefetch(t *testing.T) {
 	}
 }
 
-// The coalesced single-price read never carries a memo, and a prefetched batch row never joins it.
-func TestReadPriceWithAliases_SinglePathNeverSeesAMemo(t *testing.T) {
-	btc := canonical.Asset{Type: canonical.AssetCrypto, Code: "BTC"}
-	reader := newPfiReader("2.0")
-	s := New(Options{Prices: reader})
-	memoCtx := readset.With(context.Background(), readset.New())
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		_, _, _, _, _ = s.readPriceWithAliasesServed(context.Background(), reader, btc, defaultPriceQuote)
-	}()
-	<-reader.entered
-	go func() {
-		defer wg.Done()
-		_, _, _, _, _ = s.readPriceWithAliasesServed(memoCtx, reader, btc, defaultPriceQuote)
-	}()
-	<-reader.entered // the memo read did not join the single read's flight
-	close(reader.release)
-	wg.Wait()
-	reader.mu.Lock()
-	defer reader.mu.Unlock()
-	if got := reader.calls.Load(); got != 2 {
-		t.Fatalf("store reads = %d, want 2", got)
-	}
-	seen := 0
-	for _, withMemo := range reader.memo {
-		if withMemo {
-			seen++
-		}
-	}
-	if seen != 1 {
-		t.Errorf("reads carrying a memo = %d of %v, want only the batch row's", seen, reader.memo)
+// Concurrent alias reads of one key coalesce on the shared flight, which carries no memo, unless the memo still holds
+// that read: then each is answered from the memo alone, and a single /v1/price caller beside them still gets the flight.
+func TestReadPriceWithAliases_CoalescesUnlessTheMemoHoldsTheRead(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		fill      bool
+		age       time.Duration
+		wantStore int32  // store reads made
+		wantPrice string // the memo-carrying callers' answer
+	}{
+		{"not prefetched", false, 0, 1, "2.0"},
+		{"prefetched", true, 0, 1, "1.0"}, // the store read is the single caller's own flight
+		{"prefetch expired", true, readset.MaxAge + time.Millisecond, 1, "2.0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := newPfiReader("2.0")
+			s := New(Options{Prices: reader})
+			var now atomic.Int64
+			t0 := time.Now()
+			now.Store(t0.Add(-tc.age).UnixNano())
+			ctx := pfiMemo(tc.fill, &now)
+			now.Store(t0.UnixNano())
+
+			const rows = 16
+			got := make([]string, rows)
+			var wg sync.WaitGroup
+			wg.Add(rows + 1)
+			go func() {
+				defer wg.Done()
+				_, _, _, _, _ = s.readPriceWithAliasesServed(context.Background(), reader, pfiBTC, defaultPriceQuote)
+			}()
+			for i := range rows {
+				go func() {
+					defer wg.Done()
+					snap, _, _, _, _ := s.readPriceWithAliasesServed(ctx, reader, pfiBTC, defaultPriceQuote)
+					got[i] = snap.Price
+				}()
+			}
+			time.Sleep(100 * time.Millisecond)
+			close(reader.release)
+			wg.Wait()
+
+			if n := reader.calls.Load(); n != tc.wantStore {
+				t.Errorf("store reads = %d, want %d", n, tc.wantStore)
+			}
+			if n := reader.memoReads(); n != 0 {
+				t.Errorf("%d store reads carried a memo: a shared flight saw it", n)
+			}
+			for i, p := range got {
+				if p != tc.wantPrice {
+					t.Errorf("row %d = %q, want %q", i, p, tc.wantPrice)
+				}
+			}
+		})
 	}
 }
