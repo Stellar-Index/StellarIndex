@@ -79,7 +79,7 @@ clickhouse-client --port 9300 -q "SYSTEM START MERGES stellar.ledger_entry_chang
 
 ### A ClickHouse rewrite outlives its client
 
-`scripts/ops/recompress-lec.sh` runs `ALTER TABLE stellar.ledger_entry_changes REWRITE PARTS IN PARTITION <n>` under the heavy-job scope `recompress-lec-p<n>`. That is a mutation: stopping the script or the scope does not stop it. `SYSTEM STOP MERGES` also stalls it, so never use that here. See it, then stop it:
+`scripts/ops/recompress-lec.sh` runs `ALTER TABLE stellar.ledger_entry_changes REWRITE PARTS IN PARTITION <n>` under the heavy-job scope `recompress-lec-p<n>`. It queries through `RECOMPRESS_CH` (default root's `/usr/bin/clickhouse-client --port 9300`, the admin identity; the bare `clickhouse-client` inside the heavy-job scope is a low-priority user that cannot read `system.mutations`) and aborts at startup if it cannot. The rewrite is a mutation: stopping the script or the scope does not stop it. `SYSTEM STOP MERGES` also stalls it, so never use that here. See it, then stop it:
 
 ```sh
 clickhouse-client --port 9300 -q "SELECT mutation_id, parts_to_do, latest_fail_reason FROM system.mutations WHERE database='stellar' AND table='ledger_entry_changes' AND NOT is_done"
