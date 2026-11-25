@@ -36,20 +36,43 @@ type lendingRun struct {
 	lockFile, heartbeat string
 	printPrefixes       bool
 	prove               bool
+	interest            interestFlags
 }
 
 // start validates the mode flags, then runs.
 func (r lendingRun) start(lendingOnly bool, gate *opsutil.WriteGate) error {
 	if !lendingOnly {
-		return fmt.Errorf("-print-prefixes and -prove apply to -lending-only")
+		return fmt.Errorf("-print-prefixes, -prove and -interest-* apply to -lending-only")
 	}
 	if r.printPrefixes && r.prove {
 		return fmt.Errorf("-print-prefixes and -prove are separate reads; run one at a time")
+	}
+	if err := r.interest.check(r); err != nil {
+		return err
 	}
 	if !r.printPrefixes && !r.prove {
 		gate.Banner()
 	}
 	return r.run()
+}
+
+// check refuses -interest-* combinations whose range would be ambiguous.
+func (f interestFlags) check(r lendingRun) error {
+	explicit := f.only || f.init || f.pool != "" || f.maxWindows != 0 || f.maxUnordered != 0
+	switch {
+	case explicit && (r.printPrefixes || r.prove):
+		return fmt.Errorf("-interest-* flags do not apply to -print-prefixes or -prove")
+	case f.init && f.pool != "":
+		return fmt.Errorf("-interest-init and -interest-pool are separate runs")
+	case (f.init || f.pool != "") && (r.from != 0 || r.to != 0):
+		return fmt.Errorf("-interest-init and -interest-pool set their own range; drop -from and -to")
+	case (f.only || f.pool != "") && !f.init && r.floor > 1:
+		// -to and -from stay legal without -interest-only: the state pass reads them.
+		return fmt.Errorf("-floor-ledger sets where -interest-init or the state pass starts; an interest-only run ignores it")
+	case f.maxWindows < 0 || f.maxUnordered < 0:
+		return fmt.Errorf("-interest-max-windows and -interest-max-unordered must be >= 0")
+	}
+	return nil
 }
 
 func (r lendingRun) run() error {
@@ -61,8 +84,23 @@ func (r lendingRun) run() error {
 	case r.prove:
 		return r.proveLendingState(ctx, os.Stdout)
 	case r.dryRun:
-		return r.exec(ctx, nil)
+		if !r.interestOnly() {
+			if err := r.exec(ctx, nil); err != nil {
+				return err
+			}
+		}
+		return r.interestPass(ctx, os.Stderr)
 	}
+	if !r.interestOnly() {
+		if err := r.statePass(ctx); err != nil {
+			return err
+		}
+	}
+	return r.lockedInterestPass(ctx, os.Stderr)
+}
+
+// statePass derives lending_state under -lock-file, released before the interest pass takes its own.
+func (r lendingRun) statePass(ctx context.Context) error {
 	unlock, err := acquireRollupLock(lendingJob, r.lockFile)
 	if err != nil {
 		return err
@@ -77,6 +115,9 @@ func (r lendingRun) run() error {
 	hb.Stop(err == nil)
 	return err
 }
+
+// interestOnly skips the state pass: -interest-only, or a per-pool backfill.
+func (r lendingRun) interestOnly() bool { return r.interest.only || r.interest.pool != "" }
 
 // exec derives from the watermark (the Blend factory genesis on first run) to the contiguous tip in windows that end
 // on partition boundaries; hb is nil in a dry run.

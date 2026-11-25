@@ -7,12 +7,38 @@
 --
 -- lending_interest_hourly holds, per Blend/BLNT pool reserve and hour, the
 -- interest accrued between consecutive ResData versions, summed exactly in
--- the reserve's base units. Planned writer, not yet wired: `stellarindex-ops
--- ch-entry-history -lending-only -write`, resuming from entry_history_watermark
--- name 'lending_interest'. Until it lands the table stays empty.
+-- the reserve's base units. Written by `stellarindex-ops ch-entry-history
+-- -lending-only -write` after its lending_state pass, resuming from
+-- entry_history_watermark name 'lending_interest' and never past
+-- 'lending_state'. Until -interest-init has run the pass only logs, so the
+-- table stays empty and the 10-minute timer never starts a backfill; once
+-- initialised, the timer's pass catches up at most one 100,000-ledger window
+-- and logs "backfill incomplete" beyond that. Nothing serves it yet.
+--
+-- Reader contract: a reader clips every range to the shared
+-- 'lending_interest' watermark AND to each pool's 'lending_interest:<pool>'
+-- coverage row; a pool added after the watermark has no rows below its own.
 --
 -- Runbook:
 --   1. Apply this file.
+--   2. Dry run one window (reads, folds and checks; writes nothing):
+--      stellarindex-ops ch-entry-history -lending-only -interest-only
+--        -interest-init -interest-max-windows 1
+--   3. Backfill in chunks under the heavy-job wrapper, the first with
+--      -interest-init, then without it until the run reports the tip:
+--      run-heavy-job.sh lending-interest stellarindex-ops ch-entry-history
+--        -lending-only -interest-only [-interest-init]
+--        -interest-max-windows 20 -write
+--   4. From then on lending-state.timer's run extends it every 10 minutes.
+--      Interest runs take their own lock (ch-entry-history-lending-interest.lock
+--      beside -lock-file), so a chunk never blocks the state pass; the timer's
+--      interest pass skips while a chunk holds it.
+--
+-- A window is refused, and the watermark holds, if a pool runs a WASM hash
+-- not listed in lendingInterestWASM, or if the fold's rows disagree with
+-- lending_state_hourly (backstop credit, hours, ledgers, BLNT fee carry).
+-- Re-derive (ingest-pipeline.md, the replay decision rule):
+--   ch-entry-history -lending-only -interest-only -from {lo} [-to {hi}] -write
 --
 -- Amounts are Int256: each accrual is an i128, and sum(Int128) wraps silently,
 -- so an hourly sum or a served sum over hours needs the headroom. Never float.

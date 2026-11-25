@@ -1283,6 +1283,27 @@ groups:
             window (lake hole, or same-ledger changes without intra-ledger
             order), or the initial catch-up is still running.
 
+      # stellar.lending_interest_hourly trails lending_state_hourly, which it is derived against: measured from the
+      # state pass's cursor, so a state stall is not paged twice. The timer's pass catches up at most one 100,000-ledger
+      # window and skips beyond it, so the threshold is that window: a lag over it persists until the backfill chunks
+      # run. A host where the interest pass was never initialised has no series and stays quiet.
+      - alert: stellarindex_lending_interest_lagging
+        expr: max(stellarindex_ops_job_progress_cursor{ops_job="ch-entry-history-lending"}) - max(stellarindex_ops_job_progress_cursor{ops_job="ch-entry-history-lending-interest"}) > 100000
+        for: 2h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#lending-interest-lagging
+          summary: "lending interest history trails lending state by more than 100000 ledgers"
+          description: |
+            stellar.lending_interest_hourly is more than 100000 ledgers
+            behind lending_state_hourly for 2 h. The timer's pass does not
+            catch up that far ("backfill incomplete"): run the backfill
+            chunks. Or the pass is refusing a window (WASM gate, identity
+            check, uncovered pool), or a backfill chunk is still running.
+
       # Whole-transaction skip counters (tx_read_errors, tx_event_read_errors,
       # entry_meta_unsupported) plus evicted_keys_unreadable (a ledger's evictions): each
       # means events or an entry walk vanished, indistinguishable downstream from an

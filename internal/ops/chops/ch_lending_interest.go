@@ -1,0 +1,578 @@
+package chops
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"path/filepath"
+	"syscall"
+	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/lendinginterest"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+)
+
+// lendingInterestJob names the interest pass's heartbeat (its own cursor series) and log lines.
+const lendingInterestJob = "ch-entry-history-lending-interest"
+
+// lendingInterestRev is every row's derive_rev. Bump it, and re-derive, on any change to blend/accrual.go,
+// blnt/accrual.go or internal/lendinginterest: rows are computed when written, not decoded at read time.
+const lendingInterestRev uint16 = 1
+
+// interestFlags are the -interest-* flags.
+type interestFlags struct {
+	init, only   bool
+	maxWindows   int
+	maxUnordered int
+	pool         string
+}
+
+// Seams so the interest pass is testable without a live lake.
+var (
+	lendingInterestWatermark = clickhouse.LendingInterestWatermark
+	lendingInterestFloor     = clickhouse.LendingInterestFloor
+	lendingInterestStateWM   = clickhouse.LendingStateWatermark
+	lendingInterestHour      = clickhouse.LendingInterestHour
+	lendingInterestKeys      = clickhouse.LendingInterestKeys
+	lendingInterestSeeds     = clickhouse.LendingInterestSeeds
+	lendingInterestVersions  = clickhouse.LendingInterestVersions
+	lendingInterestState     = clickhouse.LendingInterestStateRows
+	lendingInterestUncovered = clickhouse.LendingInterestUncoveredPools
+	insertLendingInterest    = clickhouse.InsertLendingInterestRows
+	deleteSupersededInterest = clickhouse.DeleteSupersededLendingInterestRows
+	setLendingInterestWM     = clickhouse.SetLendingInterestWatermark
+	setLendingInterestPoolWM = clickhouse.SetLendingInterestPoolWatermark
+	lendingInterestServerNow = clickhouse.ServerNow
+	lendingInterestRegistry  = lendingRegistry
+	openLendingCodeHistory   = func(ctx context.Context, addr string) (lendingCodeHistory, func(), error) {
+		r, err := clickhouse.NewExplorerReader(ctx, addr)
+		if err != nil {
+			return nil, nil, err
+		}
+		return r, func() { _ = r.Close() }, nil
+	}
+)
+
+// lendingCodeHistory is the genesis-complete WASM timeline the replay gate reads.
+type lendingCodeHistory interface {
+	ReplayCodeHistory(ctx context.Context, contractID string) ([]clickhouse.ContractCodeVersion, error)
+}
+
+// interestPass is one run of the interest pass.
+type interestPass struct {
+	addr       string
+	pools      []clickhouse.LendingContract
+	opts       lendinginterest.Options
+	code       map[string][]clickhouse.ContractCodeVersion
+	dryRun     bool
+	rederive   bool // the run starts at or below the watermark: rows it no longer writes are deleted
+	maxWindows int
+	mark       func(ctx context.Context, from, thru uint32) error
+	hb         *opsutil.JobHeartbeat
+	cursorAt   *uint32 // the heartbeat cursor when it is not the run's progress
+	log        io.Writer
+}
+
+// interestPlan is what a run derives: [start, last] over pools, marked by mark.
+type interestPlan struct {
+	start, last uint32
+	pools       []clickhouse.LendingContract
+	rederive    bool
+	pool        bool // one pool's bounded backfill
+	mark        func(ctx context.Context, from, thru uint32) error
+}
+
+// lendingInterestTimerBacklog is the most the timer's pass catches up: further behind is a backfill, run by hand in
+// chunks under the heavy-job wrapper, never inside the 10-minute timer's unit.
+const lendingInterestTimerBacklog = lendingWindow
+
+// interestLock serialises interest runs; its own lock, so a backfill holding it for hours never blocks the state pass.
+const interestLock = lendingInterestJob + ".lock"
+
+// timerInterest is the pass as lending-state.timer runs it: no -interest-only, -interest-init or -interest-pool.
+func (r lendingRun) timerInterest() bool {
+	return !r.interest.only && !r.interest.init && r.interest.pool == ""
+}
+
+// lockedInterestPass runs the interest pass under its own lock, beside -lock-file. The timer's pass skips while
+// another run holds it; an explicit interest run refuses.
+func (r lendingRun) lockedInterestPass(ctx context.Context, log io.Writer) error {
+	unlock, err := acquireRollupLock(lendingInterestJob, filepath.Join(filepath.Dir(r.lockFile), interestLock))
+	if err != nil {
+		if r.timerInterest() && errors.Is(err, syscall.EWOULDBLOCK) {
+			_, _ = fmt.Fprintf(log, "%s: skipped, another interest run holds the lock: %v\n", lendingInterestJob, err)
+			return nil
+		}
+		return err
+	}
+	defer unlock()
+	return r.interestPass(ctx, log)
+}
+
+// interestPass runs the interest pass after the state pass (or alone with -interest-only). The timer's run never
+// starts one: with no lending_interest watermark it logs and returns, so only -interest-init begins the backfill.
+func (r lendingRun) interestPass(ctx context.Context, log io.Writer) error {
+	wm, err := lendingInterestWatermark(ctx, r.chAddr)
+	if err != nil {
+		return err
+	}
+	if wm == 0 && !r.interest.init {
+		if !r.timerInterest() {
+			return fmt.Errorf("lending interest: not initialised; start it with -interest-init")
+		}
+		_, _ = fmt.Fprintln(log, "lending interest: not initialised (run -interest-init)")
+		return nil
+	}
+	if wm > 0 && r.interest.init {
+		return fmt.Errorf("lending interest: already initialised through %d; drop -interest-init to resume", wm)
+	}
+	var hb *opsutil.JobHeartbeat
+	if !r.dryRun {
+		// Before planning, so a refusal there is a failed run on the pass's own series.
+		hb = opsutil.NewJobHeartbeat(lendingInterestJob, r.interestHeartbeat(), nil)
+		hb.Start()
+		hb.Progress(0, uint64(wm))
+	}
+	err = r.deriveInterest(ctx, log, wm, hb)
+	hb.Stop(err == nil)
+	return err
+}
+
+// deriveInterest plans and runs the pass from watermark wm. The timer's pass only catches up: behind by more than
+// lendingInterestTimerBacklog it logs and returns, leaving the cursor where it is for the lagging alert.
+func (r lendingRun) deriveInterest(ctx context.Context, log io.Writer, wm uint32, hb *opsutil.JobHeartbeat) error {
+	if r.timerInterest() {
+		state, err := lendingInterestStateWM(ctx, r.chAddr)
+		if err != nil {
+			return err
+		}
+		if state > wm && state-wm > lendingInterestTimerBacklog {
+			_, _ = fmt.Fprintf(log, "lending interest: backfill incomplete (%d ledgers behind; run the backfill chunks)\n", state-wm)
+			return nil
+		}
+	}
+	plan, err := r.interestPlan(ctx, wm)
+	if err != nil {
+		return err
+	}
+	if plan.last < plan.start {
+		_, _ = fmt.Fprintf(log, "%s: nothing to derive (start %d, through %d)\n", lendingInterestJob, plan.start, plan.last)
+		return nil
+	}
+	p := &interestPass{
+		addr: r.chAddr, pools: plan.pools, dryRun: r.dryRun, rederive: plan.rederive,
+		maxWindows: r.interest.maxWindows, mark: plan.mark, log: log, hb: hb,
+		opts: lendinginterest.Options{Protocols: map[string]lendinginterest.Protocol{}, MaxUnordered: r.interest.maxUnordered},
+	}
+	if plan.pool {
+		// A pool's backfill stays below the shared watermark, which the cursor reports.
+		p.cursorAt = &wm
+	}
+	for _, c := range plan.pools {
+		p.opts.Protocols[c.ID] = lendinginterest.Protocol(c.Protocol)
+	}
+	if p.code, err = readLendingCode(ctx, r.chAddr, plan.pools); err != nil {
+		return err
+	}
+	return p.run(ctx, plan.start, plan.last)
+}
+
+// interestHeartbeat sits beside an explicit -heartbeat path, else in the default textfile directory.
+func (r lendingRun) interestHeartbeat() string {
+	if r.heartbeat == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(r.heartbeat), "ops_job_"+lendingInterestJob+".prom")
+}
+
+// interestPlan resolves the run's range and pools: a per-pool backfill, a first run, a re-derive from -from, or a
+// resume from the watermark; never past lending_state's watermark.
+func (r lendingRun) interestPlan(ctx context.Context, wm uint32) (interestPlan, error) {
+	state, err := lendingInterestStateWM(ctx, r.chAddr)
+	if err != nil {
+		return interestPlan{}, err
+	}
+	if r.interest.pool != "" {
+		return r.interestPoolPlan(ctx, wm)
+	}
+	plan := interestPlan{start: wm + 1, last: state}
+	var floor uint32
+	switch {
+	case r.interest.init:
+		plan.start = max(r.floor, blend.FactoryGenesisLedger)
+	case r.interest.only && r.from != 0:
+		if floor, err = r.rederiveFloor(ctx, state); err != nil {
+			return interestPlan{}, err
+		}
+		plan.start, plan.rederive = r.from, true
+	}
+	if r.interest.only && r.to != 0 && r.to < plan.start {
+		return interestPlan{}, fmt.Errorf("lending interest: -to %d is below the run's first ledger %d", r.to, plan.start)
+	}
+	if plan.last < plan.start {
+		return plan, nil
+	}
+	if plan.start, err = hourStart(ctx, r.chAddr, plan.start); err != nil {
+		return interestPlan{}, err
+	}
+	// The floor may sit inside its hour; the rows start there.
+	plan.start = max(plan.start, floor)
+	if plan.rederive && plan.start > wm+1 {
+		return interestPlan{}, fmt.Errorf("lending interest: -from %d skips [%d,%d], not yet derived (watermark %d)", r.from, wm+1, plan.start-1, wm)
+	}
+	if plan.last, err = r.clipTo(ctx, plan.last); err != nil {
+		return interestPlan{}, err
+	}
+	reg, err := lendingInterestRegistry(ctx, r.chAddr, plan.last)
+	if err != nil {
+		return interestPlan{}, err
+	}
+	plan.pools = lendingPools(reg)
+	gaps, err := lendingInterestUncovered(ctx, r.chAddr, plan.pools)
+	if err != nil {
+		return interestPlan{}, err
+	}
+	if len(gaps) > 0 {
+		return interestPlan{}, fmt.Errorf("lending interest: pools below the watermark %d: %+v; bring each up with -interest-only -interest-pool <pool> -write", wm, gaps)
+	}
+	pools := plan.pools
+	plan.mark = func(ctx context.Context, from, thru uint32) error {
+		return setLendingInterestWM(ctx, r.chAddr, from, thru, pools)
+	}
+	return plan, nil
+}
+
+// clipTo lowers last to the end of -to's hour on an -interest-only run.
+func (r lendingRun) clipTo(ctx context.Context, last uint32) (uint32, error) {
+	if !r.interest.only || r.to == 0 || r.to >= last {
+		return last, nil
+	}
+	h, err := lendingInterestHour(ctx, r.chAddr, r.to)
+	if err != nil {
+		return 0, err
+	}
+	return min(h.Last, last), nil
+}
+
+// rederiveFloor refuses a -from past lending_state's watermark or below the recorded floor, and returns the floor.
+func (r lendingRun) rederiveFloor(ctx context.Context, state uint32) (uint32, error) {
+	if r.from > state {
+		return 0, fmt.Errorf("lending interest: -from %d is past lending_state's watermark %d", r.from, state)
+	}
+	floor, err := lendingInterestFloor(ctx, r.chAddr)
+	if err != nil {
+		return 0, err
+	}
+	if r.from < floor {
+		return 0, fmt.Errorf("lending interest: -from %d is below the recorded floor %d, where the rows start", r.from, floor)
+	}
+	return floor, nil
+}
+
+// interestPoolPlan is the bounded backfill of one pool the watermark does not cover, up to the watermark.
+func (r lendingRun) interestPoolPlan(ctx context.Context, wm uint32) (interestPlan, error) {
+	reg, err := lendingInterestRegistry(ctx, r.chAddr, wm)
+	if err != nil {
+		return interestPlan{}, err
+	}
+	var pool *clickhouse.LendingContract
+	pools := lendingPools(reg)
+	for i := range pools {
+		if pools[i].ID == r.interest.pool {
+			pool = &pools[i]
+		}
+	}
+	if pool == nil {
+		return interestPlan{}, fmt.Errorf("lending interest: %s is not a pool in the registry through %d", r.interest.pool, wm)
+	}
+	gaps, err := lendingInterestUncovered(ctx, r.chAddr, []clickhouse.LendingContract{*pool})
+	if err != nil {
+		return interestPlan{}, err
+	}
+	if len(gaps) == 0 {
+		return interestPlan{start: 1, last: 0}, nil
+	}
+	plan := interestPlan{start: gaps[0].Thru + 1, last: wm, pools: []clickhouse.LendingContract{*pool}, pool: true}
+	if gaps[0].Thru == 0 {
+		floor, err := lendingInterestFloor(ctx, r.chAddr)
+		if err != nil {
+			return interestPlan{}, err
+		}
+		plan.start = floor
+		if pool.Deployed > floor {
+			if plan.start, err = hourStart(ctx, r.chAddr, pool.Deployed); err != nil {
+				return interestPlan{}, err
+			}
+		}
+	}
+	c := *pool
+	plan.mark = func(ctx context.Context, from, thru uint32) error {
+		return setLendingInterestPoolWM(ctx, r.chAddr, c, from, thru)
+	}
+	return plan, nil
+}
+
+// lendingPools drops the backstops: interest accrues on pools.
+func lendingPools(reg []clickhouse.LendingContract) []clickhouse.LendingContract {
+	var out []clickhouse.LendingContract
+	for _, c := range reg {
+		if !c.Backstop {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// hourStart is the first stored ledger of seq's hour.
+func hourStart(ctx context.Context, addr string, seq uint32) (uint32, error) {
+	h, err := lendingInterestHour(ctx, addr, seq)
+	if err != nil {
+		return 0, err
+	}
+	return h.First, nil
+}
+
+// readLendingCode reads each pool's WASM timeline once per run.
+func readLendingCode(ctx context.Context, addr string, pools []clickhouse.LendingContract) (map[string][]clickhouse.ContractCodeVersion, error) {
+	h, closeFn, err := openLendingCodeHistory(ctx, addr)
+	if err != nil {
+		return nil, err
+	}
+	defer closeFn()
+	out := make(map[string][]clickhouse.ContractCodeVersion, len(pools))
+	for _, c := range pools {
+		vs, err := h.ReplayCodeHistory(ctx, c.ID)
+		switch {
+		case errors.Is(err, clickhouse.ErrContractWasmUnresolved):
+			// No instance in the lake: gateLendingWASM refuses any window the pool is deployed in.
+		case err != nil:
+			return nil, fmt.Errorf("lending interest: pool %s WASM history: %w", c.ID, err)
+		}
+		out[c.ID] = vs
+	}
+	return out, nil
+}
+
+// lendingInterestMaxVersions bounds one window's versions. Estimated, not measured: a decoded version with its
+// big.Ints, strings and BLNT fee map is ~1-2 KB, and the fold holds a sorted copy plus a dedupe key per version, so
+// ~4 KB each at peak; 150,000 keeps a window near 600 MB, inside lending-state.service's MemoryMax=1G.
+var lendingInterestMaxVersions = 150_000
+
+var errInterestWindowTooLarge = errors.New("lending interest: window over the version bound")
+
+// interestCarry is the state between windows of one run: the fold's carry and the first ledger not yet marked.
+type interestCarry struct {
+	seed   lendinginterest.Seeds
+	seeded bool
+	from   uint32
+}
+
+// run derives [start, last] window by window; start is the first ledger of an hour.
+func (p *interestPass) run(ctx context.Context, start, last uint32) error {
+	h, err := lendingInterestHour(ctx, p.addr, start)
+	if err != nil {
+		return err
+	}
+	if h.First != start {
+		return fmt.Errorf("lending interest: start %d is not the first ledger of its hour (%d)", start, h.First)
+	}
+	st := interestCarry{seed: lendinginterest.Seeds{CommittedBefore: h.Hour}, from: start}
+	runStart := time.Now()
+	for lo, n := start, 0; lo <= last; n++ {
+		if p.maxWindows > 0 && n == p.maxWindows {
+			_, _ = fmt.Fprintf(p.log, "%s: stopping after %d windows at %d; run again to continue\n", lendingInterestJob, n, st.from-1)
+			return nil
+		}
+		hi, err := gateLendingWASM(p.code, p.pools, lo, lendingWindowEnd(lo, last))
+		if err != nil {
+			return fmt.Errorf("%w — the watermark holds at %d", err, st.from-1)
+		}
+		err = p.window(ctx, &st, lo, hi)
+		for errors.Is(err, errInterestWindowTooLarge) && hi > lo {
+			// The fold holds the whole window in memory: narrow it rather than meet the unit's MemoryMax.
+			_, _ = fmt.Fprintf(p.log, "%s: window [%d,%d] holds over %d versions; halving it\n", lendingInterestJob, lo, hi, lendingInterestMaxVersions)
+			hi = lo + (hi-lo)/2
+			err = p.window(ctx, &st, lo, hi)
+		}
+		if err != nil {
+			return fmt.Errorf("%s: window [%d,%d]: %w — the watermark holds at %d", lendingInterestJob, lo, hi, err, st.from-1)
+		}
+		cursor := st.from - 1
+		if p.cursorAt != nil {
+			cursor = *p.cursorAt
+		}
+		p.hb.Progress(uint64(n+1), uint64(cursor))
+		_, _ = fmt.Fprintf(p.log, "%s: window [%d,%d] done, complete through %d (elapsed %s)\n", lendingInterestJob, lo, hi,
+			st.from-1, time.Since(runStart).Round(time.Second))
+		lo = hi + 1
+	}
+	return nil
+}
+
+// window reads, folds and checks [lo, hi]; once the checks pass it writes the complete hours, deletes on a
+// re-derive the rows of those hours it no longer writes, and marks them. Nothing is written before the check.
+func (p *interestPass) window(ctx context.Context, st *interestCarry, lo, hi uint32) error {
+	keys, err := lendingInterestKeys(ctx, p.addr, p.pools, hi)
+	if err != nil {
+		return err
+	}
+	if !st.seeded {
+		// Seeds once per run; later windows continue from the carry and read from hi+1, never both.
+		if st.seed, err = lendingInterestSeeds(ctx, p.addr, p.pools, keys, st.seed.CommittedBefore); err != nil {
+			return err
+		}
+		st.seeded = true
+	}
+	vs, err := p.readVersions(ctx, keys, lo, hi)
+	if err != nil {
+		return err
+	}
+	if err := checkInstanceCode(p.code, vs); err != nil {
+		return err
+	}
+	commitBefore, thru, err := p.commitPoint(ctx, hi)
+	if err != nil {
+		return err
+	}
+	from := st.seed.CommittedBefore
+	rows, carry, err := lendinginterest.Fold(st.seed, vs, commitBefore, p.opts)
+	if err != nil {
+		return err
+	}
+	if !commitBefore.After(from) {
+		st.seed = carry // no hour completes in the window
+		return nil
+	}
+	state, err := p.stateRows(ctx, keys, rows, from, commitBefore)
+	if err != nil {
+		return err
+	}
+	checked, err := checkLendingInterest(p.opts.Protocols, rows, state, append(st.seed.Pending, vs...), from, commitBefore)
+	if err != nil {
+		return err
+	}
+	reportInterestWindow(p.log, from, commitBefore, rows, checked, p.dryRun)
+	if !p.dryRun {
+		if err := p.write(ctx, rows, from, commitBefore, st.from, thru); err != nil {
+			return err
+		}
+	}
+	st.seed, st.from = carry, thru+1
+	return nil
+}
+
+// stateRows reads lending_state's rows for the checks; with no ResData or ProtocolFees key (a pool not yet or no
+// longer holding a reserve) the fold has no rows to check and there is nothing to read.
+func (p *interestPass) stateRows(ctx context.Context, keys []clickhouse.LendingInterestKey, rows []lendinginterest.HourRow,
+	from, to time.Time,
+) ([]clickhouse.LendingInterestStateRow, error) {
+	if hasStateKeys(keys) {
+		return lendingInterestState(ctx, p.addr, p.pools, keys, from, to)
+	}
+	if len(rows) > 0 {
+		return nil, fmt.Errorf("lending interest: %d rows with no ResData key read", len(rows))
+	}
+	return nil, nil
+}
+
+// readVersions reads [lo, hi]'s versions, halving a read over the lake's memory limit; over
+// lendingInterestMaxVersions it stops with errInterestWindowTooLarge.
+func (p *interestPass) readVersions(ctx context.Context, keys []clickhouse.LendingInterestKey, lo, hi uint32) ([]lendinginterest.Version, error) {
+	var vs []lendinginterest.Version
+	err := splitOnMemoryLimit(lo, hi, "interest window", p.log, func(lo, hi uint32) error {
+		var got []lendinginterest.Version
+		if err := lendingInterestVersions(ctx, p.addr, lo, hi, keys, func(v lendinginterest.Version) error {
+			if len(vs)+len(got) >= lendingInterestMaxVersions {
+				return errInterestWindowTooLarge
+			}
+			got = append(got, v)
+			return nil
+		}); err != nil {
+			return err
+		}
+		vs = append(vs, got...)
+		return nil
+	})
+	return vs, err
+}
+
+// commitPoint is the fold's cut for a window ending at hi: the start of hi's hour, or the next hour when hi is the
+// last ledger of an hour the lake has closed; thru is the last ledger before the cut.
+func (p *interestPass) commitPoint(ctx context.Context, hi uint32) (time.Time, uint32, error) {
+	h, err := lendingInterestHour(ctx, p.addr, hi)
+	if err != nil {
+		return time.Time{}, 0, err
+	}
+	if h.Closed && h.Last == hi {
+		return h.Hour.Add(time.Hour), hi, nil
+	}
+	return h.Hour, h.First - 1, nil
+}
+
+// write inserts the checked rows of hours [from, to), deletes on a re-derive the older rows of those hours, and marks
+// ledgers [fromLedger, thru].
+func (p *interestPass) write(ctx context.Context, rows []lendinginterest.HourRow, from, to time.Time, fromLedger, thru uint32) error {
+	var before time.Time
+	if p.rederive {
+		var err error
+		// Read before the insert: every row it writes is stamped at or after it.
+		if before, err = lendingInterestServerNow(ctx, p.addr); err != nil {
+			return err
+		}
+	}
+	if err := insertLendingInterest(ctx, p.addr, rows, lendingInterestRev); err != nil {
+		return err
+	}
+	if p.rederive {
+		if err := deleteSupersededInterest(ctx, p.addr, p.pools, from, to.Add(-time.Hour), before); err != nil {
+			return err
+		}
+	}
+	if err := p.mark(ctx, fromLedger, thru); err != nil {
+		return fmt.Errorf("advance lending_interest to %d: %w", thru, err)
+	}
+	return nil
+}
+
+// hasStateKeys reports whether keys hold a ResData or ProtocolFees key, the kinds lending_state rows are read for.
+func hasStateKeys(keys []clickhouse.LendingInterestKey) bool {
+	for _, k := range keys {
+		if k.Kind == lendinginterest.KindReserve || k.Kind == lendinginterest.KindFees {
+			return true
+		}
+	}
+	return false
+}
+
+// reportInterestWindow prints the window's counts, the residuals a drift would show in, and what the checks compared;
+// amounts are per asset, so none is summed across rows.
+func reportInterestWindow(log io.Writer, from, to time.Time, rows []lendinginterest.HourRow, c interestChecked, dryRun bool) {
+	var versions, accrued, errs, unordered, unreconciled, bRate, feeMis, feeOnly uint64
+	residualRows := 0
+	for _, r := range rows {
+		versions += uint64(r.Versions)
+		accrued += uint64(r.AccruedVersions)
+		errs += uint64(r.AccrualErrors)
+		unordered += uint64(r.UnorderedVersions)
+		unreconciled += uint64(r.UnreconciledVersions)
+		bRate += uint64(r.BRateMismatches)
+		feeMis += uint64(r.FeeMismatches)
+		feeOnly += uint64(r.FeeOnlyVersions)
+		if r.BackstopResidual.Sign() != 0 {
+			residualRows++
+		}
+	}
+	verb := "wrote"
+	if dryRun {
+		verb = "would write"
+	}
+	_, _ = fmt.Fprintf(log, "%s: hours [%s, %s): %s %d rows; versions %d, accrued %d, accrual errors %d, unordered %d; "+
+		"unreconciled %d (b_rate mismatches %d, fee mismatches %d, rows with a backstop residual %d), fee-only moves %d; "+
+		"checked: chain endpoints %d rows, gross telescoped %d (%d with excluded pairs not), fee carry %d (%d not)\n",
+		lendingInterestJob, from.Format(time.RFC3339), to.Format(time.RFC3339), verb, len(rows), versions, accrued, errs, unordered,
+		unreconciled, bRate, feeMis, residualRows, feeOnly, c.telescoped+c.telescopeSkipped, c.telescoped, c.telescopeSkipped,
+		c.feeChecked, c.feeSkipped)
+}

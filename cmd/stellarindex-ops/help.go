@@ -57,7 +57,7 @@ Subcommands:
                           transition. Resumes from its sponsorship_events
                           watermark and never writes past the entry_index
                           watermark. Without -write it counts events.
-  ch-entry-history -lending-only -ch-addr ADDR [-from N] [-to N] [-floor-ledger N] [-lock-file PATH] [-heartbeat PATH] [-print-prefixes | -prove] [-write]
+  ch-entry-history -lending-only -ch-addr ADDR [-from N] [-to N] [-floor-ledger N] [-lock-file PATH] [-heartbeat PATH] [-print-prefixes | -prove] [-interest-init | -interest-only | -interest-pool C...] [-interest-max-windows N] [-interest-max-unordered N] [-write]
                           Derive stellar.lending_state_hourly: the verbatim
                           last change per hour of every Blend and BLNT pool
                           ResData / ResConfig / instance and backstop
@@ -67,6 +67,17 @@ Subcommands:
                           -print-prefixes lists the registry and key
                           prefixes; -prove checks the history against the
                           lake at the watermark. Both only read.
+                          Then derives stellar.lending_interest_hourly (exact
+                          interest per pool reserve and complete hour) from
+                          its lending_interest watermark, never past
+                          lending_state's, once -interest-init has started
+                          it; until then the pass only logs. -interest-only
+                          skips the state pass; with -from it re-derives.
+                          -interest-pool backfills one uncovered pool.
+                          Without those flags the pass catches up at most
+                          one 100000-ledger window and logs "backfill
+                          incomplete" beyond it. Interest runs take their
+                          own lock beside -lock-file.
   ch-entry-index -ch-addr ADDR [-from N] [-to N] [-window N] [-floor-ledger N] [-lock-file PATH] [-heartbeat PATH] [-max-decode-errors N] [-write]
                           Build the ledger index of classic-entry activity:
                           stellar.account_entry_ledgers (account, role,

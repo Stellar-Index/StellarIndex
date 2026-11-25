@@ -2,6 +2,7 @@ package clickhouse
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/big"
@@ -395,6 +396,15 @@ func lendingInterestKindName(k lendinginterest.Kind) string {
 	return "unknown-kind"
 }
 
+// instanceWasmHash is the hex WASM hash an instance value's executable names; false for a SAC or no instance.
+func instanceWasmHash(val xdr.ScVal) (string, bool) {
+	inst, ok := val.GetInstance()
+	if !ok || inst.Executable.Type != xdr.ContractExecutableTypeContractExecutableWasm || inst.Executable.WasmHash == nil {
+		return "", false
+	}
+	return hex.EncodeToString(inst.Executable.WasmHash[:]), true
+}
+
 // decodeLendingInterestEntry decodes entry into v's payload for k's kind.
 func decodeLendingInterestEntry(k LendingInterestKey, entry string, v *lendinginterest.Version) error {
 	val, _, ok := contractDataEntry(entry)
@@ -419,6 +429,9 @@ func decodeLendingInterestEntry(k LendingInterestKey, entry string, v *lendingin
 			return errors.New("instance has no decodable pool Config")
 		}
 		v.BstopRate = inst.Config.BstopRate
+		if h, ok := instanceWasmHash(val); ok {
+			v.WasmHash = h
+		}
 	case lendinginterest.KindFees:
 		f, err := decodeBLNTFees(val)
 		if err != nil {

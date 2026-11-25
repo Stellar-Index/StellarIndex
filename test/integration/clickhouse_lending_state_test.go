@@ -4,6 +4,7 @@ package integration_test
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"math/big"
@@ -1075,5 +1076,263 @@ func TestLendingInterest_StoragePathOverASyntheticLake(t *testing.T) {
 	}
 	if wm, err := chstore.LendingInterestWatermark(ctx, addr); err != nil || wm != base+5 {
 		t.Fatalf("watermark = %d (%v), want %d", wm, err, base+5)
+	}
+}
+
+// liBLNTPoolWASM is the audited BLNT pool hash (docs/operations/wasm-audits/blnt.md).
+const liBLNTPoolWASM = "0e4f8f45b94e6b0d017a496ac5620ad0e3f866533cf45acd2b070bedda1e7356"
+
+// liInstanceVal is lendingPoolInstanceVal running WASM hash hexHash.
+func liInstanceVal(t *testing.T, oracle xdr.ContractId, hexHash string) xdr.ScVal {
+	t.Helper()
+	b, err := hex.DecodeString(hexHash)
+	if err != nil || len(b) != 32 {
+		t.Fatalf("wasm hash %q", hexHash)
+	}
+	var h xdr.Hash
+	copy(h[:], b)
+	v := lendingPoolInstanceVal(oracle)
+	v.Instance.Executable = xdr.ContractExecutable{Type: xdr.ContractExecutableTypeContractExecutableWasm, WasmHash: &h}
+	return v
+}
+
+// liRun runs the command; -floor-ledger goes only to runs that read it (the state pass or -interest-init), since an
+// interest-only run refuses it.
+func liRun(t *testing.T, addr string, base uint32, args ...string) error {
+	t.Helper()
+	cmd := []string{"ch-entry-history", "-lending-only", "-ch-addr", addr, "-write", "-lock-file", filepath.Join(t.TempDir(), "lending.lock")}
+	if !slices.Contains(args, "-interest-only") || slices.Contains(args, "-interest-init") {
+		cmd = append(cmd, "-floor-ledger", strconv.FormatUint(uint64(base), 10))
+	}
+	return chops.Run(append(cmd, args...))
+}
+
+func liU(n uint32) string { return strconv.FormatUint(uint64(n), 10) }
+
+// The real command path over a synthetic BLNT lake: the hourly timer run leaves the interest table empty until
+// -interest-init; init and two timer runs write rows equal to an independent blnt.AccrueBetween chain with the
+// watermark on an hour end, and a run with nothing new writes nothing; a -from re-derive rewrites its hours and
+// deletes one it no longer writes; an upgrade to an unaudited WASM refuses and holds the watermark.
+func TestChEntryHistoryLending_InterestPass(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+	conn := dialClickHouse(t, ctx, "stellar")
+	for _, q := range []string{
+		`TRUNCATE TABLE stellar.entry_history_watermark`, `TRUNCATE TABLE stellar.lending_state_hourly`,
+		`TRUNCATE TABLE stellar.lending_interest_hourly`,
+	} {
+		if err := conn.Exec(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	const base = uint32(171_500_000)
+	pool := seedLendingDeploy(t, ctx, addr, base)
+	var poolID, yieldID, asset xdr.ContractId
+	copy(poolID[:], strkey.MustDecode(strkey.VersionByteContract, pool))
+	copy(yieldID[:], strkey.MustDecode(strkey.VersionByteContract, blnt.MainnetYieldBlentPool))
+	asset[0] = 0x5f
+	assetStr := strkey.MustEncode(strkey.VersionByteContract, asset[:])
+	resKey := resDataKeyB64(t, poolID, asset)
+	instKey := lendingKeyB64(t, poolID, xdr.ScVal{Type: xdr.ScValTypeScvLedgerKeyContractInstance})
+	yieldInst := lendingKeyB64(t, yieldID, xdr.ScVal{Type: xdr.ScValTypeScvLedgerKeyContractInstance})
+	feeSym := xdr.ScSymbol("ProtocolFees")
+	feeVec := &xdr.ScVec{{Type: xdr.ScValTypeScvSymbol, Sym: &feeSym}}
+	feeKey := lendingKeyB64(t, poolID, xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &feeVec})
+
+	at := func(h, m int) time.Time { return time.Date(2027, 2, 20, h, m, 0, 0, time.UTC) }
+	closes := []time.Time{
+		at(10, 10), at(10, 50), at(11, 5), at(11, 40), at(12, 10), at(12, 50), at(13, 5), at(13, 30),
+		at(14, 5), at(14, 30), at(15, 5), at(15, 30),
+	}
+	seqs := []uint32{base - 1}
+	for i := range closes {
+		seqs = append(seqs, base+uint32(i))
+	}
+	entryHistorySeedLedgers(t, ctx, addr, seqs, 1, false)
+	for i, ts := range append([]time.Time{at(9, 50)}, closes...) {
+		if err := conn.Exec(ctx, `ALTER TABLE stellar.ledgers UPDATE close_time = ? WHERE ledger_seq = ? SETTINGS mutations_sync = 2`,
+			ts, seqs[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The replay gate reads the instance index only once it is genesis-complete.
+	if err := conn.Exec(ctx, `INSERT INTO stellar.entry_history_watermark (name, thru_ledger) VALUES (?, ?)`,
+		chstore.ContractInstanceChangesTable, base+100); err != nil {
+		t.Fatal(err)
+	}
+
+	rs := []liReserve{
+		{"1000000000000", "1000000000000", "0", 1000},
+		{"1000100000000", "1000050000000", "500", 2000},
+		{"1000300000000", "1000150000000", "1500", 3000},
+		{"1000600000000", "1000300000000", "3000", 4000},
+		{"1001000000000", "1000500000000", "4500", 5000},
+		{"1001500000000", "1000750000000", "7000", 6000},
+	}
+	// Reserve versions at these ledger offsets; the fee entry each writes is the chain's own expectation.
+	at6 := []int{0, 1, 2, 4, 6, 8}
+	entry := func(v xdr.ScVal) string { return lendingPoolEntryB64(t, poolID, v) }
+	change := func(i int, intra, idx uint32, ct, k, e string) chstore.LedgerEntryChangeRow {
+		return chstore.LedgerEntryChangeRow{
+			LedgerSeq: base + uint32(i), CloseTime: closes[i], TxHash: "8" + strconv.Itoa(i), ChangeIndex: idx,
+			ChangeType: ct, EntryType: "contract_data", KeyXDR: k, EntryXDR: e, IntraLedgerSeq: intra,
+		}
+	}
+	rows := []chstore.LedgerEntryChangeRow{
+		change(0, 1, 0, "created", instKey, entry(liInstanceVal(t, asset, liBLNTPoolWASM))),
+		change(0, 1, 1, "created", yieldInst, lendingPoolEntryB64(t, yieldID, liInstanceVal(t, asset, liBLNTPoolWASM))),
+		change(0, 2, 2, "created", resKey, entry(rs[0].val(t))),
+		change(0, 3, 3, "created", feeKey, entry(liFeesVal(t, asset, "0", "0"))),
+	}
+	var want [5]liHour // hours 10..14
+	fee := blnt.ProtocolFee{Credit: big.NewInt(0), Carry: big.NewInt(0)}
+	for j := 1; j < len(rs); j++ {
+		a, err := blnt.AccrueBetween(rs[j-1].data(), rs[j].data(), fee, fee, 2_000_000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		next := a.ExpectedFees
+		want[closes[at6[j]].Hour()-10].add(t, rs[j-1], rs[j], fee, next)
+		rows = append(rows, change(at6[j], 1, 0, "updated", resKey, entry(rs[j].val(t))),
+			change(at6[j], 2, 1, "updated", feeKey, entry(liFeesVal(t, asset, next.Credit.String(), next.Carry.String()))))
+		fee = next
+	}
+	insertEntryChanges(t, ctx, rows...)
+	for _, i := range []int{3, 5, 7, 9, 10} { // every tx-bearing ledger holds a change
+		u := change(i, 1, 0, "updated", "AAAAunrelated"+strconv.Itoa(i), "")
+		u.EntryType = "account"
+		insertEntryChanges(t, ctx, u)
+	}
+	// liDSupply makes every gross·rate whole units, so the carry stays 0 here; TestCheckFeeCarry moves it.
+	if fee.Credit.Sign() == 0 {
+		t.Fatalf("degenerate fixture: final fee entry %+v", fee)
+	}
+
+	// Rows under FINAL and the newest derive: a run that rewrote anything moves the latter.
+	count := func() (n uint64, newest time.Time) {
+		t.Helper()
+		if err := conn.QueryRow(ctx, `SELECT count(), max(derived_at) FROM stellar.lending_interest_hourly FINAL
+			WHERE contract_id IN (?, ?)`, pool, blnt.MainnetYieldBlentPool).Scan(&n, &newest); err != nil {
+			t.Fatal(err)
+		}
+		return n, newest
+	}
+	wm := func() uint32 {
+		t.Helper()
+		w, err := chstore.LendingInterestWatermark(ctx, addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return w
+	}
+
+	// The hourly timer's run: the state pass runs, the interest pass is not initialised and writes nothing.
+	if err := liRun(t, addr, base, "-from", liU(base), "-to", liU(base+7)); err != nil {
+		t.Fatalf("state pass: %v", err)
+	}
+	if n, _ := count(); n != 0 || wm() != 0 {
+		t.Fatalf("uninitialised timer run: %d rows, watermark %d; want none", n, wm())
+	}
+	if err := liRun(t, addr, base, "-interest-only", "-interest-init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if w := wm(); w != base+7 {
+		t.Fatalf("watermark after init = %d, want %d (hour 13's last ledger)", w, base+7)
+	}
+	// Two timer runs: the first derives hour 14, the second has nothing new.
+	var newest [2]time.Time
+	for i := range 2 {
+		if err := liRun(t, addr, base, "-to", liU(base+9)); err != nil {
+			t.Fatalf("timer run: %v", err)
+		}
+		var n uint64
+		if n, newest[i] = count(); n != 5 {
+			t.Fatalf("rows after timer run %d = %d, want 5", i+1, n)
+		}
+	}
+	if !newest[0].Equal(newest[1]) {
+		t.Fatalf("the second timer run rewrote rows (newest derive %s, then %s); want a no-op", newest[0], newest[1])
+	}
+	if w := wm(); w != base+9 {
+		t.Fatalf("watermark after the timer runs = %d, want %d", w, base+9)
+	}
+	checkLiRows(t, ctx, conn, pool, assetStr, at(10, 0), want[:], []uint32{base, base + 2, base + 4, base + 6, base + 8},
+		[]uint32{base + 1, base + 2, base + 4, base + 6, base + 8})
+
+	// Re-derive hours 11-12 from mid-hour: an earlier derive's row of an asset no longer written there is deleted.
+	if err := conn.Exec(ctx, `INSERT INTO stellar.lending_interest_hourly (contract_id, protocol, asset, hour, first_ledger,
+		last_ledger, derived_at) VALUES (?, 'blnt', 'CSTALE', ?, ?, ?, '2026-01-01 00:00:00')`, pool, at(12, 0), base+4, base+4); err != nil {
+		t.Fatal(err)
+	}
+	if err := liRun(t, addr, base, "-interest-only", "-from", liU(base+3), "-to", liU(base+5)); err != nil {
+		t.Fatalf("re-derive: %v", err)
+	}
+	var stale uint64
+	if err := conn.QueryRow(ctx, `SELECT count() FROM stellar.lending_interest_hourly FINAL WHERE asset = 'CSTALE'`).Scan(&stale); err != nil || stale != 0 {
+		t.Fatalf("superseded row count = %d (%v), want 0", stale, err)
+	}
+	checkLiRows(t, ctx, conn, pool, assetStr, at(10, 0), want[:], []uint32{base, base + 2, base + 4, base + 6, base + 8},
+		[]uint32{base + 1, base + 2, base + 4, base + 6, base + 8})
+	if w := wm(); w != base+9 {
+		t.Fatalf("watermark after the re-derive = %d, want %d (it never moves down)", w, base+9)
+	}
+
+	// An upgrade to unaudited code refuses the window naming the hash; the watermark holds.
+	const unaudited = "1111111111111111111111111111111111111111111111111111111111111111"
+	insertEntryChanges(t, ctx, change(11, 1, 0, "updated", instKey, entry(liInstanceVal(t, asset, unaudited))))
+	err := liRun(t, addr, base, "-to", liU(base+11))
+	if err == nil || !strings.Contains(err.Error(), unaudited) {
+		t.Fatalf("run over the upgrade: err = %v, want a refusal naming %s", err, unaudited)
+	}
+	if w := wm(); w != base+9 {
+		t.Fatalf("watermark after the refusal = %d, want %d", w, base+9)
+	}
+}
+
+// checkLiRows compares the pool's rows under FINAL with the expected per-hour chain sums and ledgers.
+func checkLiRows(t *testing.T, ctx context.Context, conn driver.Conn, pool, asset string, first time.Time, want []liHour,
+	firstLedgers, lastLedgers []uint32,
+) {
+	t.Helper()
+	rows, err := conn.Query(ctx, `SELECT hour, first_ledger, last_ledger, gross, protocol_fee, backstop, supplier_intended,
+		supplier_realised, backstop_credit_delta, fee_mismatches, derive_rev
+		FROM stellar.lending_interest_hourly FINAL WHERE contract_id = ? AND asset = ? ORDER BY hour`, pool, asset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	i := 0
+	for ; rows.Next(); i++ {
+		var hour time.Time
+		var fl, ll, feeMismatch uint32
+		var rev uint16
+		var got liHour
+		if err := rows.Scan(&hour, &fl, &ll, &got.gross, &got.fee, &got.backstop, &got.intended, &got.realised,
+			&got.creditDelta, &feeMismatch, &rev); err != nil {
+			t.Fatal(err)
+		}
+		if i >= len(want) {
+			t.Fatalf("extra row at %s", hour)
+		}
+		if !hour.Equal(first.Add(time.Duration(i)*time.Hour)) || fl != firstLedgers[i] || ll != lastLedgers[i] || rev != 1 || feeMismatch != 0 {
+			t.Errorf("row %d: %s ledgers %d-%d rev %d fee mismatches %d", i, hour, fl, ll, rev, feeMismatch)
+		}
+		w := &want[i]
+		for _, c := range [][2]*big.Int{
+			{&got.gross, &w.gross},
+			{&got.fee, &w.fee},
+			{&got.backstop, &w.backstop},
+			{&got.intended, &w.intended},
+			{&got.realised, &w.realised},
+			{&got.creditDelta, &w.creditDelta},
+		} {
+			if c[0].Cmp(c[1]) != 0 {
+				t.Errorf("hour %s: got %s, want %s (gross, fee, backstop, intended, realised, credit delta in order)", hour, c[0], c[1])
+			}
+		}
+	}
+	if err := rows.Err(); err != nil || i != len(want) {
+		t.Fatalf("read %d rows (%v), want %d", i, err, len(want))
 	}
 }

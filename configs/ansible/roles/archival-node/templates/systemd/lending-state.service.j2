@@ -9,6 +9,9 @@
 # genesis on first run) and walks forward in partition-aligned windows to
 # the lake's contiguous tip, advancing the watermark only for a window it
 # proved complete. A second firing while one runs exits at once on the flock.
+# Then, once initialised, it extends stellar.lending_interest_hourly by at
+# most one window under its own lock; a larger lag, or a manual interest run
+# holding that lock, is logged and skipped (deploy/clickhouse/lending_interest.sql).
 
 [Unit]
 Description=Stellar Index — lending state history catch-up
@@ -49,7 +52,10 @@ ReadWritePaths=/var/lib/stellarindex /var/lib/node_exporter/textfile_collector
 # stall alerts armed throughout.
 TimeoutStartSec=12h
 
-# Rows never pass through the client; the GROUP BY memory is the server's.
+# The state pass's rows never pass through the client (the GROUP BY memory is
+# the server's). Its interest pass folds one window's versions in process and
+# halves a window over lendingInterestMaxVersions (ch_lending_interest.go)
+# rather than meet this limit.
 MemoryMax=1G
 MemorySwapMax=0
 # Batch-class weights: this must never starve galexie's captive core.

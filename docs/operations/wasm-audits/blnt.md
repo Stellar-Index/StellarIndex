@@ -101,6 +101,49 @@ or protocol registry adds a non-factory contract, the factory deploys a pool
 whose history does not resolve to the audited pool hash, or a source release
 changes any emitted topic.
 
+## Interest accrual arithmetic
+
+The sections above audit event and decoder shapes. This one records what
+backs the accrual arithmetic `stellar.lending_interest_hourly` applies to pool
+hash `0e4f8f45b94e6b0d…`, mapped in `lendingInterestWASM`
+(`internal/ops/chops/ch_lending_interest_check.go`). It is not a review of
+that binary.
+
+- **Arithmetic.** Blend V2's (`blend.md`, "Interest accrual arithmetic") with
+  a protocol fee taken from gross before the backstop's share:
+  `internal/sources/blnt/accrual.go:100-128`, rate `ProtocolInterestFeeRate`
+  = 20000 (0.2%, 7 decimals) at `internal/sources/blnt/reserves.go:27`. The
+  fee is `floor((carry + gross·rate)/1e7)`, the remainder carried in the
+  pool's `ProtocolFees` entry.
+- **Source.** None read. The rate and the floor-with-carry rule are inferred
+  from chain data over pools `CACSQWCM…MCY7` (ledgers 65638200–65658199) and
+  `CAUTPSQD…VF4D`, `CCH3BNZW…C3XD` (65578200–65658199), as the constant's
+  comment states; the `5d055ca` source in the lineage table was not compared.
+- **Pinned by tests.** `TestAccrueBetween_Vectors`, `TestAccrueBetween_MainnetGolden`
+  (`internal/sources/blnt/accrual_test.go`) and `TestFold_GoldenHours`,
+  `TestTelescopedGross_GoldenHours` (`internal/lendinginterest/`) over the
+  `BLNT` slices in `internal/sources/blend/blendtest/golden.go`: every pair
+  reproduces b_rate and the fee entry; the three reserves' versions at
+  ledger 65648345 carry a backstop_credit draw accrual does not explain,
+  pinned as reported residuals.
+- **Measured on the production lake (2026-11-25), not in the repo's tests.**
+  741 version pairs on `CACSQWCM…`, 65 on `CAUTPSQD…`, 7 on `CCH3BNZW…`; the
+  fee rule held on all, and backstop_credit on all but the one transaction
+  at 65648345. No fee withdrawal was seen, and `abi.go` has no event for one.
+  Recorded in the audit run's `design-open-items.md`, outside this repo.
+- **In-line check.** A claim or `protocol_credit_loss` that moves the fee
+  entry without a ResData write in the same transaction is walked from the fee
+  versions (the row's fee-only delta), so it neither fails nor hides in the
+  fee-carry check.
+
+Open before the table is served:
+
+1. Widen the evidence to BLNT's whole history with the prove pass; the span
+   above is at most 80,000 ledgers.
+2. Confirm the rate and rule against the deployed hash (source or attested
+   build) rather than chain fit.
+3. Explain the 65648345 draw against its events.
+
 ## References
 
 - Procedure: [`README.md`](README.md)

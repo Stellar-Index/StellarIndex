@@ -50,3 +50,53 @@ tests:
       - eval_time: 40m
         alertname: stellarindex_lending_state_lagging
         exp_alerts: []
+
+  - interval: 1m
+    name: lending interest more than 100000 ledgers behind lending state fires after 2h
+    input_series:
+      - series: 'stellarindex_ops_job_progress_cursor{job="node_exporter",instance="r1:9100",ops_job="ch-entry-history-lending"}'
+        values: '60000000+10x180'
+      - series: 'stellarindex_ops_job_progress_cursor{job="node_exporter",instance="r1:9100",ops_job="ch-entry-history-lending-interest"}'
+        values: '59899000+0x180'
+    alert_rule_test:
+      - eval_time: 1h
+        alertname: stellarindex_lending_interest_lagging
+        exp_alerts: []
+      - eval_time: 2h30m
+        alertname: stellarindex_lending_interest_lagging
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#lending-interest-lagging
+              summary: "lending interest history trails lending state by more than 100000 ledgers"
+              description: |
+                stellar.lending_interest_hourly is more than 100000 ledgers
+                behind lending_state_hourly for 2 h. The timer's pass does not
+                catch up that far ("backfill incomplete"): run the backfill
+                chunks. Or the pass is refusing a window (WASM gate, identity
+                check, uncovered pool), or a backfill chunk is still running.
+
+  - interval: 1m
+    name: a host whose interest pass was never initialised stays quiet
+    input_series:
+      - series: 'stellarindex_ops_job_progress_cursor{job="node_exporter",instance="r1:9100",ops_job="ch-entry-history-lending"}'
+        values: '60000000+10x180'
+    alert_rule_test:
+      - eval_time: 2h30m
+        alertname: stellarindex_lending_interest_lagging
+        exp_alerts: []
+
+  - interval: 1m
+    name: lending interest within one window of lending state stays quiet
+    input_series:
+      - series: 'stellarindex_ops_job_progress_cursor{job="node_exporter",instance="r1:9100",ops_job="ch-entry-history-lending"}'
+        values: '60000000+10x180'
+      - series: 'stellarindex_ops_job_progress_cursor{job="node_exporter",instance="r1:9100",ops_job="ch-entry-history-lending-interest"}'
+        values: '59990000+10x180'
+    alert_rule_test:
+      - eval_time: 2h30m
+        alertname: stellarindex_lending_interest_lagging
+        exp_alerts: []

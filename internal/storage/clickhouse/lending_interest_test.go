@@ -138,8 +138,15 @@ func TestLendingInterestVersion_DecodesEachKind(t *testing.T) {
 		t.Fatalf("reserve version position = %+v", rv)
 	}
 	cv, err := lendingInterestVersion(liKey(lendinginterest.KindConfig, lendinginterest.BlendV2), liChange("created", histInstance(t)))
-	if err != nil || cv.BstopRate != 2_000_000 {
-		t.Fatalf("config version = %+v (%v), want bstop_rate 2000000", cv, err)
+	if err != nil || cv.BstopRate != 2_000_000 || cv.WasmHash != "" {
+		t.Fatalf("config version = %+v (%v), want bstop_rate 2000000 and no WASM (a SAC executable)", cv, err)
+	}
+	wasmInst := poolInstanceVal(t, v2PoolConfigMap(t))
+	hash := xdr.Hash{0xa4, 0x1f}
+	wasmInst.Instance.Executable = xdr.ContractExecutable{Type: xdr.ContractExecutableTypeContractExecutableWasm, WasmHash: &hash}
+	wv, err := lendingInterestVersion(liKey(lendinginterest.KindConfig, lendinginterest.BlendV2), liChange("updated", histEntry(t, wasmInst)))
+	if want := "a41f" + strings.Repeat("0", 60); err != nil || wv.WasmHash != want {
+		t.Fatalf("wasm instance version hash %q (%v), want %s", wv.WasmHash, err, want)
 	}
 	fv, err := lendingInterestVersion(liKey(lendinginterest.KindFees, lendinginterest.BLNT), liChange("restored", liFeesEntry(t, "70", "9999999")))
 	if err != nil {
