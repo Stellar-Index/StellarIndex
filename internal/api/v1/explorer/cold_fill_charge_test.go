@@ -185,6 +185,53 @@ func TestColdFill_JoiningAnInFlightFillIsNotSurcharged(t *testing.T) {
 	}
 }
 
+// TestColdFill_JoinerOfRefusedOwnerFillsItself: a request that joined a flight whose owner was then refused its charge retries
+// as owner, pays its own charge and gets the page, instead of the owner's refusal turning into its 503.
+func TestColdFill_JoinerOfRefusedOwnerFillsItself(t *testing.T) {
+	h, _ := newSWRHandler()
+	const key = "ev:100:CREFUSEDOWNER"
+	var reads atomic.Int64
+	compute := countingCompute(&reads)
+	release := make(chan struct{})
+	ownerCtx := ratelimit.WithColdFillCharge(context.Background(), func(int) error {
+		<-release // hold the flight until the joiner is waiting on it
+		return fmt.Errorf("budget spent: %w", ratelimit.ErrColdFillRefused)
+	})
+	var charged atomic.Int64
+	joiner := &doneSignalCtx{Context: ratelimit.WithColdFillCharge(context.Background(), func(n int) error {
+		charged.Add(int64(n))
+		return nil
+	}), joined: make(chan struct{})}
+
+	ownerErr := make(chan error, 1)
+	go func() {
+		_, _, _, err := h.contractDetailCached(ownerCtx, key, compute)
+		ownerErr <- err
+	}()
+	for flightIdle(&h.contractDetail.flight) {
+		time.Sleep(time.Millisecond)
+	}
+	joinErr := make(chan error, 1)
+	go func() {
+		_, _, _, err := h.contractDetailCached(joiner, key, compute)
+		joinErr <- err
+	}()
+	<-joiner.joined
+	close(release)
+	if err := <-ownerErr; !errors.Is(err, ratelimit.ErrColdFillRefused) {
+		t.Fatalf("owner: err = %v, want ErrColdFillRefused", err)
+	}
+	if err := <-joinErr; err != nil {
+		t.Fatalf("joiner of a refused owner: err = %v, want its own fill", err)
+	}
+	if got := reads.Load(); got != 1 {
+		t.Fatalf("reads = %d, want 1 (the joiner's own fill)", got)
+	}
+	if got := charged.Load(); got != ratelimit.ColdFillCost {
+		t.Fatalf("joiner charged %d, want ColdFillCost (%d) for the fill it then owned", got, ratelimit.ColdFillCost)
+	}
+}
+
 // TestColdFill_NoChargeInContextUnchanged: with the limiter disabled (no bucket, so no charge in context) every cold key fills as before.
 func TestColdFill_NoChargeInContextUnchanged(t *testing.T) {
 	if err := ratelimit.ChargeColdFill(context.Background()); err != nil {

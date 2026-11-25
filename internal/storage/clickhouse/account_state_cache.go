@@ -97,30 +97,58 @@ const accountStateColdSlotWait = 4 * time.Second
 var errAccountStateRefreshFailed = errors.New(
 	"clickhouse: detached account-state refresh produced no entry")
 
+// errAccountStateOwnerRefused is the cold admission's answer when the owner could not pay its cold-fill charge: no scan ran.
+var errAccountStateOwnerRefused = errors.New("clickhouse: cold account-state fill owner refused its charge")
+
+// tryAdmitAccountState is the stale path's admission: an entry is served either way, so skip rather than wait.
+func tryAdmitAccountState(g *RefreshGate, class string) error {
+	if g.TryAcquireClass(class) {
+		return nil
+	}
+	return ErrRefreshSaturated
+}
+
 // AccountStateCached serves account state from the TTL cache; a miss kicks one detached scan per account (so a whale scan survives the request) and waits only up to the caller's deadline.
 // The bool reports a serve from an expired entry; with the state's CachedAt and RefreshFailed the API layer judges whether it is stale.
 func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string) (AccountState, bool, error) {
 	if st, ok, fresh := r.stateCache.get(account); ok {
 		if !fresh {
 			// Serve the expired entry now while one detached refresh runs: old-but-real beats a 503.
-			if _, skipped := r.refreshAccountState(account, (*RefreshGate).TryAcquireClass); skipped { //nolint:contextcheck // intentional detach — see refreshAccountState
+			if _, skipped := r.refreshAccountState(account, tryAdmitAccountState); skipped { //nolint:contextcheck // intentional detach — see refreshAccountState
 				st.RefreshFailed = true
 			}
 		}
 		return st, !fresh, nil
 	}
+	// A joiner of a flight whose owner was refused its charge learns nothing about its own budget, so it retries once as candidate
+	// owner paying its own charge; a second refused owner answers ErrRefreshSaturated, so the retry cannot loop.
+	st, ownerRefused, err := r.accountStateCold(ctx, account)
+	if ownerRefused {
+		if st, ownerRefused, err = r.accountStateCold(ctx, account); ownerRefused {
+			return AccountState{}, false, ErrRefreshSaturated
+		}
+	}
+	return st, false, err
+}
+
+// accountStateCold starts or joins account's cold fill and waits for it; ownerRefused reports a joined flight whose owner was
+// refused its cold-fill charge (no scan ran).
+func (r *ExplorerReader) accountStateCold(ctx context.Context, account string) (st AccountState, ownerRefused bool, err error) {
 	// Not single-flighted across accounts: distinct accounts need distinct scans; only the
 	// same-account burst is collapsed, by the per-account flight.
 	// Cold: the owner pays the request's cold-fill surcharge before claiming a slot (refused: nothing claimed), then waits (bounded,
 	// see AcquireClassWait) for a slot rather than shed.
 	var refused error
-	waitForSlot := func(g *RefreshGate, class string) bool {
+	waitForSlot := func(g *RefreshGate, class string) error {
 		if refused = ratelimit.ChargeColdFill(ctx); refused != nil {
-			return false
+			return errAccountStateOwnerRefused
 		}
 		wctx, cancel := context.WithTimeout(ctx, accountStateColdSlotWait)
 		defer cancel()
-		return g.AcquireClassWait(wctx, class)
+		if !g.AcquireClassWait(wctx, class) {
+			return ErrRefreshSaturated
+		}
+		return nil
 	}
 	fl, saturated := r.refreshAccountState(account, waitForSlot) //nolint:contextcheck // intentional detach — the fill must outlive a caller that times out (see doc above)
 	if refused != nil {
@@ -130,6 +158,9 @@ func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string)
 	case <-fl.done:
 		if st, ok, _ := r.stateCache.get(account); ok {
 			return st, false, nil
+		}
+		if fl.ownerRefused {
+			return AccountState{}, true, nil
 		}
 		if saturated || fl.saturated {
 			// A full gate means no scan ran: transient backpressure, not a failed scan. Return the
@@ -146,7 +177,7 @@ func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string)
 // refreshAccountState kicks one detached scan for account (returning the existing flight's channel), outliving the request. saturated is
 // true only when this call owned the flight and the shared refresh gate was full; non-owners read the entry's flag, set before end()
 // closes done.
-func (r *ExplorerReader) refreshAccountState(account string, admit func(*RefreshGate, string) bool) (fl *stateFlightEntry, saturated bool) {
+func (r *ExplorerReader) refreshAccountState(account string, admit func(*RefreshGate, string) error) (fl *stateFlightEntry, saturated bool) {
 	fl, owner := r.stateFlight.begin(account)
 	if !owner {
 		return fl, false
@@ -154,9 +185,11 @@ func (r *ExplorerReader) refreshAccountState(account string, admit func(*Refresh
 	// Global bound across keys: the per-account flight collapses same-account bursts, but the
 	// account space is attacker-chosen, so key churn would queue unbounded scans on the shared
 	// pool. admit claims the slot: a bounded wait for a cold read, a skip for a stale one (see RefreshGate).
-	if !admit(r.refreshGate, "account_state") {
+	if err := admit(r.refreshGate, "account_state"); err != nil {
 		r.stateCache.markRefreshFailed(account)
-		fl.saturated = true // published to waiters by end()'s close
+		// Both published to waiters by end()'s close.
+		fl.saturated = true
+		fl.ownerRefused = errors.Is(err, errAccountStateOwnerRefused)
 		r.stateFlight.end(account, fl)
 		return fl, true
 	}
@@ -196,11 +229,12 @@ func (r *ExplorerReader) refreshAccountState(account string, admit func(*Refresh
 	return fl, false
 }
 
-// stateFlightEntry is one in-flight refresh; saturated is written only by the owner before end() closes done, so waiters read it after
+// stateFlightEntry is one in-flight refresh; saturated and ownerRefused are written only by the owner before end() closes done, so waiters read it after
 // <-done without locking.
 type stateFlightEntry struct {
-	done      chan struct{}
-	saturated bool
+	done         chan struct{}
+	saturated    bool
+	ownerRefused bool
 }
 
 // perKeyFlight collapses concurrent work for the same key. Used for the
