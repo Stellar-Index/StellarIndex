@@ -11,15 +11,17 @@ import (
 // blend-contracts-v2 v2.0.0 agree on it). Amounts are in the reserve asset's base units. The checks
 // report what accrual alone cannot explain; they are never coerced to agree.
 type Accrual struct {
-	Gross            *big.Int // borrower interest: total_liabilities at the new d_rate minus at the old
-	Backstop         *big.Int // backstop's share of Gross, floor(Gross·bstop_rate)
-	SupplierIntended *big.Int // Gross − Backstop
+	Gross *big.Int // borrower interest: total_liabilities at the new d_rate minus at the old
+	// ProtocolFee is a fork's fee taken off Gross before the backstop's share; zero for Blend.
+	ProtocolFee      *big.Int
+	Backstop         *big.Int // backstop's share, floor((Gross − ProtocolFee)·bstop_rate)
+	SupplierIntended *big.Int // Gross − ProtocolFee − Backstop
 	// SupplierRealised is total_supply at ExpectedBRate minus at the old b_rate. b_rate's floor
 	// keeps up to b_supply/scalar+1 units of SupplierIntended in the pool, and can make this negative.
 	SupplierRealised *big.Int
 	ExpectedBRate    *big.Int
 	// BRateMatches is false when something besides accrual moved b_rate in the version (a V2
-	// default, a BLNT protocol fee); the caller must exclude or explain it.
+	// default); the caller must exclude or explain it.
 	BRateMatches        bool
 	BackstopCreditDelta *big.Int // next.backstop_credit − prev.backstop_credit, signed
 	// BackstopResidual is BackstopCreditDelta − Backstop. Non-zero means a gulp, an interest-auction
@@ -34,17 +36,32 @@ type Accrual struct {
 // storing a new one; V1's does not, so after a V1 change the new rate covers the whole interval up
 // to each reserve's next load.
 func AccrueBetween(prev, next ReserveData, bstopRate uint32) (Accrual, error) {
+	return AccrueBetweenWithFee(prev, next, bstopRate, nil)
+}
+
+// AccrueBetweenWithFee is AccrueBetween for a fork that takes fee(gross) off positive gross interest
+// before the backstop's share (BLNT). fee is not called when gross is not positive, and must return
+// a value in [0, gross]; a nil fee is Blend's zero fee.
+func AccrueBetweenWithFee(prev, next ReserveData, bstopRate uint32, fee func(gross *big.Int) *big.Int) (Accrual, error) {
 	if err := checkAccrualInputs(prev, next, bstopRate); err != nil {
 		return Accrual{}, err
 	}
 	s := prev.rateScalar()
 	// load() reads the STORED prev, so every operand except the new d_rate is prev's.
 	gross := new(big.Int).Sub(fixedMulCeil(prev.DSupply, next.DRate, s), prev.BorrowedUnderlying())
+	protocolFee := new(big.Int)
+	if gross.Sign() > 0 && fee != nil {
+		protocolFee = fee(new(big.Int).Set(gross))
+		if protocolFee == nil || protocolFee.Sign() < 0 || protocolFee.Cmp(gross) > 0 {
+			return Accrual{}, fmt.Errorf("blend: protocol fee %v outside [0, gross %s]", protocolFee, gross)
+		}
+	}
+	net := new(big.Int).Sub(gross, protocolFee)
 	backstop := new(big.Int)
 	if gross.Sign() > 0 && bstopRate > 0 {
-		backstop = fixedMulFloor(gross, big.NewInt(int64(bstopRate)), scalar7)
+		backstop = fixedMulFloor(net, big.NewInt(int64(bstopRate)), scalar7)
 	}
-	intended := new(big.Int).Sub(gross, backstop)
+	intended := new(big.Int).Sub(net, backstop)
 	preSupply := prev.SuppliedUnderlying()
 	expected := new(big.Int).Set(prev.BRate)
 	if gross.Sign() > 0 {
@@ -54,6 +71,7 @@ func AccrueBetween(prev, next ReserveData, bstopRate uint32) (Accrual, error) {
 	delta := new(big.Int).Sub(next.BackstopCredit, prev.BackstopCredit)
 	return Accrual{
 		Gross:               gross,
+		ProtocolFee:         protocolFee,
 		Backstop:            backstop,
 		SupplierIntended:    intended,
 		SupplierRealised:    realised,
