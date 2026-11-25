@@ -65,7 +65,7 @@ func itRedis(t *testing.T, ctx context.Context) redis.UniversalClient {
 	if err != nil {
 		t.Fatalf("start redis: %v", err)
 	}
-	t.Cleanup(func() { _ = ctr.Terminate(context.Background()) })
+	t.Cleanup(func() { _ = ctr.Terminate(context.WithoutCancel(ctx)) })
 	host, err := ctr.Host(ctx)
 	if err != nil {
 		t.Fatal(err)

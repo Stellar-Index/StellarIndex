@@ -91,28 +91,13 @@ func (p PrefetchStore) PrefetchLatest(ctx context.Context, pairs []canonical.Pai
 		live []canonical.Pair
 	)
 	forChunks(pairs, func(chunk []canonical.Pair) {
-		res, err := p.Store.LatestClosedVWAP1mForPairSet(ctx, chunk)
-		if err != nil {
-			for range chunk {
-				latestSeam.Failed()
-			}
-			return
-		}
-		for i, r := range res {
-			if r.Err != nil && !errors.Is(r.Err, sql.ErrNoRows) {
-				latestSeam.Failed()
-				continue
-			}
-			latestSeam.Fill(ctx, memoPairKey(chunk[i]), r, r.Err == nil)
-			if r.Err == nil {
-				mu.Lock()
-				live = append(live, chunk[i])
-				mu.Unlock()
-			}
-		}
+		found := p.prefetchLatestChunk(ctx, chunk)
+		mu.Lock()
+		live = append(live, found...)
+		mu.Unlock()
 	})
 	forChunks(live, func(chunk []canonical.Pair) {
-		rows, err := p.Store.RecentClosedVWAP1mCombinedSet(ctx, chunk, limit)
+		rows, err := p.RecentClosedVWAP1mCombinedSet(ctx, chunk, limit)
 		if err != nil {
 			for range chunk {
 				trailingSeam.Failed()
@@ -123,6 +108,29 @@ func (p PrefetchStore) PrefetchLatest(ctx context.Context, pairs []canonical.Pai
 			trailingSeam.Fill(ctx, trailingKey{memoPairKey(chunk[i]), limit}, r, true)
 		}
 	})
+}
+
+// prefetchLatestChunk fills ctx's memo with each pair's latest closed bucket and returns the pairs that have one.
+func (p PrefetchStore) prefetchLatestChunk(ctx context.Context, chunk []canonical.Pair) []canonical.Pair {
+	res, err := p.LatestClosedVWAP1mForPairSet(ctx, chunk)
+	if err != nil {
+		for range chunk {
+			latestSeam.Failed()
+		}
+		return nil
+	}
+	var live []canonical.Pair
+	for i, r := range res {
+		if r.Err != nil && !errors.Is(r.Err, sql.ErrNoRows) {
+			latestSeam.Failed()
+			continue
+		}
+		latestSeam.Fill(ctx, memoPairKey(chunk[i]), r, r.Err == nil)
+		if r.Err == nil {
+			live = append(live, chunk[i])
+		}
+	}
+	return live
 }
 
 // forChunks calls f on each prefetchChunk-sized slice of pairs, prefetchParallel at a time, and waits for all of them.
