@@ -70,7 +70,7 @@ func checkAccrualInputs(prev, next ReserveData, bstopRate uint32) error {
 	if prev.Version != next.Version || (prev.Version != PoolV1 && prev.Version != PoolV2) {
 		return fmt.Errorf("blend: accrual between pool versions %d and %d", prev.Version, next.Version)
 	}
-	if bstopRate >= uint32(scalar7.Int64()) {
+	if new(big.Int).SetUint64(uint64(bstopRate)).Cmp(scalar7) >= 0 {
 		// config.rs refuses bstop_rate >= SCALAR_7.
 		return fmt.Errorf("blend: accrual with bstop_rate %d >= 100%%", bstopRate)
 	}
