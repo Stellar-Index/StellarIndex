@@ -69,7 +69,8 @@
  * listing, per-asset detail, etc.) is unchanged.
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { API_BASE_URL, buildHeaders } from '@/api/client';
@@ -342,8 +343,8 @@ export function buildFetchEnvelope<T>(
   // /v1/sources without blend_emitter) that disagreed with sibling
   // fresh-cache responses INSIDE THE SAME BUILD. A per-build nonce query
   // param makes every build URL cache-unique, so requests go straight to
-  // origin; the in-process memo still dedupes within the build, so
-  // origin load per build is unchanged (one request per distinct path).
+  // origin; the in-process memo still dedupes within each worker process
+  // (price batch chunks also across processes, via buildFetchPriceBatch).
   const url = `${base}${base.includes('?') ? '&' : '?'}b=${BUILD_NONCE}`;
   const hit = memo.get(url);
   if (hit) return hit as Promise<BuildFetchEnvelope<T>>;
@@ -524,6 +525,41 @@ export interface BuildPriceHit {
 
 const priceBatchMemo = new Map<string, Promise<Map<string, BuildPriceHit | null>>>();
 
+// output: 'export' renders every page twice, the second pass in fresh worker
+// processes, so each batch chunk is shared on disk to price it once per build
+// (.next is wiped at build start). Keyed by path: the nonce differs per process.
+const BATCH_MEMO_DIR = join(process.cwd(), '.next', 'build-price-batch');
+
+function batchMemoFile(path: string): string {
+  return join(BATCH_MEMO_DIR, `${createHash('sha256').update(path).digest('hex')}.json`);
+}
+
+function readBatchMemo(path: string): BuildFetchEnvelope<PriceBatchRow[]> | null {
+  if (process.env.NEXT_PHASE !== 'phase-production-build') return null;
+  try {
+    const saved = JSON.parse(readFileSync(batchMemoFile(path), 'utf8')) as {
+      path?: unknown;
+      env?: BuildFetchEnvelope<PriceBatchRow[]>;
+    };
+    return saved.path === path && Array.isArray(saved.env?.data) ? saved.env : null;
+  } catch {
+    return null; // absent, partial or corrupt: ask the API
+  }
+}
+
+function writeBatchMemo(path: string, env: BuildFetchEnvelope<PriceBatchRow[]>): void {
+  if (process.env.NEXT_PHASE !== 'phase-production-build') return;
+  const file = batchMemoFile(path);
+  const tmp = `${file}.${process.pid}.tmp`;
+  try {
+    mkdirSync(BATCH_MEMO_DIR, { recursive: true });
+    writeFileSync(tmp, JSON.stringify({ path, env }));
+    renameSync(tmp, file);
+  } catch {
+    // The next process re-asks the API: costs a request, never a value.
+  }
+}
+
 /**
  * buildFetchPriceBatch prices many ids against one quote through
  * /v1/price/batch, so a build costs one request per 100 ids instead of one
@@ -546,10 +582,16 @@ export function buildFetchPriceBatch(
     const out = new Map<string, BuildPriceHit | null>();
     for (let i = 0; i < wanted.length; i += PRICE_BATCH_GET_MAX_IDS) {
       const chunk = wanted.slice(i, i + PRICE_BATCH_GET_MAX_IDS);
-      const env = await buildFetchEnvelope<PriceBatchRow[]>(
-        `/v1/price/batch?asset_ids=${encodeURIComponent(chunk.join(','))}&quote=${encodeURIComponent(quote)}`,
-        { softFail: true, timeoutMs: 15_000, attempts: 2 },
-      );
+      const path = `/v1/price/batch?asset_ids=${encodeURIComponent(chunk.join(','))}&quote=${encodeURIComponent(quote)}`;
+      let env = readBatchMemo(path);
+      if (!env) {
+        env = await buildFetchEnvelope<PriceBatchRow[]>(path, {
+          softFail: true,
+          timeoutMs: 15_000,
+          attempts: 2,
+        });
+        if (Array.isArray(env.data)) writeBatchMemo(path, env);
+      }
       if (!env.data) continue;
       // Older APIs send only the OR-ed flag: a set flag without the id list
       // cannot be pinned to a row, so those rows' flags stay unknown.
