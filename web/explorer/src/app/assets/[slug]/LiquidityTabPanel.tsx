@@ -12,7 +12,7 @@ import {
   Td,
   LinkRow,
 } from '@/components/ui';
-import { asExample, API_BASE_URL, buildHeaders } from '@/api/client';
+import { asExample } from '@/api/client';
 import {
   compareDecimalDesc,
   divideDecimalString,
@@ -23,44 +23,38 @@ import {
 // /v1/pools row from the generated OpenAPI contract (spec PoolRow, via
 // the shared alias in src/api/hooks.ts).
 import type { Pool as PoolRow } from '@/api/hooks';
-import { isCIStub } from '@/lib/buildFetch';
+import { buildFetchEnvelope } from '@/lib/buildFetch';
 import { assetIdentityLabel } from '@/lib/asset-label';
 import { LiquidityVenueBars } from './LiquidityVenueBars';
 import { bakedAtDeploy } from './priceProvenance';
 import { withheldNote } from './headerNotes';
 
-const BUILD_FETCH_TIMEOUT_MS = 8_000;
-
 /**
  * fetchPoolsForAsset returns the pool rows, or `null` when we could not
- * read them at all (CI stub, non-2xx, timeout, transport error).
+ * read them at all (CI stub, 404, persistent 503/timeout/transport error).
  *
  * The null is load-bearing: /v1/pools answers 503 on its documented
  * trades-hypertable ceiling, and this panel's empty state asserts "no
  * DEX pools observed touching {code} in the trailing 14 days" — a claim
  * that would otherwise be BAKED INTO THE STATIC EXPORT off a transport
  * blip (the incident class src/lib/buildFetch.ts's header documents).
+ * softFail: an unread pool list renders as unavailable rather than failing
+ * the export; two attempts keep a cold endpoint from stalling the page.
  */
 async function fetchPoolsForAsset(
   assetID: string,
-): Promise<{ rows: PoolRow[]; truncated: boolean } | null> {
-  if (isCIStub) return null;
-  try {
-    const url = `${API_BASE_URL}/v1/pools?asset=${encodeURIComponent(assetID)}&limit=100&order_by=volume_24h_usd_desc`;
-    const res = await fetch(url, {
-      headers: buildHeaders(),
-      signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
-    });
-    if (!res.ok) return null;
-    const env = (await res.json()) as {
-      data?: PoolRow[];
-      pagination?: { next?: string | null };
-    };
+): Promise<{ rows: PoolRow[]; truncated: boolean; degraded: boolean } | null> {
+  const env = await buildFetchEnvelope<PoolRow[]>(
+    `/v1/pools?asset=${encodeURIComponent(assetID)}&limit=100&order_by=volume_24h_usd_desc`,
+    { softFail: true, attempts: 2 },
+  );
+  if (!Array.isArray(env.data)) return null;
+  return {
+    rows: env.data,
     // A next cursor means more pools exist than this one page holds.
-    return { rows: env.data ?? [], truncated: Boolean(env.pagination?.next) };
-  } catch {
-    return null;
-  }
+    truncated: Boolean(env.pagination?.next),
+    degraded: env.degraded === true,
+  };
 }
 
 /**
@@ -88,6 +82,7 @@ export async function LiquidityTabPanel({
   const page = await fetchPoolsForAsset(assetID);
   const rows = page?.rows ?? null;
   const truncated = page?.truncated === true;
+  const degraded = page?.degraded === true;
   // Defensive client-side filter: older API versions silently
   // ignore unknown query params, so on a pre-`?asset=` deployment
   // the response would be the global top pools (every asset
@@ -126,12 +121,23 @@ export async function LiquidityTabPanel({
             </p>
           </Callout>
         </div>
-      ) : merged.length === 0 ? (
+      ) : merged.length === 0 && !degraded ? (
         <p className="text-ink-muted px-4 py-3 text-sm">
           No DEX pools touching {code} in the trailing 14 days.
         </p>
       ) : (
         <div className="overflow-x-auto">
+          {degraded && (
+            <div className="px-4 pb-3">
+              <Callout tone="warn">
+                <p>
+                  Pool list incomplete: the API marked its answer partial when
+                  this page was built, so {code}&apos;s pools here are a subset,
+                  not the whole list.
+                </p>
+              </Callout>
+            </div>
+          )}
           <LiquidityVenueBars pools={merged} truncated={truncated} />
           <Table>
             <THead>
