@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 75 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 333 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 334 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -514,6 +514,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_cross_region_check_stale` | `time() - cross_region_last_run_timestamp_seconds` | > 300 s, 5 min | ticket | [cross-region-divergence](runbooks/cross-region.md#stellarindex_cross_region_check_stale) |
 | `stellarindex_signup_reaper_failing` | `rate(stellarindex_signup_reaper_runs_total{outcome="error"}[6h]) > rate(...{outcome="ok"}[6h])` | sustained 30 min | ticket | [signup-reaper-failing](runbooks/signup-reaper-failing.md) |
 | `stellarindex_ratelimit_fail_open` | `increase(ratelimit_fail_open_total[15m])` | > 100 in 15 min (Redis error; window capped at the 30 s dwell, so a rate form never fires) | ticket | [ratelimit-fail-open](runbooks/api.md#stellarindex_ratelimit_fail_open) |
+| `stellarindex_ratelimit_cold_fill_refusals_sustained` | `rate(ratelimit_cold_fill_refused_total[15m])` | > 1/s for 30 min (uncached reads refused 429 for want of surcharge budget: a crawler held back, or real users throttled) | ticket | [ratelimit-cold-fill-refusals](runbooks/api.md#stellarindex_ratelimit_cold_fill_refusals_sustained) |
 | `stellarindex_ratelimit_fail_closed` | `rate(ratelimit_fail_closed_total[5m])` | > 0 for 2 min (past the dwell every request in the bucket gets 503) | page | [ratelimit-fail-open](runbooks/api.md#stellarindex_ratelimit_fail_closed) |
 | `stellarindex_ratelimit_inprocess_overflow` | `increase(ratelimit_inprocess_overflow_total[10m])` | > 0 for 5 min (an in-process limiter's key map is full) | ticket | [ratelimit-inprocess-overflow](runbooks/api.md#stellarindex_ratelimit_inprocess_overflow) |
 | `stellarindex_api_observations_stream_ticks_shed` | `rate(api_observations_stream_ticks_shed_total[10m])` | > 0.1/s for 15 min (stream scans outrun their slot budget) | ticket | [observations-stream-ticks-shed](runbooks/api.md#stellarindex_api_observations_stream_ticks_shed) |

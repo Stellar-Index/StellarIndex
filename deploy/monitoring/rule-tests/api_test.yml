@@ -1555,3 +1555,53 @@ tests:
       - eval_time: 8m
         alertname: stellarindex_api_sse_streams_rejected
         exp_alerts: []
+
+  # ── sustained cold-read refusals ticket ──────────────────
+  # 120 refusals a minute (2/s) held for an hour: past the 30m dwell.
+  - interval: 1m
+    name: sustained cold-fill refusals ticket
+    input_series:
+      - series: 'stellarindex_ratelimit_cold_fill_refused_total{job="stellarindex_api",instance="r1:8080"}'
+        values: '0+120x90'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_ratelimit_cold_fill_refusals_sustained
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_ratelimit_cold_fill_refusals_sustained
+              summary: "Cold-read refusals at 2/s for 30m"
+              description: |
+                The API has refused more than 60 requests a minute with 429
+                for half an hour because they could not pay the extra cost of
+                a read that was not cached. No lake read was started for
+                them. Either a crawler is being held back, which is fine, or
+                real users are being throttled.
+
+                Check who is refused: one subject or many (API logs), whether
+                stellarindex_explorer_refresh_gate_saturated_total is also
+                rising, and whether paying or explorer users are getting 429s.
+
+  # A 10-minute crawler burst is held back without waking anyone.
+  - interval: 1m
+    name: short cold-fill refusal burst does not ticket
+    input_series:
+      - series: 'stellarindex_ratelimit_cold_fill_refused_total{job="stellarindex_api",instance="r1:8080"}'
+        values: '0+120x10 1200x80'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_ratelimit_cold_fill_refusals_sustained
+        exp_alerts: []
+
+  - interval: 1m
+    name: absent cold-fill refusal series does not ticket
+    input_series:
+      - series: 'up{job="stellarindex_api",instance="r1:8080"}'
+        values: '1x90'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_ratelimit_cold_fill_refusals_sustained
+        exp_alerts: []
