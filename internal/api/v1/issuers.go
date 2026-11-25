@@ -388,7 +388,7 @@ func (s *Server) liveIssuerAccount(ctx context.Context, gStrkey string) (clickho
 	if s.Explorer == nil {
 		return clickhouse.AccountAuthFlags{}, false
 	}
-	st, _, err := s.Explorer.AccountStateCached(coldFillExempt(ctx), gStrkey)
+	st, _, err := s.Explorer.AccountStateCached(ctx, gStrkey)
 	if err != nil || !st.Exists {
 		return clickhouse.AccountAuthFlags{}, false
 	}

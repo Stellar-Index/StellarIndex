@@ -731,7 +731,7 @@ Takes (one per token charged) an in-process limiter (the passkey begin-login and
 
 Counter, no labels.
 
-Requests answered `429` because their budget could not pay a cold cache fill's surcharge (`ratelimit.ColdFillCost`, on top of the request's own token): a client walking distinct uncached explorer keys (contract detail, holders, account state). No lake read or refresh-gate slot was taken. Ordinary throttling is the rest of the route's `429`s in `http_requests_total`.
+Cold cache fills refused because the request's budget could not pay the surcharge (`ratelimit.ColdFillCost`, on top of the request's own token): a client walking distinct uncached explorer keys (contract detail, holders, account state). No lake read or refresh-gate slot was taken. The explorer page answers `429`; a contract page's side panel and an asset page's issuer lookup are skipped instead and the response is flagged degraded or stale. Ordinary throttling is the rest of the route's `429`s in `http_requests_total`.
 
 ### `stellarindex_ratelimit_fail_closed_total`
 

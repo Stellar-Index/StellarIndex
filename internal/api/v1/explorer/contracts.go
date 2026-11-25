@@ -155,7 +155,7 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 		out.Events[i] = contractEventView(e)
 	}
 	instOK := h.setContractLiveness(ctx, &out, side.inst, side.instOK)
-	apiDegraded := out.DirectoryUnavailable || !instOK
+	apiDegraded := out.DirectoryUnavailable || !instOK || !side.activityOK
 	// Only emit a cursor on a full page — a short page is the last page, so a
 	// cursor there just costs the client one empty round-trip.
 	if n := len(rows); n == limit {
@@ -173,12 +173,13 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 // contractSidecars are the per-contract reads that decorate the event page.
 // Each is independent and best-effort; failures are reported per field.
 type contractSidecars struct {
-	protocol  string
-	directory *DirectoryInfoV
-	dirOK     bool
-	activity  *ContractActivityV
-	inst      clickhouse.ContractInstanceState
-	instOK    bool
+	protocol   string
+	directory  *DirectoryInfoV
+	dirOK      bool
+	activity   *ContractActivityV
+	activityOK bool
+	inst       clickhouse.ContractInstanceState
+	instOK     bool
 }
 
 // readContractSidecars runs the four independent reads concurrently so a cold page costs the slowest, not the sum.
@@ -201,7 +202,7 @@ func (h *Handler) readContractSidecars(ctx context.Context, cid string) contract
 	}
 	run("attribution", func() { s.protocol = h.contractAttribution(ctx)[cid] }, func() { s.protocol = "" })
 	run("directory", func() { s.directory, s.dirOK = h.directoryFor(ctx, cid) }, func() { s.directory, s.dirOK = nil, false })
-	run("activity", func() { s.activity = h.contractActivityCard(ctx, cid) }, func() { s.activity = nil })
+	run("activity", func() { s.activity, s.activityOK = h.contractActivityCard(ctx, cid) }, func() { s.activity, s.activityOK = nil, false })
 	run("instance", func() { s.inst, s.instOK = h.contractInstanceState(ctx, cid) },
 		func() { s.inst, s.instOK = clickhouse.ContractInstanceState{}, false })
 	wg.Wait()
@@ -214,9 +215,10 @@ type cachedActivitySummary struct {
 	ok bool
 }
 
-// contractActivityCard is the 30-day liveness card, nil when the activity index is unprovisioned, errors or is empty for the contract.
+// contractActivityCard is the 30-day liveness card, nil when the activity index is unprovisioned, errors or is empty for the contract;
+// ok=false only when the read failed or was refused, so the page can say so instead of reading as "no activity".
 // Goes through the SWR cache: the lifetime uniqExact over a busy contract's active ledgers (the XLM SAC: 45M rows) costs seconds.
-func (h *Handler) contractActivityCard(ctx context.Context, cid string) *ContractActivityV {
+func (h *Handler) contractActivityCard(ctx context.Context, cid string) (*ContractActivityV, bool) {
 	v, _, _, err := h.contractDetailCached(ctx, "act:"+cid, func(rctx context.Context) (any, error) {
 		// A failed floor read leaves the series unpruned (0), never short.
 		since, _ := h.windowFloorLedger(rctx, 30)
@@ -227,12 +229,13 @@ func (h *Handler) contractActivityCard(ctx context.Context, cid string) *Contrac
 		return cachedActivitySummary{s: s, ok: ok}, nil
 	})
 	if err != nil {
-		return nil
+		h.Logger.Warn("explorer ContractActivitySummary failed", "contract", cid, "err", err)
+		return nil, false
 	}
 	c, _ := v.(cachedActivitySummary)
 	act := c.s
 	if !c.ok || act.ActiveLedgersTotal == 0 {
-		return nil
+		return nil, true
 	}
 	av := &ContractActivityV{
 		FirstSeen:          act.FirstSeen.UTC().Format(time.RFC3339),
@@ -242,7 +245,7 @@ func (h *Handler) contractActivityCard(ctx context.Context, cid string) *Contrac
 	for _, d := range act.Daily {
 		av.Daily = append(av.Daily, ContractActivityDayV{Date: d.Date.UTC().Format("2006-01-02"), ActiveLedgers: d.ActiveLedgers})
 	}
-	return av
+	return av, true
 }
 
 // setContractLiveness fills Exists and TTL. Exists is claimed false only on a successful instance read that found nothing and no other

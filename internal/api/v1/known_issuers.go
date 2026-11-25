@@ -1,16 +1,6 @@
 package v1
 
-import (
-	"context"
-
-	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
-)
-
-// coldFillExempt clears the cold-fill surcharge for an issuer enrichment read: it degrades rather than erroring, so a refusal would
-// serve a silently thinner page instead of a 429, and its accounts are stored issuers, not keys a client can mint.
-func coldFillExempt(ctx context.Context) context.Context {
-	return ratelimit.WithColdFillCharge(ctx, nil)
-}
+import "context"
 
 // knownIssuer is an entry in the hand-curated fallback map from issuer G-strkey to (home_domain, org_name), applied while
 // `issuers.home_domain` is empty. Never add one without verifying the G-strkey controls the home_domain (e.g. the stellar.toml
@@ -158,13 +148,13 @@ var knownIssuers = map[string]knownIssuer{
 }
 
 // onChainHomeDomain returns the issuer's live home_domain from CH account state and whether an attempted read was untrustworthy (errored,
-// deadline included). No reader means no attempt: degraded=false and callers use the curated map; "" with degraded=false is a verified
+// deadline or a refused cold-fill charge included: the read is skipped and the page served degraded, never a 429). No reader means no attempt: degraded=false and callers use the curated map; "" with degraded=false is a verified
 // absence. On-chain goes ahead of knownIssuers because it is key-signed and follows rebrands; the map goes stale silently.
 func (s *Server) onChainHomeDomain(ctx context.Context, issuer string) (domain string, degraded bool) {
 	if s.Explorer == nil {
 		return "", false
 	}
-	st, _, err := s.Explorer.AccountStateCached(coldFillExempt(ctx), issuer)
+	st, _, err := s.Explorer.AccountStateCached(ctx, issuer)
 	if err != nil {
 		return "", true
 	}
