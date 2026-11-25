@@ -1,0 +1,216 @@
+package chops
+
+import (
+	"bytes"
+	"context"
+	"math/big"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+)
+
+// proofFixture is the fake lake after the writer ran over it, with the rows it inserted as the stored table.
+type proofFixture struct {
+	*fakeInterestLake
+	stored []clickhouse.LendingInterestStoredRow
+}
+
+func newProofFixture(t *testing.T) *proofFixture {
+	t.Helper()
+	f := newFakeInterestLake()
+	f.install(t)
+	if out, err := runInterest(t, lendingRun{}); err != nil {
+		t.Fatalf("writer: %v\n%s", err, out)
+	}
+	f.floor, f.wm = 199_990, f.marks[len(f.marks)-1][1]
+	p := &proofFixture{fakeInterestLake: f}
+	for _, r := range f.inserted {
+		s := r
+		s.Baselines, s.ExcludedCreditDelta, s.FeeOnlyCreditDelta, s.FeeOnlyCarryDelta, s.FeeOnlyVersions, s.FeeOnlyUnknown = 0, nil, nil, nil, 0, 0
+		p.stored = append(p.stored, clickhouse.LendingInterestStoredRow{
+			Row: s, ResidualExplained: new(big.Int), ResidualAttributed: new(big.Int),
+			DeriveRev: lendingInterestRev,
+		})
+	}
+	if len(p.stored) != 4 {
+		t.Fatalf("degenerate fixture: the writer stored %d rows", len(p.stored))
+	}
+	a, b := lendingInterestStored, lendingInterestBeyond
+	t.Cleanup(func() { lendingInterestStored, lendingInterestBeyond = a, b })
+	lendingInterestStored = func(_ context.Context, _ string, pools []string, from, to time.Time) ([]clickhouse.LendingInterestStoredRow, error) {
+		var out []clickhouse.LendingInterestStoredRow
+		for _, s := range p.stored {
+			if slices.Contains(pools, s.Row.Pool) && !s.Row.Hour.Before(from) && s.Row.Hour.Before(to) {
+				out = append(out, s)
+			}
+		}
+		return out, nil
+	}
+	lendingInterestBeyond = func(_ context.Context, _ string, pools []string, after time.Time) ([]clickhouse.LendingInterestRowID, error) {
+		var out []clickhouse.LendingInterestRowID
+		for _, s := range p.stored {
+			if s.Row.Hour.After(after) || !slices.Contains(pools, s.Row.Pool) {
+				out = append(out, clickhouse.LendingInterestRowID{Pool: s.Row.Pool, Asset: s.Row.Asset, Hour: s.Row.Hour, DeriveRev: s.DeriveRev})
+			}
+		}
+		return out, nil
+	}
+	return p
+}
+
+// prove runs -prove -interest and returns its report, error and the proof_failed gauge from its textfile.
+func (p *proofFixture) prove(t *testing.T, r lendingRun) (out, gauge string, err error) {
+	t.Helper()
+	dir := t.TempDir()
+	r.chAddr, r.heartbeat = "fake", filepath.Join(dir, "state.prom")
+	var report, log bytes.Buffer
+	err = r.proveLendingInterest(context.Background(), &report, &log)
+	raw, rerr := os.ReadFile(filepath.Join(dir, "ops_job_"+lendingInterestProveJob+".prom")) //nolint:gosec // test temp dir
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	gauge = "absent"
+	for _, l := range strings.Split(string(raw), "\n") {
+		if strings.HasPrefix(l, metricInterestProofFailed+"{") {
+			gauge = l[strings.LastIndex(l, " ")+1:]
+		}
+	}
+	return report.String(), gauge, err
+}
+
+// The writer's own rows prove: every hour, with the identities re-run over the stored values; the gauge is 0.
+func TestProveInterest_WritersRowsProve(t *testing.T) {
+	p := newProofFixture(t)
+	out, gauge, err := p.prove(t, lendingRun{})
+	if err != nil || gauge != "0" {
+		t.Fatalf("err %v gauge %s\n%s", err, gauge, out)
+	}
+	for _, want := range []string{
+		"lending_interest CPOOL CASSET: 4 hours proved, 0 mismatched, 0 INCOMPLETE",
+		": PROVED: 4 hours proved, 0 mismatches, 0 INCOMPLETE, 0 unmarked",
+		"gross telescoped 4 (0 with excluded pairs not)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("report lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+// Each mismatch class is named with pool, asset, hour and column, fails the run and sets the gauge.
+func TestProveInterest_Mismatches(t *testing.T) {
+	h1 := liClose(199_990).Add(time.Hour).Format(time.RFC3339)
+	for _, tc := range []struct {
+		name   string
+		mutate func(p *proofFixture)
+		want   string
+	}{
+		{
+			"missing row", func(p *proofFixture) { p.stored = slices.Delete(p.stored, 1, 2) },
+			"mismatch CPOOL CASSET " + h1 + " row: stored none, recomputed present (versions 2)",
+		},
+		{"stale extra row", func(p *proofFixture) {
+			s := p.stored[1]
+			s.Row.Asset = "COTHER"
+			p.stored = append(p.stored, s)
+		}, "mismatch CPOOL COTHER " + h1 + " row: stored present, recomputed none"},
+		{"altered sum", func(p *proofFixture) {
+			p.stored[1].Row.Gross = new(big.Int).Add(p.stored[1].Row.Gross, big.NewInt(1))
+		}, "mismatch CPOOL CASSET " + h1 + " gross: stored "},
+		{
+			"altered count", func(p *proofFixture) { p.stored[1].Row.Versions++ },
+			"mismatch CPOOL CASSET " + h1 + " versions (the lake's count): stored 3, recomputed 2",
+		},
+		{
+			"altered counter", func(p *proofFixture) { p.stored[1].Row.AccrualErrors = 1 },
+			"mismatch CPOOL CASSET " + h1 + " accrual_errors: stored 1, recomputed 0",
+		},
+		{
+			"event column", func(p *proofFixture) { p.stored[1].ExplainedVersions = 1 },
+			"mismatch CPOOL CASSET " + h1 + " explained_versions: stored 1, recomputed 0",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := newProofFixture(t)
+			tc.mutate(p)
+			out, gauge, err := p.prove(t, lendingRun{})
+			if err == nil || gauge != "1" || !strings.Contains(out, tc.want) || !strings.Contains(out, ": MISMATCH: ") {
+				t.Fatalf("err %v gauge %s, want a failure listing %q:\n%s", err, gauge, tc.want, out)
+			}
+		})
+	}
+}
+
+// A row of another derive revision is INCOMPLETE, not compared: non-zero exit, but no proof failure.
+func TestProveInterest_StaleRevisionIsIncomplete(t *testing.T) {
+	p := newProofFixture(t)
+	p.stored[2].DeriveRev = lendingInterestRev - 1
+	p.stored[2].Row.Gross = big.NewInt(-1) // an older arithmetic's value is not a mismatch
+	out, gauge, err := p.prove(t, lendingRun{})
+	if err == nil || !strings.Contains(err.Error(), "INCOMPLETE") || gauge != "0" ||
+		!strings.Contains(out, "derive_rev 0, this binary derives 1") || !strings.Contains(out, "3 hours proved, 0 mismatched, 1 INCOMPLETE") {
+		t.Fatalf("err %v gauge %s:\n%s", err, gauge, out)
+	}
+}
+
+// A row past the watermark is listed as unmarked and neither proves nor fails; -to and -interest-pool narrow the range.
+func TestProveInterest_UnmarkedAndRange(t *testing.T) {
+	p := newProofFixture(t)
+	s := p.stored[3]
+	s.Row.Hour = s.Row.Hour.Add(5 * time.Hour)
+	p.stored = append(p.stored, s)
+	out, _, err := p.prove(t, lendingRun{})
+	if err != nil || !strings.Contains(out, "unmarked CPOOL CASSET "+s.Row.Hour.Format(time.RFC3339)) || !strings.Contains(out, "1 unmarked") {
+		t.Fatalf("err %v:\n%s", err, out)
+	}
+	out, _, err = p.prove(t, lendingRun{to: 199_996, interest: interestFlags{pool: liPool}})
+	if err != nil || !strings.Contains(out, "1 hours proved") || !strings.Contains(out, "[199990,199996]") {
+		t.Fatalf("-to one hour: err %v:\n%s", err, out)
+	}
+	if _, _, err := p.prove(t, lendingRun{interest: interestFlags{pool: "CNOPE"}}); err == nil {
+		t.Fatal("-interest-pool of an unknown pool succeeded")
+	}
+}
+
+// A pool whose coverage row stops below the watermark is proved to it and reported INCOMPLETE past it.
+func TestProveInterest_UncoveredPool(t *testing.T) {
+	p := newProofFixture(t)
+	p.gaps = []clickhouse.LendingInterestPoolGap{{Pool: liPool, Deployed: 1, Thru: 199_996}}
+	out, _, err := p.prove(t, lendingRun{})
+	if err == nil || !strings.Contains(out, "coverage row stops at 199996") || !strings.Contains(out, "1 hours proved") ||
+		!strings.Contains(out, "3 unmarked") {
+		t.Fatalf("err %v:\n%s", err, out)
+	}
+}
+
+// An uninitialised host has nothing to prove: one line, exit 0, gauge 0.
+func TestProveInterest_Uninitialised(t *testing.T) {
+	p := newProofFixture(t)
+	p.wm = 0
+	out, gauge, err := p.prove(t, lendingRun{})
+	if err != nil || gauge != "0" || out != "lending interest: not initialised\n" {
+		t.Fatalf("err %v gauge %s out %q", err, gauge, out)
+	}
+}
+
+// The identities re-run over the lake: a lending_state row that moved after the write fails the proof.
+func TestProveInterest_IdentityOverTheLake(t *testing.T) {
+	p := newProofFixture(t)
+	p.tamper = func(rows []clickhouse.LendingInterestStateRow) {
+		for i := range rows {
+			if !rows[i].Before && rows[i].Ledger == 199_994 {
+				r := rows[i].Value.Reserve
+				r.BackstopCredit = new(big.Int).Add(r.BackstopCredit, big.NewInt(1))
+				rows[i].Value.Reserve = r
+			}
+		}
+	}
+	out, gauge, err := p.prove(t, lendingRun{})
+	if err == nil || gauge != "1" || !strings.Contains(out, "the lake's versions fail the in-line identities") {
+		t.Fatalf("err %v gauge %s:\n%s", err, gauge, out)
+	}
+}

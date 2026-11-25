@@ -100,3 +100,72 @@ tests:
       - eval_time: 2h30m
         alertname: stellarindex_lending_interest_lagging
         exp_alerts: []
+
+  - interval: 1m
+    name: a failed lending interest proof fires at once and clears on the next clean run
+    input_series:
+      - series: 'stellarindex_lending_interest_proof_failed{job="node_exporter",instance="r1:9100",ops_job="ch-entry-history-lending-interest-prove"}'
+        values: '0x10 1x10 0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_lending_interest_proof_failed
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: stellarindex_lending_interest_proof_failed
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#lending-interest-proof-failed
+              summary: "the lending interest proof found stored rows that disagree with the lake"
+              description: |
+                `stellarindex-ops ch-entry-history -lending-only -prove -interest`
+                recomputed stellar.lending_interest_hourly from the lake and a
+                stored row (or a window's identities) disagrees. The proof's
+                report in `journalctl -u lending-interest-prove -n 200` names
+                each mismatch: pool, asset, hour, column, stored and recomputed.
+                Re-derive the named hours before anything serves them.
+      - eval_time: 25m
+        alertname: stellarindex_lending_interest_proof_failed
+        exp_alerts: []
+
+  # Finished at t=0 (unix 0); time() at eval_time is the seconds since.
+  - interval: 1m
+    name: a lending interest proof whose last finished run is over two days old fires
+    input_series:
+      - series: 'stellarindex_ops_job_last_finish_unix{job="node_exporter",instance="r1:9100",ops_job="ch-entry-history-lending-interest-prove"}'
+        values: '0x3000'
+    alert_rule_test:
+      - eval_time: 47h
+        alertname: stellarindex_lending_interest_proof_stale
+        exp_alerts: []
+      - eval_time: 50h
+        alertname: stellarindex_lending_interest_proof_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+              job: node_exporter
+              instance: r1:9100
+              ops_job: ch-entry-history-lending-interest-prove
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#lending-interest-proof-stale
+              summary: "the daily lending interest proof has not finished in over two days"
+              description: |
+                lending-interest-prove.timer's last finished run is more than
+                48 h old: the timer was disabled or stopped firing, or a run
+                has hung (heartbeat_stale covers a dead one). The proof gauge
+                still shows the last run's verdict, which is no longer current.
+
+  - interval: 1m
+    name: a lending interest proof that finishes daily stays quiet
+    input_series:
+      - series: 'stellarindex_ops_job_last_finish_unix{job="node_exporter",instance="r1:9100",ops_job="ch-entry-history-lending-interest-prove"}'
+        values: '0x1439 86400x1439 172800x1439'
+    alert_rule_test:
+      - eval_time: 70h
+        alertname: stellarindex_lending_interest_proof_stale
+        exp_alerts: []

@@ -53,6 +53,7 @@ BEGIN {
   OK["-h"] = 1; OK["-help"] = 1; OK["--help"] = 1
   # Read-only modes that exit before the gate matters (their flag help says so).
   RO["trades-cagg-refresh -size"] = 1; RO["freeze-unfreeze -list"] = 1; RO["source-exclude -list"] = 1
+  RO["ch-entry-history -prove"] = 1
   checked = 0; bad = 0
 }
 FNR == 1 { fence = 0; pend = ""; file = FILENAME; sub("^" rootdir, "", file) }

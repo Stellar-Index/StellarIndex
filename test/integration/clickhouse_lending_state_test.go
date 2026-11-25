@@ -1288,6 +1288,75 @@ func TestChEntryHistoryLending_InterestPass(t *testing.T) {
 	if w := wm(); w != base+9 {
 		t.Fatalf("watermark after the refusal = %d, want %d", w, base+9)
 	}
+
+	// -prove -interest over [floor, watermark]: the writer's rows prove; a newer row version with a wrong gross, a
+	// stale extra row and a lost lake version each fail it naming the row; a ledger with no changes left refuses.
+	h12 := pool + " " + assetStr + " " + at(12, 0).Format(time.RFC3339)
+	out, gauge, err := liProve(t, addr)
+	if err != nil || gauge != "0" || !strings.Contains(out, ": PROVED: 5 hours proved, 0 mismatches") ||
+		!strings.Contains(out, "gross telescoped 5") {
+		t.Fatalf("prove of the writer's rows: err %v gauge %s\n%s", err, gauge, out)
+	}
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if err := conn.Exec(ctx, q, args...); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	exec(`INSERT INTO stellar.lending_interest_hourly SELECT * REPLACE (gross + 1 AS gross, now64(3) AS derived_at)
+		FROM stellar.lending_interest_hourly FINAL WHERE contract_id = ? AND asset = ? AND hour = ?`, pool, assetStr, at(12, 0))
+	if out, gauge, err := liProve(t, addr); err == nil || gauge != "1" || !strings.Contains(out, "mismatch "+h12+" gross: stored ") {
+		t.Fatalf("prove over a corrupted gross: err %v gauge %s\n%s", err, gauge, out)
+	}
+	if err := liRun(t, addr, base, "-interest-only", "-from", liU(base+4), "-to", liU(base+5)); err != nil {
+		t.Fatalf("re-derive hour 12: %v", err)
+	}
+	exec(`INSERT INTO stellar.lending_interest_hourly (contract_id, protocol, asset, hour, first_ledger, last_ledger, derive_rev)
+		VALUES (?, 'blnt', 'CSTALE', ?, ?, ?, 1)`, pool, at(13, 0), base+6, base+6)
+	if out, _, err := liProve(t, addr); err == nil || !strings.Contains(out, "mismatch "+pool+" CSTALE "+at(13, 0).Format(time.RFC3339)+
+		" row: stored present, recomputed none") {
+		t.Fatalf("prove over a stale extra row: err %v\n%s", err, out)
+	}
+	exec(`ALTER TABLE stellar.lending_interest_hourly DELETE WHERE asset = 'CSTALE' SETTINGS mutations_sync = 2`)
+	if out, _, err := liProve(t, addr); err != nil {
+		t.Fatalf("prove after the repairs: %v\n%s", err, out)
+	}
+	// Hour 12's only reserve version (ledger base+4); its fee change keeps the ledger covered.
+	exec(`ALTER TABLE stellar.ledger_entry_changes DELETE WHERE ledger_seq = ? AND key_xdr = ? SETTINGS mutations_sync = 2`, base+4, resKey)
+	if out, _, err := liProve(t, addr); err == nil || !strings.Contains(out, "mismatch "+h12+" row: stored present, recomputed none") ||
+		!strings.Contains(out, "the lake's versions fail the in-line identities") {
+		t.Fatalf("prove over a lost lake version: err %v\n%s", err, out)
+	}
+	exec(`ALTER TABLE stellar.ledger_entry_changes DELETE WHERE ledger_seq = ? SETTINGS mutations_sync = 2`, base+4)
+	if _, _, err := liProve(t, addr); err == nil || !strings.Contains(err.Error(), "tx-bearing ledgers") {
+		t.Fatalf("prove over a ledger with no changes: err %v, want the coverage refusal", err)
+	}
+}
+
+// liProve runs `ch-entry-history -lending-only -prove -interest` and returns its report and proof_failed gauge.
+func liProve(t *testing.T, addr string) (out, gauge string, err error) {
+	t.Helper()
+	dir := t.TempDir()
+	f, ferr := os.Create(filepath.Join(dir, "stdout")) //nolint:gosec // test temp dir
+	if ferr != nil {
+		t.Fatal(ferr)
+	}
+	stdout := os.Stdout
+	os.Stdout = f
+	err = chops.Run([]string{"ch-entry-history", "-lending-only", "-ch-addr", addr, "-prove", "-interest", "-heartbeat", filepath.Join(dir, "x.prom")})
+	os.Stdout = stdout
+	_ = f.Close()
+	b, rerr := os.ReadFile(filepath.Join(dir, "stdout")) //nolint:gosec // test temp dir
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	prom, _ := os.ReadFile(filepath.Join(dir, "ops_job_ch-entry-history-lending-interest-prove.prom")) //nolint:gosec // test temp dir
+	for _, l := range strings.Split(string(prom), "\n") {
+		if strings.HasPrefix(l, "stellarindex_lending_interest_proof_failed{") {
+			gauge = l[strings.LastIndex(l, " ")+1:]
+		}
+	}
+	return string(b), gauge, err
 }
 
 // checkLiRows compares the pool's rows under FINAL with the expected per-hour chain sums and ledgers.

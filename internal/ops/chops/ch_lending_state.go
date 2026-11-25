@@ -58,10 +58,11 @@ func (r lendingRun) start(lendingOnly bool, gate *opsutil.WriteGate) error {
 
 // check refuses -interest-* combinations whose range would be ambiguous.
 func (f interestFlags) check(r lendingRun) error {
-	explicit := f.only || f.init || f.pool != "" || f.maxWindows != 0 || f.maxUnordered != 0
+	explicit := f.only || f.init || f.maxWindows != 0 || f.maxUnordered != 0
+	if f.prove || r.prove || r.printPrefixes {
+		return f.checkReads(r, explicit)
+	}
 	switch {
-	case explicit && (r.printPrefixes || r.prove):
-		return fmt.Errorf("-interest-* flags do not apply to -print-prefixes or -prove")
 	case f.init && f.pool != "":
 		return fmt.Errorf("-interest-init and -interest-pool are separate runs")
 	case (f.init || f.pool != "") && (r.from != 0 || r.to != 0):
@@ -75,12 +76,29 @@ func (f interestFlags) check(r lendingRun) error {
 	return nil
 }
 
+// checkReads refuses -interest-* flags on the read-only modes, but -interest-pool on -prove -interest.
+func (f interestFlags) checkReads(r lendingRun, explicit bool) error {
+	switch {
+	case f.prove && !r.prove:
+		return fmt.Errorf("-interest applies to -prove")
+	case f.prove && explicit:
+		return fmt.Errorf("-prove -interest takes -from, -to and -interest-pool; the other -interest-* flags are the derive's")
+	case f.pool != "" && !f.prove:
+		return fmt.Errorf("-interest-pool does not apply to -print-prefixes or the lending_state -prove")
+	case explicit:
+		return fmt.Errorf("-interest-* flags do not apply to -print-prefixes or -prove")
+	}
+	return nil
+}
+
 func (r lendingRun) run() error {
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 	switch {
 	case r.printPrefixes:
 		return printLendingPrefixes(ctx, r.chAddr, os.Stdout)
+	case r.prove && r.interest.prove:
+		return r.proveLendingInterest(ctx, os.Stdout, os.Stderr)
 	case r.prove:
 		return r.proveLendingState(ctx, os.Stdout)
 	case r.dryRun:

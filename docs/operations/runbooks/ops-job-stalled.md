@@ -5,7 +5,7 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `stellarindex_ops_job_heartbeat_stale` / `stellarindex_ops_job_no_progress` / `stellarindex_ops_job_run_failed` / `stellarindex_entry_index_lagging` / `stellarindex_lending_state_lagging` / `stellarindex_lending_interest_lagging`
+# Runbook — `stellarindex_ops_job_heartbeat_stale` / `stellarindex_ops_job_no_progress` / `stellarindex_ops_job_run_failed` / `stellarindex_entry_index_lagging` / `stellarindex_lending_state_lagging` / `stellarindex_lending_interest_lagging` / `stellarindex_lending_interest_proof_failed` / `stellarindex_lending_interest_proof_stale`
 
 ## At a glance
 
@@ -210,6 +210,30 @@ Check and fix (operator commands: the runbook in `deploy/clickhouse/lending_inte
 3. `skipped, another interest run holds the lock`: a manual chunk or re-derive is running; that is progress while its cursor rises.
 4. A refused window names its reason: an unmapped or mismatched WASM hash, an upgrade ledger, an instance whose executable the code history does not hold (`contract_instance_changes` behind the lake), a failed check against `lending_state_hourly`, or `bring each up with -interest-only -interest-pool <pool> -write` (a pool added after the watermark). The watermark holds until it is fixed.
 5. During the initial backfill this alert fires until the chunks reach the tip.
+
+## Lending interest proof failed
+
+`stellarindex_lending_interest_proof_failed` fires when the daily read-only proof (`lending-interest-prove.service`: `stellarindex-ops ch-entry-history -lending-only -prove -interest`) found a stored row of `stellar.lending_interest_hourly` that disagrees with the lake. Per window it re-reads the versions with the writer's own coverage-proved read, folds them again and compares the rows under FINAL: the row set, every column byte-exact, `versions` against an independent count of the lake's versions, and the writer's in-line identities (chain endpoints, telescoped gross, BLNT fee carry). It proves the rows match what the current code computes from the current lake. It does not prove the accrual arithmetic itself: that is the fold's own tests and the WASM audit docs.
+
+Read the report: `journalctl -u lending-interest-prove -n 200`.
+
+- `lending_interest <pool> <asset>: N hours proved, M mismatched, K INCOMPLETE` per reserve; the last line is the verdict (`PROVED`, `MISMATCH` or `INCOMPLETE`).
+- `mismatch <pool> <asset> <hour> <column>: stored X, recomputed Y`: one column of one row. `row: stored present, recomputed none` is a stale row (a re-derive should have deleted it); `stored none` is a missing row; `versions (the lake's count)` is a version lost or doubled.
+- `mismatch hours [...): the lake's versions fail the in-line identities` means the lake or `lending_state_hourly` changed after the write (a lake re-derive or a state replay).
+- `INCOMPLETE ... derive_rev N, this binary derives M`: rows of another arithmetic revision; re-derive them. This exits non-zero without the proof gauge, so it fires `stellarindex_ops_job_run_failed` instead.
+- `unmarked ...`: rows past the watermark or a pool's coverage row; neither proved nor failed.
+
+Fix: re-derive the named hours, then prove them again (both from `deploy/clickhouse/lending_interest.sql`; add `-ch-addr 127.0.0.1:9300`):
+
+1. After a lake re-derive of the range: `ALTER TABLE stellar.lending_interest_hourly DELETE WHERE last_ledger >= {lo} AND first_ledger <= {hi}`, and wait for `system.mutations`.
+2. `stellarindex-ops ch-entry-history -lending-only -interest-only -from <first ledger of the hour> -to <ledger in the last hour> -write`.
+3. `stellarindex-ops ch-entry-history -lending-only -prove -interest -from <l> -to <l>` exits 0.
+
+Stop serving: once anything reads the table, a mismatch that a re-derive does not clear means the writer and the lake disagree. Gate the read off (or serve those totals as a lower bound) until it proves.
+
+## Lending interest proof stale
+
+`stellarindex_lending_interest_proof_stale` fires when the proof's last finished run is more than 48 hours old, so the proof gauge no longer describes the table. `systemctl status lending-interest-prove.timer`: it is enabled only where `lending_interest_prove_enabled` is set. A run still going for hours is `heartbeat_stale` or `no_progress` territory; a refused run (lake hole, WASM gate) fires `stellarindex_ops_job_run_failed` and names its reason in the journal.
 
 ## stellarindex_catchup_lane_failed
 

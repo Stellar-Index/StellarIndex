@@ -57,7 +57,7 @@ Subcommands:
                           transition. Resumes from its sponsorship_events
                           watermark and never writes past the entry_index
                           watermark. Without -write it counts events.
-  ch-entry-history -lending-only -ch-addr ADDR [-from N] [-to N] [-floor-ledger N] [-lock-file PATH] [-heartbeat PATH] [-print-prefixes | -prove] [-interest-init | -interest-only | -interest-pool C...] [-interest-max-windows N] [-interest-max-unordered N] [-write]
+  ch-entry-history -lending-only -ch-addr ADDR [-from N] [-to N] [-floor-ledger N] [-lock-file PATH] [-heartbeat PATH] [-print-prefixes | -prove [-interest]] [-interest-init | -interest-only | -interest-pool C...] [-interest-max-windows N] [-interest-max-unordered N] [-write]
                           Derive stellar.lending_state_hourly: the verbatim
                           last change per hour of every Blend and BLNT pool
                           ResData / ResConfig / instance and backstop
@@ -67,6 +67,10 @@ Subcommands:
                           -print-prefixes lists the registry and key
                           prefixes; -prove checks the history against the
                           lake at the watermark. Both only read.
+                          -prove -interest instead proves the interest rows
+                          (floor to watermark, or -from/-to, -interest-pool)
+                          against a fresh fold of the lake; non-zero on a
+                          mismatch or INCOMPLETE hours.
                           Then derives stellar.lending_interest_hourly (exact
                           interest per pool reserve and complete hour) from
                           its lending_interest watermark, never past

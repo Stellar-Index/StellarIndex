@@ -53,6 +53,27 @@ func TestTelescopedGross_GoldenHours(t *testing.T) {
 	}
 }
 
+// On every golden hour the independent count equals the fold's Versions; a re-read duplicate and a removal add
+// nothing, and a dropped version shows.
+func TestReserveVersionCounts_GoldenHours(t *testing.T) {
+	for _, d := range golden {
+		vs := d.versions(t)
+		rows := fold(t, d.seed(), vs, d.opts(0))
+		gone := vs[len(vs)-1]
+		gone.Removed, gone.ChangeIndex = true, gone.ChangeIndex+1
+		counts := ReserveVersionCounts(append(append(append([]Version(nil), vs...), vs[0]), gone))
+		for _, r := range rows {
+			if got := counts[ReserveKey{r.Pool, r.Asset}][r.Hour.Unix()]; got != r.Versions {
+				t.Errorf("%s %s %s: counted %d, the fold %d", d.name, r.Asset, r.Hour.Format(time.RFC3339), got, r.Versions)
+			}
+		}
+		k := ReserveKey{vs[0].Pool, vs[0].Asset}
+		if fewer := ReserveVersionCounts(vs[1:]); fewer[k][hourOf(vs[0]).Unix()] != counts[k][hourOf(vs[0]).Unix()]-1 {
+			t.Errorf("%s: dropping a version did not lower its hour's count", d.name)
+		}
+	}
+}
+
 // A changed d_rate inside a run moves the telescoped total, so the check is not vacuous; order and duplicates do not.
 func TestTelescopedGross_Sensitivity(t *testing.T) {
 	vs := v2Repays.versions(t)

@@ -33,6 +33,11 @@
 --      Interest runs take their own lock (ch-entry-history-lending-interest.lock
 --      beside -lock-file), so a chunk never blocks the state pass; the timer's
 --      interest pass skips while a chunk holds it.
+--   5. Prove the backfill (reads only; exit 0 only with no mismatch and no
+--      INCOMPLETE hour), then set lending_interest_prove_enabled for the host
+--      so lending-interest-prove.timer repeats it daily:
+--      stellarindex-ops ch-entry-history -lending-only -prove -interest
+--        [-from {lo}] [-to {hi}] [-interest-pool {pool}]
 --
 -- A window is refused, and the watermark holds, if a pool runs a WASM hash
 -- not listed in lendingInterestWASM, or if the fold's rows disagree with

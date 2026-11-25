@@ -140,6 +140,30 @@ func TestJobHeartbeatRecordsFailedExit(t *testing.T) {
 	}
 }
 
+// TestJobHeartbeatJobGauges: a job-specific gauge is written with the job's label and survives Stop, beside last_exit_ok.
+func TestJobHeartbeatJobGauges(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "j.prom")
+	hb := opsutil.NewJobHeartbeat("prove", path, nil)
+	hb.Start()
+	hb.Gauge("fixture_job_verdict", "a verdict", 1)
+	hb.Gauge("fixture_job_count", "a count", -3)
+	hb.Stop(true)
+	raw, err := os.ReadFile(path) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	body := string(raw)
+	if got := gaugeValue(t, body, "fixture_job_verdict"); got != "1" {
+		t.Errorf("failed = %s, want 1", got)
+	}
+	if got := gaugeValue(t, body, "fixture_job_count"); got != "-3" {
+		t.Errorf("count = %s, want -3", got)
+	}
+	if !strings.Contains(body, `fixture_job_verdict{ops_job="prove"} 1`) || !strings.Contains(body, "# TYPE fixture_job_verdict gauge") {
+		t.Errorf("gauge not in the heartbeat's format:\n%s", body)
+	}
+}
+
 // TestJobHeartbeatCursorIsMonotoneMax: parallel walkers over DISJOINT chunks report out of order, so the cursor must be a running maximum, not last-write.
 func TestJobHeartbeatCursorIsMonotoneMax(t *testing.T) {
 	dir := t.TempDir()
