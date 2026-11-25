@@ -20,6 +20,30 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.137.0] - 2026-11-25
+
+Tested against Stellar protocol 27. No migrations (schema version stays 236). No `pkg/*` break (no change under `pkg/`). Operators of an EXISTING ClickHouse host: `deploy/clickhouse/lending_interest.sql` and `deploy/clickhouse/lending_state.sql` (both `si-apply-scope: operator`) changed in comments and runbook text only, with no DDL change, so nothing needs re-applying before deploying. New operator flag `-interest-max-versions` (default 150,000) on `ch-entry-history`. The hourly interest pass is uninitialised on every host and derive revision 2 replaces revision 1; a host that had initialised it would re-derive from the floor. New metrics: `stellarindex_lending_interest_undecodable_events`, `stellarindex_api_price_batch_prefetch_total`.
+
+### Added
+
+- **lending:** `ch-entry-history -lending-only` has an interest pass that reads every stored reserve version from the lake, folds it into exact hourly rows and writes `stellar.lending_interest_hourly`. It stays idle until an operator runs `-interest-init`, never starts a backfill from the timer, and refuses a pool whose contract code is not listed with its arithmetic (#4373, #4375).
+- **lending:** each interest residual is classified against the pool's own same-transaction events (interest-auction fill, gulp, BLNT reconcile loss) and marked explained only on exact equality; an event that cannot be decoded leaves its transaction's residuals unexplained and is counted in `stellarindex_lending_interest_undecodable_events`. Derive revision 2: revision-1 rows prove INCOMPLETE (#4380).
+- **lending:** `ch-entry-history -lending-only -prove -interest` is a read-only proof of the stored hourly interest rows against the lake. Optional daily and weekly proof units (off by default) and the alerts `stellarindex_lending_interest_lagging`, `stellarindex_lending_interest_proof_failed` and `stellarindex_lending_interest_proof_stale` cover it (#4375, #4378).
+- **api:** a request-scoped price read memo and Redis prefetch seams for `/v1/price/batch`, counted in `stellarindex_api_price_batch_prefetch_total{seam,result}`; a prefetched answer older than 2 s is read again. Nothing fills the memo yet, so responses are unchanged (#4381).
+- **timescale:** set forms of six per-key price readers, each returning what its single-key read would; no handler calls them yet (#4384).
+
+### Changed
+
+- **lending:** the interest pass no longer refuses where an operator had no way out: the seed proof runs in chunks of at most 250,000 ledgers, `-interest-max-versions` bounds the derive and the proof and the refusal names it, and a BLNT interest fill with a missing or mistyped `auction_type` is treated as undecodable instead of skipped (#4383).
+- **lending:** every interest mode holds the state lock shared and the state pass holds it exclusive, so state rows cannot change under a reading interest pass. A `lending_state` replay with `-from` arms an interest redo that must be re-derived before the pass runs, and seeds are proved against the lake (#4377).
+- **explorer:** the static build writes each answered `/v1/price/batch` chunk to disk and reuses it in the second render pass, so each chunk is requested once per build (#4376).
+
+### Fixed
+
+- **api:** an old but healthy cached explorer page is flagged `stale` only, not `degraded`; `degraded` is set for a failed, refused or overrunning refresh, a provisional payload or a failed panel. This covers contract detail, holders, the contracts directory, contract stats and the operations directory; price, supply, market cap, TVL and balance caches are unchanged (#4382).
+- **lending:** a `lending_state` replay no longer lets a concurrent interest run seed a reserve from a row before the deleted range, which counted one hour's rate movement twice (#4377).
+- **lending:** the interest re-derive delete cutoff uses millisecond server time, matching `derived_at` (#4383).
+
 ## [v0.136.0] - 2026-11-25
 
 Tested against Stellar protocol 27. No migrations (schema version stays 236). No `pkg/*` break. New ClickHouse table for operators on an EXISTING host: `deploy/clickhouse/lending_interest.sql` creates the empty `stellar.lending_interest_hourly`; nothing writes or reads it yet, so applying it can wait for the release that does.
@@ -90,26 +114,3 @@ Tested against Stellar protocol 27. No migrations (schema version stays 236). No
 ### Fixed
 
 - **ops:** the API's ClickHouse user is granted `SELECT` on `stellar.*` and `system.parts` explicitly, so the count rollup plan is readable and account reads stop falling back to the source scan; the role verifies the grants as that user (#4351).
-
-## [v0.132.0] - 2026-11-24
-
-Tested against Stellar protocol 27. No migrations (schema version stays 236). No `pkg/*` break. Galexie moves to v30.0.1: a host role run from this tag restarts the exporter and needs `galexie_restart_ack=true` (#4348).
-
-### Added
-
-- **supply:** when a watched SEP-41 contract's served history starts after its first mint, burn or clawback in the lake, the aggregator names the contract, the ledger window and both `projected-rebuild` commands, sets `stellarindex_aggregator_sep41_history_gap_from_ledger` and raises `stellarindex_aggregator_sep41_history_gap` until the totals check passes (#4345).
-- **ingest:** a reviewed list of judged non-token contracts relabels a listed contract's supply-decode skip to `judged_non_token`, which stays counted and does not alert; an unlisted contract with the same shape still alerts, and an alerting skip now names its contract in the log (#4345).
-
-### Changed
-
-- **api:** a cached read is flagged stale only when it is past its refresh TTL plus the refresh budget, or its last finished refresh failed, timed out, panicked or was skipped. This now covers markets, pools, sparklines and token supply (#4340); RWA history, premium history, membership and the assets view, protocol detail, the asset list page, the asset catalogue and explorer contract stats (#4343); and the account state and wealth caches behind `/v1/accounts` (#4344). The OpenAPI text for both account routes states the rule.
-- **api:** a page built from another cache is judged on its inputs: the asset list page ages from when its rows were observed, and the RWA assets view, value history and premium history re-judge their membership set and catalogue rows on every serve (#4343).
-- **ops:** `verify-served-values` checks the served USDC total supply against the issuer's public stablecoin figure for the Stellar chain, skipping (never passing) on a missing, unparseable, non-positive or day-old figure (#4341).
-- **ops:** galexie is pinned to `galexie-v30.0.1`, with its version string and binary sha256 (#4348).
-
-### Fixed
-
-- **api:** the RWA assets view and a replayed asset list page are flagged as soon as the asset catalogue's refresh fails, where they previously judged its rows by age only (#4346).
-- **api:** the asset-id resolve fallback no longer claims the asset list refresh slot without starting a refresh (#4343).
-- **ops:** the `trades-by-account` freshness bound is 9 days, matching a rollup that writes once per 7-day trades chunk; the 72-hour bound fired `stellarindex_data_source_stale` for about four days of every seven (#4342).
-- **tests:** the VWAP/TWAP source-exclusion test pins one closed window (#4346), and three explorer stale-serve tests hold the refresh until the stale serve is observed (#4347).
