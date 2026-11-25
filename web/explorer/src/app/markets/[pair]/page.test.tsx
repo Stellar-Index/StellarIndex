@@ -95,8 +95,12 @@ describe('markets/[pair]/page USD volume stats', () => {
   });
 
   // The chart's closed hourly points cover less than 24h, so the 24h stat is the
-  // server's own /v1/pairs figure, never their sum.
-  function withData(vUsd: string[], pair?: Record<string, unknown>) {
+  // server's own figure (the build's /v1/markets row), never their sum.
+  function withData(
+    vUsd: string[],
+    pair?: Record<string, unknown>,
+    source: '/v1/markets' | '/v1/pairs' = '/v1/markets',
+  ) {
     vi.mocked(buildFetchData).mockImplementation(async (path: string) => {
       if (path.startsWith('/v1/chart')) {
         return {
@@ -108,20 +112,47 @@ describe('markets/[pair]/page USD volume stats', () => {
           })),
         } as never;
       }
-      if (path.startsWith('/v1/pairs') && pair) {
-        return [
-          {
-            base: BASE,
-            quote: QUOTE,
-            trade_count_24h: 3,
-            last_trade_at: '2026-01-01T02:00:00Z',
-            ...pair,
-          },
-        ] as never;
+      const row = {
+        base: BASE,
+        quote: QUOTE,
+        trade_count_24h: 3,
+        last_trade_at: '2026-01-01T02:00:00Z',
+        ...pair,
+      };
+      if (path.startsWith('/v1/markets')) {
+        const other = { ...row, quote: 'native', volume_24h_usd: '7' };
+        return (
+          pair && source === '/v1/markets' ? [other, row] : [other]
+        ) as never;
+      }
+      if (path.startsWith('/v1/pairs') && pair && source === '/v1/pairs') {
+        return [row] as never;
       }
       return null as never;
     });
   }
+
+  function pairsCalls() {
+    return vi
+      .mocked(buildFetchData)
+      .mock.calls.filter(([path]) => path.startsWith('/v1/pairs'));
+  }
+
+  it('reads the 24h volume off the listing row without calling /v1/pairs', async () => {
+    vi.mocked(buildFetchData).mockClear();
+    withData(['1'], { volume_24h_usd: '250', volume_lower_bound: true });
+    await renderPair();
+    expect(stat('24h USD vol')).toHaveTextContent('≥ $250');
+    expect(pairsCalls()).toHaveLength(0);
+  });
+
+  it('asks /v1/pairs for a pair outside the listing', async () => {
+    vi.mocked(buildFetchData).mockClear();
+    withData(['1'], { volume_24h_usd: '1235567' }, '/v1/pairs');
+    await renderPair();
+    expect(stat('24h USD vol')).toHaveTextContent('$1.24M');
+    expect(pairsCalls()).toHaveLength(1);
+  });
 
   function stat(label: string) {
     return screen.getByText(label, { selector: 'dt' }).nextElementSibling;

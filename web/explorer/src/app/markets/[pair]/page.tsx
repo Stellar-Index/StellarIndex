@@ -103,6 +103,8 @@ interface OhlcResp {
 
 const PAIR_SEPARATOR = '~';
 
+const MARKETS_LISTING = '/v1/markets?limit=500&order_by=volume_24h_usd_desc';
+
 /**
  * Pair slug = `${base}${PAIR_SEPARATOR}${quote}`, URL-encoded once.
  * `~` is a URL-safe char that doesn't appear in any Stellar
@@ -144,9 +146,7 @@ export async function generateStaticParams() {
   // listing throws so the build fails instead of exporting only the
   // fallback route. CI-stub builds fall through to the fallback.
   const markets = requireRows(
-    await buildFetchData<Market[]>(
-      '/v1/markets?limit=500&order_by=volume_24h_usd_desc',
-    ),
+    await buildFetchData<Market[]>(MARKETS_LISTING),
     '/v1/markets listing for /markets/[pair] static params',
   );
   const out = markets
@@ -252,11 +252,22 @@ function fetchOhlc(base: string, quote: string): Promise<OhlcResp | null> {
 }
 
 // The server's trailing-24h figure; /v1/chart's hourly points are closed hours only and cover less.
+// The listing row this page was generated from carries the same volume_24h_usd and
+// volume_lower_bound as /v1/pairs (same prices_1m sum, orientations and SAC spellings folded),
+// so /v1/pairs is asked only for a pair outside it.
 // softFail like fetchOhlc: no figure renders no stat rather than aborting the export.
 async function fetchPairMarket(
   base: string,
   quote: string,
 ): Promise<Market | null> {
+  let listing: Market[] | null = null;
+  try {
+    listing = await buildFetchData<Market[]>(MARKETS_LISTING);
+  } catch {
+    // Fail-hard in generateStaticParams; here it only saves the /v1/pairs call.
+  }
+  const listed = listing?.find((m) => m.base === base && m.quote === quote);
+  if (listed) return listed;
   const rows = await buildFetchData<Market[]>(
     `/v1/pairs?base=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`,
     { softFail: true, timeoutMs: 6_000, attempts: 2 },
