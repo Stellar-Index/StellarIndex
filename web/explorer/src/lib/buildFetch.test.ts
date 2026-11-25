@@ -217,6 +217,67 @@ describe('in-flight cap', () => {
   });
 });
 
+describe('price batch gate', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('runs batches one at a time inside the global cap while other routes overlap', async () => {
+    let cur = 0;
+    let peak = 0;
+    let curBatch = 0;
+    let peakBatch = 0;
+    let othersDuringBatch = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const isBatch = url.includes('/v1/price/batch');
+        cur++;
+        peak = Math.max(peak, cur);
+        if (isBatch) {
+          curBatch++;
+          peakBatch = Math.max(peakBatch, curBatch);
+        }
+        if (curBatch > 0) {
+          othersDuringBatch = Math.max(othersDuringBatch, cur - curBatch);
+        }
+        await new Promise((r) => setTimeout(r, 5));
+        cur--;
+        if (isBatch) curBatch--;
+        return fakeResponse(200, { data: isBatch ? ['b'] : 1 });
+      }),
+    );
+    const batches = Array.from({ length: 6 }, (_, i) =>
+      buildFetchData<string[]>(`/v1/price/batch?asset_ids=gate${i}&quote=fiat:USD`),
+    );
+    const others = Array.from({ length: 12 }, (_, i) =>
+      buildFetchData<number>(`/v1/gate-other/${i}`),
+    );
+    const [b, o] = await Promise.all([Promise.all(batches), Promise.all(others)]);
+    expect(b.every((r) => r?.[0] === 'b')).toBe(true);
+    expect(o.every((r) => r === 1)).toBe(true);
+    expect(peakBatch).toBe(1);
+    expect(peak).toBeLessThanOrEqual(MAX_IN_FLIGHT);
+    expect(othersDuringBatch).toBeGreaterThan(1);
+  });
+
+  it('releases the batch slot when a request fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('gatefail')) throw new Error('boom');
+        return fakeResponse(200, { data: ['ok'] });
+      }),
+    );
+    const failing = buildFetchData('/v1/price/batch?asset_ids=gatefail', {
+      attempts: 1,
+    });
+    const next = buildFetchData<string[]>('/v1/price/batch?asset_ids=gateok');
+    await expect(failing).rejects.toThrow(/boom/);
+    expect(await next).toEqual(['ok']);
+  });
+});
+
 describe('buildFetchPriceBatch', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
