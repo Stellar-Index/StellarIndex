@@ -23,6 +23,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/projector"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/rozo"
 	sep41supply "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
@@ -162,10 +163,143 @@ func TestWindowScheduler_EmptyPlanClaimsNothing(t *testing.T) {
 // ─── pendingWindows / windowCursorSub: resume correctness ─────────────────
 
 func TestWindowCursorSub_Format(t *testing.T) {
-	got := windowCursorSub("blend_backstop", opsutil.RangeChunk{From: 51_499_546, To: 51_549_545})
+	got := windowCursorSub("blend_backstop", opsutil.RangeChunk{From: 51_499_546, To: 51_549_545}, nil)
 	want := "blend_backstop:51499546-51549545@" + version.Version
 	if got != want {
 		t.Errorf("windowCursorSub = %q, want %q", got, want)
+	}
+}
+
+// A filtered run's checkpoints must not satisfy an unfiltered resume (or the reverse): the filtered window wrote only
+// its kinds. The key is built from the parsed filter, so the flag's order and repeats do not change it.
+func TestWindowCursorSub_OnlyKindsKeyedApartAndOrderIndependent(t *testing.T) {
+	w := opsutil.RangeChunk{From: 100, To: 199}
+	ab, _, err := parseOnlyKinds("aquarius", "aquarius.trade,aquarius.liquidity")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ba, _, err := parseOnlyKinds("aquarius", " aquarius.liquidity , aquarius.trade,aquarius.liquidity")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := windowCursorSub("aquarius", w, ab), "aquarius:100-199@"+version.Version+"#only-kinds=aquarius.liquidity,aquarius.trade"; got != want {
+		t.Errorf("filtered key = %q, want %q", got, want)
+	}
+	if windowCursorSub("aquarius", w, ab) != windowCursorSub("aquarius", w, ba) {
+		t.Errorf("key depends on flag order: %q vs %q", windowCursorSub("aquarius", w, ab), windowCursorSub("aquarius", w, ba))
+	}
+
+	plan := []opsutil.RangeChunk{w}
+	liq := kindFilter{"aquarius.liquidity"}
+	filteredDone := map[string]uint32{windowCursorSub("aquarius", w, liq): 199}
+	if got := pendingWindows(plan, "aquarius", nil, filteredDone); len(got) != 1 {
+		t.Errorf("unfiltered resume skipped a window only a liquidity-only run completed")
+	}
+	if n := otherBuildWindows(plan, "aquarius", nil, filteredDone); n != 1 {
+		t.Errorf("otherBuildWindows = %d, want 1 (the filtered checkpoint is reported as re-walked)", n)
+	}
+	fullDone := map[string]uint32{windowCursorSub("aquarius", w, nil): 199}
+	if got := pendingWindows(plan, "aquarius", liq, fullDone); len(got) != 1 {
+		t.Errorf("filtered resume skipped a window an unfiltered run completed")
+	}
+	if got := pendingWindows(plan, "aquarius", liq, filteredDone); len(got) != 0 {
+		t.Errorf("filtered resume re-walked its own completed window")
+	}
+}
+
+// An unknown or misspelled kind is refused before any work, so it cannot become a no-op rewrite of a whole range.
+func TestParseOnlyKinds_RefusesKindsTheSourceCannotEmit(t *testing.T) {
+	for _, raw := range []string{"soroswap.liquidity", "liquidity", "aquarius.", "aquarius.trade,,aquarius.liquidity", "aquariusliquidity"} {
+		if _, _, err := parseOnlyKinds("aquarius", raw); err == nil {
+			t.Errorf("parseOnlyKinds(aquarius, %q) accepted a kind aquarius cannot emit", raw)
+		}
+	}
+	if _, _, err := parseOnlyKinds("no_such_source", "x.y"); err == nil {
+		t.Error("a source with no spec was accepted")
+	}
+	only, unlisted, err := parseOnlyKinds("aquarius", "aquarius.reserves_sync,aquarius.liquidity")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(only, kindFilter{"aquarius.liquidity", "aquarius.reserves_sync"}) || !reflect.DeepEqual(unlisted, []string{"aquarius.reserves_sync"}) {
+		t.Errorf("only=%v unlisted=%v, want the value-dependent reserves_sync kind accepted but reported as not statically known", only, unlisted)
+	}
+	if only, _, err := parseOnlyKinds("aquarius", "  "); err != nil || only != nil {
+		t.Errorf("empty flag: only=%v err=%v, want no filter", only, err)
+	}
+}
+
+// The post-run backstop for a kind the static check cannot prove: a whole-range walk that never saw it fails.
+func TestProjectedRebuildOutcome_UnseenOnlyKindFails(t *testing.T) {
+	r := ProjectedRebuildResult{
+		WindowsPlanned: 2, WindowsProcessed: 2, OnlyKinds: kindFilter{"aquarius.liquidity", "aquarius.liquidty"},
+		KindCounts: map[string]int64{"aquarius.liquidity": 4},
+	}
+	if err := projectedRebuildOutcome(r, nil, false); !errors.Is(err, errProjectedRebuildKindUnseen) || !strings.Contains(err.Error(), "aquarius.liquidty") {
+		t.Fatalf("err = %v, want errProjectedRebuildKindUnseen naming the misspelled kind", err)
+	}
+	r.WindowsProcessed, r.WindowsSkipped = 1, 1
+	if err := projectedRebuildOutcome(r, nil, false); err != nil {
+		t.Errorf("a resumed run cannot prove a kind absent; err = %v", err)
+	}
+}
+
+// The filter sits in front of the one sink: an output of another kind never reaches pipeline.HandleEvent and is counted
+// as skipped. Store is nil, so a liquidity output reaching the sink would come back as an insert error.
+func TestWriteProjectedOutputs_OnlyKindsKeepsOtherKindsOutOfTheSink(t *testing.T) {
+	counters := newProjectedRebuildCounters()
+	opts := ProjectedRebuildOptions{Write: true, Source: projector.Source{Name: "aquarius"}, OnlyKinds: kindFilter{"rozo.event"}}
+	outs := []consumer.Event{aquarius.LiquidityEvent{}, rozo.Event{}, aquarius.LiquidityEvent{}}
+	emitted, insertErrs := writeProjectedOutputs(context.Background(), opts, quietLogger(), counters, outs)
+	if emitted != 3 || insertErrs != 1 {
+		t.Errorf("emitted=%d insertErrs=%d, want 3 emitted and 1 sink failure (the rozo output alone reached the nil store)", emitted, insertErrs)
+	}
+	if counters.skippedKinds["aquarius.liquidity"] != 2 || counters.kindCounts["rozo.event"] != 1 || counters.kindCounts["aquarius.liquidity"] != 0 {
+		t.Errorf("kindCounts=%v skipped=%v, want rozo.event written once and aquarius.liquidity skipped twice", counters.kindCounts, counters.skippedKinds)
+	}
+}
+
+// A dry run reports, per kind, what -write would write beside what the filter skips.
+func TestProjectedRebuildKindLines_DryRunReportsWouldWritePerKind(t *testing.T) {
+	counters := newProjectedRebuildCounters()
+	opts := ProjectedRebuildOptions{Source: projector.Source{Name: "aquarius"}, OnlyKinds: kindFilter{"aquarius.liquidity"}}
+	outs := []consumer.Event{aquarius.LiquidityEvent{}, aquarius.TradeEvent{}, aquarius.LiquidityEvent{}, aquarius.ReservesEvent{}}
+	writeProjectedOutputs(context.Background(), opts, quietLogger(), counters, outs)
+	r := ProjectedRebuildResult{OnlyKinds: opts.OnlyKinds, KindCounts: counters.kindCounts, KindsSkipped: counters.skippedKinds}
+	got := strings.Join(projectedRebuildKindLines(r, false), "\n")
+	for _, want := range []string{
+		"would-write", "skipped", "aquarius.liquidity                                  2            0",
+		"aquarius.trade                                      0            1", "aquarius.reserves                                   0            1",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("dry-run kind table missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// A liquidity-only rewrite touches only aquarius_liquidity, which the aquarius reconcile waives (fan-out), so it owes no
+// dirty window; a kind the reconcile counts, no filter, or an uncatalogued source still records one.
+func TestRebuildNeedsDirtyWindow(t *testing.T) {
+	for _, tc := range []struct {
+		source string
+		only   kindFilter
+		want   bool
+	}{
+		{"aquarius", nil, true},
+		{"aquarius", kindFilter{"aquarius.liquidity"}, false},
+		{"aquarius", kindFilter{"aquarius.liquidity", "aquarius.reserves", "aquarius.reserves_sync"}, false},
+		{"aquarius", kindFilter{"aquarius.liquidity", "aquarius.rewards"}, true},
+		{"aquarius", kindFilter{"aquarius.trade"}, true},
+		{"soroswap", kindFilter{"soroswap.liquidity"}, true},
+		{"not_in_catalogue", kindFilter{"not_in_catalogue.x"}, true},
+	} {
+		scope, listed, err := reconcileScopeOf(config.Config{}, tc.source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := rebuildNeedsDirtyWindow(scope, listed, tc.only); got != tc.want {
+			t.Errorf("rebuildNeedsDirtyWindow(%s, %v) = %v, want %v", tc.source, tc.only, got, tc.want)
+		}
 	}
 }
 
@@ -174,16 +308,16 @@ func TestWindowCursorSub_Format(t *testing.T) {
 func TestPendingWindows_TrustsOnlyThisBuildsCheckpoints(t *testing.T) {
 	plan := buildWindowPlan(100, 499, 100)
 	done := map[string]uint32{
-		"phoenix:100-199":                    199, // written before the build was part of the key
-		"phoenix:200-299@v0.0.1-other-build": 299,
-		windowCursorSub("phoenix", plan[2]):  399, // this build's
+		"phoenix:100-199":                        199, // written before the build was part of the key
+		"phoenix:200-299@v0.0.1-other-build":     299,
+		windowCursorSub("phoenix", plan[2], nil): 399, // this build's
 	}
-	got := pendingWindows(plan, "phoenix", done)
+	got := pendingWindows(plan, "phoenix", nil, done)
 	want := []opsutil.RangeChunk{plan[0], plan[1], plan[3]}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("pendingWindows = %v, want %v: another build's checkpoint was trusted", got, want)
 	}
-	if n := otherBuildWindows(got, "phoenix", done); n != 2 {
+	if n := otherBuildWindows(got, "phoenix", nil, done); n != 2 {
 		t.Errorf("otherBuildWindows = %d, want 2 (the two windows re-walked over another build's checkpoint)", n)
 	}
 }
@@ -198,15 +332,15 @@ func TestPendingWindows_ResumeFiltering(t *testing.T) {
 		{From: 400, To: 499}, // done
 	}
 	done := map[string]uint32{
-		windowCursorSub("aquarius", plan[0]): 199,
-		windowCursorSub("aquarius", plan[1]): 250, // < 299
-		windowCursorSub("aquarius", plan[3]): 499,
+		windowCursorSub("aquarius", plan[0], nil): 199,
+		windowCursorSub("aquarius", plan[1], nil): 250, // < 299
+		windowCursorSub("aquarius", plan[3], nil): 499,
 		// A different source's identically-numbered window must never
 		// leak into this source's resume set.
-		windowCursorSub("blend", plan[2]): 399,
+		windowCursorSub("blend", plan[2], nil): 399,
 	}
 
-	got := pendingWindows(plan, "aquarius", done)
+	got := pendingWindows(plan, "aquarius", nil, done)
 	want := []opsutil.RangeChunk{plan[1], plan[2]}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("pendingWindows = %v, want %v", got, want)
@@ -215,7 +349,7 @@ func TestPendingWindows_ResumeFiltering(t *testing.T) {
 
 func TestPendingWindows_NoCheckpointsReturnsWholePlan(t *testing.T) {
 	plan := buildWindowPlan(1, 100, 10)
-	got := pendingWindows(plan, "rozo", nil)
+	got := pendingWindows(plan, "rozo", nil, nil)
 	if !reflect.DeepEqual(got, plan) {
 		t.Errorf("pendingWindows with empty done map should return the plan unchanged")
 	}

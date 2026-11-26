@@ -215,6 +215,34 @@ func (s reconSource) projectionScope(scopes []projectionScope) string {
 	return out + ", not reconciled: " + strings.Join(parts, ", ")
 }
 
+// reconcileScope is what the projection reconcile counts for one source: the kinds of its counted targets, and whether it
+// also counts by something other than kind (a census target or window totals).
+type reconcileScope struct {
+	kinds   []string
+	byOther bool
+}
+
+// reconcileScopeOf reads source's reconcile scope from the catalogue. Metadata only: no decoder runs, so unlike a
+// re-deriving consumer it needs no gate warm. listed is false for a source the catalogue does not carry.
+func reconcileScopeOf(cfg config.Config, source string) (scope reconcileScope, listed bool, err error) {
+	cat, _, err := buildReconciliationCatalogue(cfg)
+	if err != nil {
+		return reconcileScope{}, false, err
+	}
+	for _, s := range cat {
+		if s.name != source {
+			continue
+		}
+		scope.byOther = s.aggregate != nil
+		for _, t := range s.targets {
+			scope.byOther = scope.byOther || t.kinds == nil
+			scope.kinds = append(scope.kinds, t.kinds...)
+		}
+		return scope, true, nil
+	}
+	return reconcileScope{}, false, nil
+}
+
 // outlastsPass reports whether the daily -pass must not force this source's
 // from-genesis re-proof (the SDEX census, or a named heavy source).
 func (s reconSource) outlastsPass() bool { return s.census || s.reproofOutlastsPass != "" }
