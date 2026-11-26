@@ -70,17 +70,19 @@ func detTradeSets() map[string][]canonical.Trade {
 	}
 }
 
-// detBuckets feeds TWAPFromBuckets: a carry-in bucket, buckets on both window edges, an idle gap and an i128-scale VWAP.
+// detBuckets feeds TWAPFromBuckets: a superseded old bucket, a carry-in, an idle gap, an i128-scale VWAP, the window's last minute,
+// and buckets starting at and after the window end.
 func detBuckets() []ClosedBucket {
 	at := func(m int) time.Time { return detT0.Add(time.Duration(m) * time.Minute) }
 	return []ClosedBucket{
-		{Close: at(-3), VWAP: "2.4999999"},
-		{Close: at(0), VWAP: "2.5000001"},
-		{Close: at(4), VWAP: "2.51"},
-		{Close: at(17), VWAP: "170141183460469231731687303715884105727.0000001"},
-		{Close: at(18), VWAP: "0.0000001"},
-		{Close: at(30), VWAP: "99"},
-		{Close: at(31), VWAP: "1000"},
+		{Start: at(-40), VWAP: "7"},
+		{Start: at(-3), VWAP: "2.4999999"},
+		{Start: at(4), VWAP: "2.51"},
+		{Start: at(17), VWAP: "170141183460469231731687303715884105727.0000001"},
+		{Start: at(18), VWAP: "0.0000001"},
+		{Start: at(29), VWAP: "3"},
+		{Start: at(30), VWAP: "99"},
+		{Start: at(31), VWAP: "1000"},
 	}
 }
 
@@ -109,7 +111,7 @@ func detVWAP(trades []canonical.Trade) string {
 }
 
 // renderAggregates runs every trade-consuming entry point over trades and renders each result as decimal text. Position-sensitive
-// entry points (TWAP, OHLC) get the TradeOrderLess order every production caller sorts into first.
+// entry points (TWAP, OHLC) get the shuffled trades through SortTradeOrder, the sort their API callers apply.
 func renderAggregates(trades []canonical.Trade) string {
 	var b strings.Builder
 	line := func(k, v string) { b.WriteString(k + " = " + v + "\n") }
@@ -133,15 +135,7 @@ func renderAggregates(trades []canonical.Trade) string {
 	line("filter_outliers_local vwap", detVWAP(local))
 
 	ordered := slices.Clone(w.Trades())
-	slices.SortFunc(ordered, func(a, c canonical.Trade) int {
-		if TradeOrderLess(&a, &c) {
-			return -1
-		}
-		if TradeOrderLess(&c, &a) {
-			return 1
-		}
-		return 0
-	})
+	SortTradeOrder(ordered)
 	twap, n, err := TWAPWithCount(ordered, detT0.Add(2*time.Minute))
 	line("twap", fmt.Sprintf("%s weighted=%d err=%v", ratText(twap), n, err))
 	if bar, err := ComputeOHLC(ordered); err == nil {
@@ -152,7 +146,7 @@ func renderAggregates(trades []canonical.Trade) string {
 }
 
 func renderBucketTWAP(buckets []ClosedBucket) string {
-	res, ok, err := TWAPFromBuckets(buckets, detT0, detT0.Add(30*time.Minute))
+	res, ok, err := TWAPFromBuckets(buckets, detT0, detT0.Add(30*time.Minute), 15*time.Minute)
 	return fmt.Sprintf("twap_from_buckets = %s ok=%v buckets=%d newest=%s err=%v\n",
 		ratText(res.Price), ok, res.Buckets, res.Newest.Format(time.RFC3339), err)
 }
