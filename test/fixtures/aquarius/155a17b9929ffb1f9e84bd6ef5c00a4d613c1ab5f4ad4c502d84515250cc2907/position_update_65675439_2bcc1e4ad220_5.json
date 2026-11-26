@@ -1,0 +1,15 @@
+{
+  "contract_id": "CABOSWXYBLE2UJKYWITFRICR37D4UOB75CNXIH7VI5ZKKL526GFHXAUI",
+  "wasm_hash": "155a17b9929ffb1f9e84bd6ef5c00a4d613c1ab5f4ad4c502d84515250cc2907",
+  "ledger": 65675439,
+  "tx_hash": "2bcc1e4ad220c70992891df85897e5f960cda88b36d63203d3fb3257ca562304",
+  "op_index": 0,
+  "event_index": 5,
+  "ledger_closed_at": "2026-11-26T03:20:59Z",
+  "topics": [
+    "AAAADwAAAA9wb3NpdGlvbl91cGRhdGUA",
+    "AAAAEgAAAAAAAAAAJAvaMBKR2MVhYVlHV3zQ8cmpLPDJ4+WLM56mZWpXNsY="
+  ],
+  "value": "AAAAEAAAAAEAAAADAAAABP/ydiQAAAAEAA2J3AAAAAoAAAAAAAAAAAAAAAFHoKAZ",
+  "event_name": "position_update"
+}

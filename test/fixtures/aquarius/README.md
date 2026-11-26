@@ -58,11 +58,11 @@ keys (seen in Soroswap / Reflector).
 
 ## Known gaps
 
-- **No deposit_liquidity / withdraw_liquidity / update_reserves
-  fixtures.** Out of scope for PR 164c (the decoder currently emits
-  only on `trade`). If we add those connectors later, capture them
-  under the same `<wasm_hash>/` directory and extend the
-  real_fixture_test dispatcher.
+- **Liquidity fixtures exist only for concentrated pools.**
+  `155a17b9…/` holds concentrated-pool `deposit_liquidity` events with
+  their same-tx `update_reserves`, `position_update` and `pool_state`
+  (read by `concentrated_liquidity_test.go`); no `withdraw_liquidity`
+  and no classic-pool liquidity fixture is captured.
 - **WASM hash not yet resolved.** Fixtures currently land under
   `v2-2026-04-23/` (tag + date), not a hash directory. Resolve it from the lake
   with the query in the "Resolving the WASM hash" section of

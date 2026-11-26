@@ -1,0 +1,16 @@
+{
+  "contract_id": "CABOSWXYBLE2UJKYWITFRICR37D4UOB75CNXIH7VI5ZKKL526GFHXAUI",
+  "wasm_hash": "155a17b9929ffb1f9e84bd6ef5c00a4d613c1ab5f4ad4c502d84515250cc2907",
+  "ledger": 65675307,
+  "tx_hash": "a43b2fa30ab80cd320884788e82fac53e9478aa190927d56ca0e050cffc96043",
+  "op_index": 0,
+  "event_index": 5,
+  "ledger_closed_at": "2026-11-26T03:09:59Z",
+  "topics": [
+    "AAAADwAAABFkZXBvc2l0X2xpcXVpZGl0eQAAAA==",
+    "AAAAEgAAAAEohS9owZhIjjRvsSEu1QKQU3Ycwk9FM5LjU5ggGwgl5w==",
+    "AAAAEgAAAAFknJEO6L6hakXbFSbe6ZW6bdZtDfgJsVRGw6ZHiVM5HQ=="
+  ],
+  "value": "AAAAEAAAAAEAAAADAAAACgAAAAAAAAAAAAAAAAAIYyMAAAAKAAAAAAAAAAAAAAAAAkBGcwAAAAoAAAAAAAAAAAAAAAAAAB9A",
+  "event_name": "deposit_liquidity"
+}

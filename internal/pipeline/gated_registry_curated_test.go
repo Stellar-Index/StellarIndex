@@ -17,7 +17,6 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/spectra"
@@ -566,50 +565,6 @@ func TestGatedRegistryOptions_SpectraMarketRowsRestoreRoles(t *testing.T) {
 	}
 	if !d.Matches(ytTransfer) {
 		t.Error("the recorded YT lost its role or market across the warm")
-	}
-}
-
-type fakeAquariusStore struct {
-	fakeProtocolContractStore
-	list []timescale.ProtocolContract
-}
-
-func (f *fakeAquariusStore) ListProtocolContracts(context.Context, string) ([]timescale.ProtocolContract, error) {
-	return f.list, nil
-}
-
-// After a restart an Aquarius pool's liquidity layout comes from its protocol_contracts row only when the router announced
-// it before concentrated pools existed; any other row stays unknown so its liquidity events fail loud, not mis-ordered.
-func TestGatedRegistryOptions_AquariusLayoutFromFirstLedger(t *testing.T) {
-	const (
-		early   = "CDVBYETOFG7UYJAD6CMOAQZXBHEK3PD5ZDZKWMWIY5OXIWATPX4VGMY3"
-		late    = "CBQHNAXSI55GX2GN6D67GK7BHVPSLJUGZQEU7WKQU3X7PTUSXHMYZJRR"
-		noLedge = "CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2"
-		curated = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
-	)
-	ids := []string{early, late, noLedge, curated}
-	store := &fakeAquariusStore{
-		fakeProtocolContractStore: fakeProtocolContractStore{rows: map[string][]string{aquarius.SourceName: ids}},
-		list: []timescale.ProtocolContract{
-			{ContractID: early, FactoryID: aquarius.MainnetRouter, FirstLedger: aquarius.SharesLastThroughLedger},
-			{ContractID: late, FactoryID: aquarius.MainnetRouter, FirstLedger: aquarius.SharesLastThroughLedger + 1},
-			{ContractID: noLedge, FactoryID: aquarius.MainnetRouter},
-			{ContractID: curated, FactoryID: CuratedFactoryID, FirstLedger: 52_728_375},
-		},
-	}
-	got, err := gatedRegistryOptions(context.Background(), store, quietLogger(), context.Background(), false)
-	if err != nil {
-		t.Fatalf("gatedRegistryOptions: %v", err)
-	}
-	reg := contractid.New(got[aquarius.SourceName]...)
-	want := map[string]string{early: aquarius.LayoutSharesLast, late: "", noLedge: "", curated: ""}
-	for id, w := range want {
-		if !reg.Has(id) {
-			t.Errorf("%s not gated in", id)
-		}
-		if l := reg.AttrsOf(id)[aquarius.AttrLiquidityLayout]; l != w {
-			t.Errorf("%s layout = %q, want %q", id, l, w)
-		}
 	}
 }
 

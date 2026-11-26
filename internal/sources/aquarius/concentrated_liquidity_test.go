@@ -5,37 +5,23 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/stellar/go-stellar-sdk/xdr"
+
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Bodies are the lake's data_xdr for every event concentrated pool CABOSWXY... emitted (ledgers 65,675,307-65,678,793).
-// The lake export carries no topics for these rows, so the deposit topics are built from the pool's token pair as the
-// add_pool fixture announces it ([CAUIKL3I..., CBSJZEIO...]); the trade below pins CAUIKL3I... to reserve position 0.
-const (
-	clPool       = "CABOSWXYBLE2UJKYWITFRICR37D4UOB75CNXIH7VI5ZKKL526GFHXAUI"
-	clToken0     = "CAUIKL3IYGMERDRUN6YSCLWVAKIFG5Q4YJHUKM4S4NJZQIA3BAS6OJPK"
-	clToken0Blob = "AAAAEgAAAAEohS9owZhIjjRvsSEu1QKQU3Ycwk9FM5LjU5ggGwgl5w=="
-	clToken1Blob = "AAAAEgAAAAFknJEO6L6hakXbFSbe6ZW6bdZtDfgJsVRGw6ZHiVM5HQ=="
+// Fixtures: every deposit_liquidity of concentrated pools CABOSWXY... and CBQ6AGQY... with the same-tx update_reserves,
+// position_update and pool_state, plus CABOSWXY's one trade; both pools run WASM 155a17b9... at every capture ledger.
+const concentratedPoolWasmHash = "155a17b9929ffb1f9e84bd6ef5c00a4d613c1ab5f4ad4c502d84515250cc2907"
 
-	// ledger 65,675,307 event 5: [549667, 37766771, 8000]; update_reserves event 6: [37766771, 8000].
-	clDeposit1Body  = "AAAAEAAAAAEAAAADAAAACgAAAAAAAAAAAAAAAAAIYyMAAAAKAAAAAAAAAAAAAAAAAkBGcwAAAAoAAAAAAAAAAAAAAAAAAB9A"
-	clReserves1Body = "AAAAEAAAAAEAAAACAAAACgAAAAAAAAAAAAAAAAJARnMAAAAKAAAAAAAAAAAAAAAAAAAfQA=="
-	// ledger 65,675,439 event 3: [5496676377, 377668139960, 80000000]; update_reserves event 4: [377705906731, 80008000].
-	clDeposit2Body  = "AAAAEAAAAAEAAAADAAAACgAAAAAAAAAAAAAAAUegoBkAAAAKAAAAAAAAAAAAAABX7sZ7uAAAAAoAAAAAAAAAAAAAAAAExLQA"
-	clReserves2Body = "AAAAEAAAAAEAAAACAAAACgAAAAAAAAAAAAAAV/EGwisAAAAKAAAAAAAAAAAAAAAABMTTQA=="
-	// ledger 65,678,793 event 3: trade [sold 12635, bought 59576995, fee 13], token_out CAUIKL3I...; update_reserves
-	// event 4: [377646329736, 80020629], so reserve[0] fell by exactly the 59576995 of CAUIKL3I... bought.
-	clTradeBody     = "AAAAEAAAAAEAAAADAAAACgAAAAAAAAAAAAAAAAAAMVsAAAAKAAAAAAAAAAAAAAAAA40SowAAAAoAAAAAAAAAAAAAAAAAAAAN"
-	clReserves3Body = "AAAAEAAAAAEAAAACAAAACgAAAAAAAAAAAAAAV+15r4gAAAAKAAAAAAAAAAAAAAAABMUElQ=="
-)
+const clPool = "CABOSWXYBLE2UJKYWITFRICR37D4UOB75CNXIH7VI5ZKKL526GFHXAUI"
 
-func clEvent(topic0, body string, ledger uint32, eventIndex int, tokens ...string) events.Event {
-	return events.Event{
-		Type: "contract", ContractID: clPool, Ledger: ledger, TxHash: "cl", EventIndex: eventIndex,
-		LedgerClosedAt: "2026-11-26T03:09:59Z", Topic: append([]string{topic0}, tokens...), Value: body,
-	}
+func clFixture(t *testing.T, name string) events.Event {
+	t.Helper()
+	_, ev, _ := loadHashFixture(t, concentratedPoolWasmHash, name)
+	return ev
 }
 
 func decodeOne(t *testing.T, d *Decoder, ev events.Event) consumer.Event {
@@ -50,105 +36,131 @@ func decodeOne(t *testing.T, d *Decoder, ev events.Event) consumer.Event {
 	return out[0]
 }
 
-func reservesOf(t *testing.T, d *Decoder, body string, ledger uint32, idx int) []string {
+func reservesOf(t *testing.T, d *Decoder, name string) []*big.Int {
 	t.Helper()
-	rv, ok := decodeOne(t, d, clEvent(TopicSymbolUpdateReserves, body, ledger, idx)).(ReservesEvent)
-	if !ok {
-		t.Fatal("update_reserves did not decode to a ReservesEvent")
+	rv, ok := decodeOne(t, d, clFixture(t, name)).(ReservesEvent)
+	if !ok || len(rv.Reserves) != 2 {
+		t.Fatalf("%s did not decode to a 2-leg ReservesEvent", name)
 	}
-	return []string{rv.Reserves[0].String(), rv.Reserves[1].String()}
+	return []*big.Int{rv.Reserves[0].BigInt(), rv.Reserves[1].BigInt()}
 }
 
-// A concentrated deposit_liquidity body is [liquidity, amount0, amount1]. The shares-last order would store the liquidity
-// as token0's amount, amount0 as token1's and amount1 as shares.
-func TestConcentratedDeposit_realBodiesDecodeAmountsAndLiquidity(t *testing.T) {
-	_, addPool, _ := loadRouterFixture(t, "add_pool_65675307_a43b2fa30ab8.json")
-	for name, d := range map[string]*Decoder{
-		"announced live": func() *Decoder {
-			d := NewDecoder(contractid.WithSeed(nil))
-			if _, err := d.Decode(addPool); err != nil {
+type clDepositTx struct{ deposit, reserves, position string }
+
+func symVal(s string) xdr.ScVal {
+	sym := xdr.ScSymbol(s)
+	return xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &sym}
+}
+
+// A concentrated deposit_liquidity body is [liquidity, amount0, amount1]; the shares-last order would store the liquidity
+// as token0's amount, amount0 as token1's and amount1 as shares. Per transaction the pool's own events cross-check the
+// decode: position_update's delta equals the liquidity, and update_reserves equals the running sums of the amounts.
+func TestConcentratedDeposit_fixturesCrossCheckAgainstSameTxEvents(t *testing.T) {
+	pools := map[string][]clDepositTx{
+		clPool: {
+			{"deposit_liquidity_65675307_a43b2fa30ab8_5.json", "update_reserves_65675307_a43b2fa30ab8_6.json", "position_update_65675307_a43b2fa30ab8_7.json"},
+			{"deposit_liquidity_65675439_2bcc1e4ad220_3.json", "update_reserves_65675439_2bcc1e4ad220_4.json", "position_update_65675439_2bcc1e4ad220_5.json"},
+		},
+		"CBQ6AGQYE5HCDK7VIDUH6756IFPBTLF2HNQH57DAFMOHK3CVDH4CAMXO": {
+			{"deposit_liquidity_65675280_bea153581781_5.json", "update_reserves_65675280_bea153581781_6.json", "position_update_65675280_bea153581781_7.json"},
+			{"deposit_liquidity_65675489_c755184d1e95_3.json", "update_reserves_65675489_c755184d1e95_4.json", "position_update_65675489_c755184d1e95_5.json"},
+		},
+	}
+	d := NewDecoder()
+	for pool, txs := range pools {
+		sum := []*big.Int{new(big.Int), new(big.Int)}
+		for _, tx := range txs {
+			lq, ok := decodeOne(t, d, clFixture(t, tx.deposit)).(LiquidityEvent)
+			if !ok || lq.ContractID != pool {
+				t.Fatalf("%s did not decode to a LiquidityEvent of %s", tx.deposit, pool)
+			}
+			if !lq.Concentrated || len(lq.Amounts) != 2 || !lq.Shares.IsZero() {
+				t.Fatalf("%s: concentrated=%v amounts=%v shares=%s; want concentrated, 2 amounts, no shares",
+					tx.deposit, lq.Concentrated, lq.Amounts, lq.Shares)
+			}
+			puEv := clFixture(t, tx.position)
+			pu, err := decodeRewardsEvent(&puEv, EventPositionUpdate, lq.ObservedAt)
+			if err != nil {
 				t.Fatal(err)
 			}
-			return d
-		}(),
-		"in-code list after restart": NewDecoder(contractid.WithSeed([]string{clPool})),
-	} {
-		t.Run(name, func(t *testing.T) {
-			cases := []struct {
-				body, reserves   string
-				ledger           uint32
-				idx              int
-				liq, a0, a1      string
-				wantReserveAfter []string
-			}{
-				{clDeposit1Body, clReserves1Body, 65_675_307, 5, "549667", "37766771", "8000", []string{"37766771", "8000"}},
-				{clDeposit2Body, clReserves2Body, 65_675_439, 3, "5496676377", "377668139960", "80000000", []string{"377705906731", "80008000"}},
+			if pu.Attributes["delta"] != lq.Liquidity.String() {
+				t.Errorf("%s: liquidity %s != same-tx position_update delta %v", tx.deposit, lq.Liquidity, pu.Attributes["delta"])
 			}
-			sum := [2]*big.Int{new(big.Int), new(big.Int)}
-			for _, c := range cases {
-				lq, ok := decodeOne(t, d, clEvent(TopicSymbolDepositLiquidity, c.body, c.ledger, c.idx, clToken0Blob, clToken1Blob)).(LiquidityEvent)
-				if !ok {
-					t.Fatal("deposit did not decode to a LiquidityEvent")
-				}
-				if !lq.Concentrated || lq.Liquidity.String() != c.liq {
-					t.Errorf("@%d concentrated=%v liquidity=%s, want true/%s", c.ledger, lq.Concentrated, lq.Liquidity, c.liq)
-				}
-				if len(lq.Amounts) != 2 || lq.Amounts[0].String() != c.a0 || lq.Amounts[1].String() != c.a1 {
-					t.Fatalf("@%d amounts=%v, want [%s %s]", c.ledger, lq.Amounts, c.a0, c.a1)
-				}
-				if lq.Tokens[0] != clToken0 {
-					t.Errorf("@%d token0=%s, want %s", c.ledger, lq.Tokens[0], clToken0)
-				}
-				if !lq.Shares.IsZero() {
-					t.Errorf("@%d shares=%s, want unset (a concentrated pool mints no LP shares)", c.ledger, lq.Shares)
-				}
-				// The pool's own post-deposit reserves are the running sums of the decoded amounts.
-				sum[0].Add(sum[0], lq.Amounts[0].BigInt())
-				sum[1].Add(sum[1], lq.Amounts[1].BigInt())
-				got := reservesOf(t, d, c.reserves, c.ledger, c.idx+1)
-				if got[0] != sum[0].String() || got[1] != sum[1].String() || got[0] != c.wantReserveAfter[0] || got[1] != c.wantReserveAfter[1] {
-					t.Errorf("@%d reserves=%v, running deposit sums=%v", c.ledger, got, sum)
-				}
+			sum[0].Add(sum[0], lq.Amounts[0].BigInt())
+			sum[1].Add(sum[1], lq.Amounts[1].BigInt())
+			if got := reservesOf(t, d, tx.reserves); got[0].Cmp(sum[0]) != 0 || got[1].Cmp(sum[1]) != 0 {
+				t.Errorf("%s: update_reserves %v != running deposit sums %v", tx.deposit, got, sum)
 			}
-			before := reservesOf(t, d, clReserves2Body, 65_675_439, 4)
-			after := reservesOf(t, d, clReserves3Body, 65_678_793, 4)
-			drop := new(big.Int).Sub(mustBig(t, before[0]), mustBig(t, after[0]))
-			tr, ok := decodeOne(t, d, clEvent(TopicSymbolTrade, clTradeBody, 65_678_793, 3, clToken1Blob, clToken0Blob, clToken0Blob)).(TradeEvent)
-			if !ok {
-				t.Fatal("trade did not decode")
-			}
-			if drop.Cmp(tr.Trade.QuoteAmount.BigInt()) != 0 {
-				t.Errorf("reserve[0] fell by %s, trade bought %s of token0", drop, tr.Trade.QuoteAmount)
-			}
-		})
+		}
+	}
+}
+
+// The first deposit's values are hand-decoded from the XDR (i128 lo words 0x086323, 0x02404673, 0x1f40), not read back.
+func TestConcentratedDeposit_handDecodedValues(t *testing.T) {
+	lq, ok := decodeOne(t, NewDecoder(), clFixture(t, "deposit_liquidity_65675307_a43b2fa30ab8_5.json")).(LiquidityEvent)
+	if !ok {
+		t.Fatal("not a LiquidityEvent")
+	}
+	if lq.Liquidity.String() != "549667" || lq.Amounts[0].String() != "37766771" || lq.Amounts[1].String() != "8000" {
+		t.Errorf("liquidity=%s amounts=%v, want 549667 [37766771 8000]", lq.Liquidity, lq.Amounts)
+	}
+	if lq.Tokens[0] != "CAUIKL3IYGMERDRUN6YSCLWVAKIFG5Q4YJHUKM4S4NJZQIA3BAS6OJPK" {
+		t.Errorf("token0 = %s", lq.Tokens[0])
+	}
+}
+
+// The pool's one trade leaves its reserve of the bought token (token0) lower by exactly the bought amount.
+func TestConcentratedTrade_reserveMovesByBoughtAmount(t *testing.T) {
+	d := NewDecoder()
+	tr, ok := decodeOne(t, d, clFixture(t, "trade_65678793_fdcd61113af4.json")).(TradeEvent)
+	if !ok {
+		t.Fatal("trade did not decode")
+	}
+	before := reservesOf(t, d, "update_reserves_65675439_2bcc1e4ad220_4.json")
+	after := reservesOf(t, d, "update_reserves_65678793_fdcd61113af4_4.json")
+	if drop := new(big.Int).Sub(before[0], after[0]); drop.Cmp(tr.Trade.QuoteAmount.BigInt()) != 0 {
+		t.Errorf("reserve[0] fell by %s, trade bought %s of token0", drop, tr.Trade.QuoteAmount)
+	}
+}
+
+// A pool that learns its layout from a live add_pool decodes the same as one typed by the in-code list.
+func TestConcentratedDeposit_layoutFromLiveAddPool(t *testing.T) {
+	_, addPool, _ := loadRouterFixture(t, "add_pool_65675307_a43b2fa30ab8.json")
+	d := &Decoder{reg: contractid.New(contractid.WithFactories([]string{MainnetRouter}))}
+	if _, err := d.Decode(addPool); err != nil {
+		t.Fatal(err)
+	}
+	lq, ok := decodeOne(t, d, clFixture(t, "deposit_liquidity_65675307_a43b2fa30ab8_5.json")).(LiquidityEvent)
+	if !ok || !lq.Concentrated || lq.Liquidity.String() != "549667" {
+		t.Fatalf("decoded %+v, want the concentrated layout", lq)
 	}
 }
 
 func TestConcentratedWithdraw_failsLoud(t *testing.T) {
+	ev := clFixture(t, "deposit_liquidity_65675307_a43b2fa30ab8_5.json")
+	ev.Topic[0] = TopicSymbolWithdrawLiquidity
 	d := NewDecoder()
-	ev := clEvent(TopicSymbolWithdrawLiquidity, clDeposit1Body, 65_700_000, 1, clToken0Blob, clToken1Blob)
 	if !d.Matches(ev) {
 		t.Fatal("concentrated pool not gated in")
 	}
-	out, err := d.Decode(ev)
-	if !errors.Is(err, ErrUnverifiedLiquidityLayout) || out != nil {
+	if out, err := d.Decode(ev); !errors.Is(err, ErrUnverifiedLiquidityLayout) || out != nil {
 		t.Fatalf("Decode(concentrated withdraw) = %v, %v; want nil, ErrUnverifiedLiquidityLayout", out, err)
 	}
 }
 
-// A pool admitted without a known layout (a protocol_contracts row announced after the census ledger and not in the
-// in-code list) must refuse its liquidity events rather than default to the shares-last order.
+// A pool admitted without a known layout (a protocol_contracts row not in either in-code list, or an add_pool with a
+// type name other than "concentrated") must refuse its liquidity events rather than default to the shares-last order.
 func TestLiquidity_unknownLayoutFailsLoud(t *testing.T) {
 	pool := makeContractStrkey(t, 0x77)
-	laterAddPool := events.Event{
-		ContractID: MainnetRouter, Ledger: SharesLastThroughLedger + 1, Topic: []string{TopicSymbolAddPool},
-		Value: encodeAddPoolBody(t, pool),
+	otherType := events.Event{
+		ContractID: MainnetRouter, Ledger: 52_728_375, Topic: []string{TopicSymbolAddPool},
+		Value: marshalB64(t, vecVal(decodeB64ScVal(t, encodeContractAddrFromStrkey(t, pool)), symVal("constant_product"))),
 	}
 	for name, d := range map[string]*Decoder{
 		"warmed from protocol_contracts only": NewDecoder(contractid.WithSeed([]string{pool})),
-		"announced after the census ledger without a type": func() *Decoder {
+		"announced with another type name": func() *Decoder {
 			d := NewDecoder()
-			if _, err := d.Decode(laterAddPool); err != nil {
+			if _, err := d.Decode(otherType); err != nil {
 				t.Fatal(err)
 			}
 			return d
@@ -171,42 +183,21 @@ func TestLiquidity_unknownLayoutFailsLoud(t *testing.T) {
 	}
 }
 
-// A pool the router announced at or before the census ledger keeps the shares-last order whatever its add_pool body.
-func TestLiquidity_poolAnnouncedBeforeCensusIsSharesLast(t *testing.T) {
-	pool := makeContractStrkey(t, 0x78)
-	d := NewDecoder()
-	if _, err := d.Decode(events.Event{
-		ContractID: MainnetRouter, Ledger: SharesLastThroughLedger, Topic: []string{TopicSymbolAddPool},
-		Value: encodeAddPoolBody(t, pool),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	lq, ok := decodeOne(t, d, events.Event{
-		ContractID: pool, Ledger: 65_700_000, LedgerClosedAt: "2026-11-26T03:09:59Z",
+// A curated pool keeps the shares-last order.
+func TestLiquidity_curatedPoolIsSharesLast(t *testing.T) {
+	lq, ok := decodeOne(t, NewDecoder(), events.Event{
+		ContractID: MainnetPools[0], Ledger: 65_700_000, LedgerClosedAt: "2026-11-26T03:09:59Z",
 		Topic: []string{TopicSymbolDepositLiquidity, realDepositTokenA, realDepositTokenB}, Value: realDepositBody,
 	}).(LiquidityEvent)
-	if !ok || lq.Concentrated || lq.Shares.IsZero() {
+	if !ok || lq.Concentrated || lq.Shares.String() != "30000000000" {
 		t.Fatalf("decoded %+v, want a shares-last LiquidityEvent", lq)
 	}
 }
 
 func TestLayoutForAnnouncement(t *testing.T) {
-	cases := []struct {
-		ledger   uint32
-		poolType string
-		want     string
-	}{
-		{65_675_307, "concentrated", LayoutConcentrated},
-		{60_000_000, "concentrated", LayoutConcentrated},
-		{SharesLastThroughLedger, "", LayoutSharesLast},
-		{52_728_375, "anything", LayoutSharesLast},
-		{SharesLastThroughLedger + 1, "", ""},
-		{SharesLastThroughLedger + 1, "constant_product", ""},
-		{0, "", ""},
-	}
-	for _, c := range cases {
-		if got := LayoutForAnnouncement(c.ledger, c.poolType); got != c.want {
-			t.Errorf("LayoutForAnnouncement(%d, %q) = %q, want %q", c.ledger, c.poolType, got, c.want)
+	for typ, want := range map[string]string{"concentrated": LayoutConcentrated, "": "", "constant_product": "", "stable": ""} {
+		if got := LayoutForAnnouncement(typ); got != want {
+			t.Errorf("LayoutForAnnouncement(%q) = %q, want %q", typ, got, want)
 		}
 	}
 }

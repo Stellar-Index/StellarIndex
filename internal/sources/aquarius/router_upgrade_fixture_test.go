@@ -30,7 +30,14 @@ type routerFixture struct {
 
 func loadRouterFixture(t *testing.T, name string) (routerFixture, events.Event, time.Time) {
 	t.Helper()
-	path := filepath.Join("..", "..", "..", "test", "fixtures", "aquarius", routerUpgradeWasmHash, name)
+	return loadHashFixture(t, routerUpgradeWasmHash, name)
+}
+
+// loadHashFixture reads test/fixtures/aquarius/<hash>/<name>, requiring its wasm_hash to match the directory and every
+// base64 field to round-trip.
+func loadHashFixture(t *testing.T, hash, name string) (routerFixture, events.Event, time.Time) {
+	t.Helper()
+	path := filepath.Join("..", "..", "..", "test", "fixtures", "aquarius", hash, name)
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -39,7 +46,7 @@ func loadRouterFixture(t *testing.T, name string) (routerFixture, events.Event, 
 	if err := json.Unmarshal(raw, &fx); err != nil {
 		t.Fatal(err)
 	}
-	if fx.WasmHash != routerUpgradeWasmHash {
+	if fx.WasmHash != hash {
 		t.Fatalf("fixture wasm_hash = %s", fx.WasmHash)
 	}
 	for _, s := range append([]string{fx.Value}, fx.Topics...) {
@@ -75,6 +82,7 @@ func TestRouterUpgradeFixtures_addPool(t *testing.T) {
 	}{
 		{"add_pool_65675280_bea153581781.json", "CBQ6AGQYE5HCDK7VIDUH6756IFPBTLF2HNQH57DAFMOHK3CVDH4CAMXO"},
 		{"add_pool_65675307_a43b2fa30ab8.json", "CABOSWXYBLE2UJKYWITFRICR37D4UOB75CNXIH7VI5ZKKL526GFHXAUI"},
+		{"add_pool_65675330_be17f9d0da4b.json", "CCKMZ2K3ZKDETW54TFENFB34IJ67UFBI4R4RXUEY5PXKCDLBOXNIJH2B"},
 	}
 	for _, c := range cases {
 		t.Run(c.file, func(t *testing.T) {

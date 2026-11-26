@@ -122,25 +122,20 @@ const (
 	LayoutConcentrated = "concentrated"
 )
 
-// SharesLastThroughLedger is the last ledger before the router's first concentrated add_pool (lake census): a pool
-// announced at or before it has the shares-last body.
-const SharesLastThroughLedger uint32 = 65_663_788
-
-// MainnetConcentratedPools are router-announced concentrated pools. protocol_contracts has no pool-type column, so after
-// a restart this list is how a pool announced past SharesLastThroughLedger keeps its layout.
+// MainnetConcentratedPools are the router-announced concentrated pools whose deposit order is evidenced (WASM 155a17b9...,
+// announced by router WASM 2f8e7d7f...). protocol_contracts has no pool-type column, so after a restart this list is the
+// only source of their layout; a pool in neither this list nor MainnetPools is unknown until its add_pool is re-read.
 var MainnetConcentratedPools = []string{
 	"CBQ6AGQYE5HCDK7VIDUH6756IFPBTLF2HNQH57DAFMOHK3CVDH4CAMXO",
 	"CABOSWXYBLE2UJKYWITFRICR37D4UOB75CNXIH7VI5ZKKL526GFHXAUI",
+	"CCKMZ2K3ZKDETW54TFENFB34IJ67UFBI4R4RXUEY5PXKCDLBOXNIJH2B",
 }
 
-// LayoutForAnnouncement is the liquidity layout implied by a router add_pool at ledger announcing poolType, or "" when it
-// is unknown. Only "concentrated" is a verified type name; any other pool announced after the census ledger is unknown.
-func LayoutForAnnouncement(ledger uint32, poolType string) string {
+// LayoutForAnnouncement is the liquidity layout an add_pool's pool-type Symbol implies, or "" when unknown. "concentrated"
+// is the only type name seen in add_pool bytes, so every other name is unknown rather than assumed classic.
+func LayoutForAnnouncement(poolType string) string {
 	if poolType == PoolConcentrated.String() {
 		return LayoutConcentrated
-	}
-	if ledger != 0 && ledger <= SharesLastThroughLedger {
-		return LayoutSharesLast
 	}
 	return ""
 }
