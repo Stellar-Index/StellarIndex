@@ -40,7 +40,8 @@ func bdInputs(events []timescale.LendingBadDebtEvent, borrow string, posLedger u
 	}
 	return badDebtInputs{
 		assets: []string{bdAsset}, events: events, position: pos, now: bdNow, marks: bdMarks(events, true),
-		current: map[string]blend.ReserveData{bdAsset: {Version: blend.PoolV2, DRate: big.NewInt(2_000_000_000_000)}},
+		current:          map[string]blend.ReserveData{bdAsset: {Version: blend.PoolV2, DRate: big.NewInt(2_000_000_000_000)}},
+		projectedThrough: 1 << 31, coveredBidKind: auctionLegDToken,
 	}
 }
 
@@ -251,24 +252,94 @@ func TestFoldBadDebt_NoBadDebtIsTrueZero(t *testing.T) {
 	}
 }
 
-// Worked example from OBSERVED mainnet sums (r1 census, CCCCIQSD pool, CAS3J7GY reserve): a fixture of two sums, not a claim
-// about the full chain. moved 605552822530218 and defaulted 594591748765629 leave 10961073764589 d-tokens that, for the identity
-// to hold, the backstop's fills, repays and current position must account for exactly.
-func TestFoldBadDebt_WorkedExampleFromMainnetSums(t *testing.T) {
-	const moved, defaulted, remainder = "605552822530218", "594591748765629", "10961073764589"
+// Arithmetic fixture on two OBSERVED mainnet sums (r1 census, CCCCIQSD pool, CAS3J7GY reserve), with nothing else recorded: the
+// residual is moved minus defaulted, exact at this size. It says nothing about whether the real pool closes.
+func TestFoldBadDebt_ResidualArithmeticOnObservedSums(t *testing.T) {
+	const moved, defaulted, diff = "605552822530218", "594591748765629", "10961073764589"
 	ev := []timescale.LendingBadDebtEvent{
 		bdEvent(timescale.BadDebtKindMoved, bdAsset, moved, 10),
 		bdEvent(timescale.BadDebtKindDefaulted, bdAsset, defaulted, 11),
 	}
-	if r := firstReserve(foldBadDebt(bdInputs(ev, remainder, 11))); r.Reconciled == nil || !*r.Reconciled {
-		t.Fatalf("remainder outstanding: reconciled %v residual %s", r.Reconciled, bdStr(r.ResidualDTokens))
+	if r := firstReserve(foldBadDebt(bdInputs(ev, "", 11))); bdStr(r.ResidualDTokens) != diff || r.Reconciled == nil || *r.Reconciled {
+		t.Fatalf("residual %s reconciled %v, want %s and false", bdStr(r.ResidualDTokens), r.Reconciled, diff)
 	}
-	covered := append(append([]timescale.LendingBadDebtEvent(nil), ev...), bdEvent(timescale.BadDebtKindFill, bdAsset, remainder, 11))
-	if r := firstReserve(foldBadDebt(bdInputs(covered, "", 11))); r.Reconciled == nil || !*r.Reconciled {
-		t.Fatalf("remainder covered: reconciled %v residual %s", r.Reconciled, bdStr(r.ResidualDTokens))
+}
+
+// One event has a rate but no price, the other no rate: underlying and usd each go null on their own first cause, in either
+// order, and neither serves the partial sum of the events that had their input.
+func TestFoldBadDebt_PartialInputsNullEachFieldIndependently(t *testing.T) {
+	priced := bdEvent(timescale.BadDebtKindMoved, bdAsset, "1000", 10)
+	priced.Ts = bdNow.Add(-72 * time.Hour) // before every bucket: rate recorded, no price
+	unrated := bdEvent(timescale.BadDebtKindMoved, bdAsset, "2000", 11)
+	unrated.TxHash = "TXunrated"
+	for _, order := range [][]timescale.LendingBadDebtEvent{{priced, unrated}, {unrated, priced}} {
+		in := bdInputs(order, "", 0)
+		in.marks = bdMarks([]timescale.LendingBadDebtEvent{priced}, true)
+		p := firstReserve(foldBadDebt(in)).MovedToBackstop
+		wantUSD := liqReasonNoPrice
+		if order[0] == unrated {
+			wantUSD = liqReasonRateUnrecorded
+		}
+		if bdStr(p.DTokens) != "3000" || p.Underlying != nil || bdStr(p.UnderlyingReason) != liqReasonRateUnrecorded ||
+			p.USD != nil || bdStr(p.USDReason) != wantUSD {
+			t.Errorf("first %s: part %+v underlying_reason %s usd_reason %s", order[0].TxHash, p, bdStr(p.UnderlyingReason), bdStr(p.USDReason))
+		}
 	}
-	if r := firstReserve(foldBadDebt(bdInputs(ev, "", 11))); bdStr(r.ResidualDTokens) != remainder {
-		t.Fatalf("nothing else recorded: residual %s, want %s", bdStr(r.ResidualDTokens), remainder)
+}
+
+// Each event is valued at the bucket at or before it, not at today's: a mutation to "price at now" serves 2.00 here.
+func TestFoldBadDebt_EventUsesEventTimePrice(t *testing.T) {
+	ev := bdEvent(timescale.BadDebtKindMoved, bdAsset, "8000000", 10)
+	ev.Ts = bdNow.Add(-3 * time.Hour)
+	in := bdInputs([]timescale.LendingBadDebtEvent{ev}, "", 10)
+	in.marks[bdAsset].prices = []liqPrice{
+		{close: bdNow.Add(-4 * time.Hour), price: "0.50", traded: true},
+		{close: bdNow.Add(-time.Hour), price: "2.00", traded: true},
+	}
+	// 8×10^6 d-tokens × 1.25 = 1 token.
+	if p := firstReserve(foldBadDebt(in)).MovedToBackstop; bdStr(p.USD) != "0.50" {
+		t.Fatalf("moved usd %s, want 0.50 (the event-time bucket)", bdStr(p.USD))
+	}
+}
+
+// The writers commit their cursors per cycle, so a ledger past the last fully written one may hold only some of its events: a
+// position ledger beyond it is not checked (null), never false. Here, as on CCCCIQSD at 61341315, the zero-bid fill of that
+// ledger is in but its defaulted_debt is not.
+func TestFoldBadDebt_WritersBehindPositionAreNotChecked(t *testing.T) {
+	ev := []timescale.LendingBadDebtEvent{
+		bdEvent(timescale.BadDebtKindMoved, bdAsset, "1000", 61340000),
+		bdEvent(timescale.BadDebtKindFillZeroBid, "", "", 61341315),
+	}
+	lag := bdInputs(ev, "", 61341315)
+	lag.projectedThrough = 61341314
+	if r := firstReserve(foldBadDebt(lag)); r.Reconciled != nil || bdStr(r.ReconcileReason) != badDebtReconcileAsOf {
+		t.Fatalf("lagging writers: reconciled %v reason %s, want null as_of_mismatch", r.Reconciled, bdStr(r.ReconcileReason))
+	}
+	ahead := bdInputs(append(ev, bdEvent(timescale.BadDebtKindDefaulted, bdAsset, "1000", 61341315)), "", 61341315)
+	ahead.projectedThrough = 61341400
+	if r := firstReserve(foldBadDebt(ahead)); r.Reconciled == nil || !*r.Reconciled {
+		t.Fatalf("writers ahead: reconciled %v reason %s, want checked and true", r.Reconciled, bdStr(r.ReconcileReason))
+	}
+	unknown := bdInputs(ev, "", 61341315)
+	unknown.projectedThrough = 0
+	if r := firstReserve(foldBadDebt(unknown)); r.Reconciled != nil {
+		t.Fatalf("unknown writers: reconciled %v, want null", r.Reconciled)
+	}
+}
+
+// BLNT's bad-debt bid kind is unproven (auctionLegKindTable has no BLNT type 1), so its fills are not served as covered d-tokens.
+func TestFoldBadDebt_BLNTFillBidKindUnproven(t *testing.T) {
+	bid, _ := auctionLegKinds("blnt", 1)
+	ev := []timescale.LendingBadDebtEvent{
+		bdEvent(timescale.BadDebtKindMoved, bdAsset, "1000", 10), bdEvent(timescale.BadDebtKindFill, bdAsset, "1000", 10),
+	}
+	in := bdInputs(ev, "", 10)
+	in.coveredBidKind = bid
+	res, tot, _ := foldBadDebt(in)
+	c := res[0].CoveredByBackstop
+	if c.DTokens != nil || bdStr(c.DTokensReason) != auctionUSDKindUnknown || bdStr(res[0].ReconcileReason) != badDebtReconcilePartMissing ||
+		tot.CoveredByBackstop.USD != nil || len(tot.CoveredByBackstop.Excluded) != 1 {
+		t.Fatalf("bid kind %q: covered %+v reserve %+v total %+v", bid, c, res[0], tot.CoveredByBackstop)
 	}
 }
 
@@ -280,7 +351,7 @@ func TestLendingBadDebtReasonEnumsMatchHandler(t *testing.T) {
 	}{
 		{[]string{"LendingBadDebtPart", "properties", "d_tokens_reason"}, []string{
 			badDebtReasonBidNotRecorded, badDebtReasonAmountNotRecorded, badDebtReasonAssetNotRecorded, badDebtReasonBackstopUnresolved,
-			badDebtReasonBackstopRoleUnverified, badDebtReasonLakeUnavailable, badDebtReasonPositionUnread,
+			badDebtReasonBackstopRoleUnverified, badDebtReasonLakeUnavailable, badDebtReasonPositionUnread, auctionUSDKindUnknown,
 		}},
 		{[]string{"LendingBadDebtReserve", "properties", "reconcile_reason"}, []string{badDebtReconcilePartMissing, badDebtReconcileAsOf}},
 	} {

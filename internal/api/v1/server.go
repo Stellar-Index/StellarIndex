@@ -594,6 +594,7 @@ type Options struct {
 	// Cursors, when non-nil, backs GET /v1/diagnostics/cursors, the operator diagnostic behind
 	// the explorer /diagnostics page. Nil returns 503.
 	Cursors CursorsReader
+	LendingBadDebtOptions
 
 	// CoverageReader, when non-nil, backs the shadow data-derived density on
 	// /v1/diagnostics/ingestion from source_coverage_snapshots. Nil leaves DensityPctV2 /
@@ -1505,7 +1506,6 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.registerLendingHistoryRoutes()
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/auctions", s.handleLendingPoolAuctions)
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/liquidations", s.handleLendingPoolLiquidations)
-	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/bad-debt", s.handleLendingPoolBadDebt)
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/emissions", s.handleLendingPoolEmissions)
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/top-accounts", s.handleLendingPoolTopAccounts)
 	s.mux.HandleFunc("GET /v1/lending/accounts/{account}/earnings", s.handleLendingAccountEarnings)

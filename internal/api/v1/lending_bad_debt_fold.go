@@ -39,6 +39,10 @@ type badDebtInputs struct {
 	current        map[string]blend.ReserveData // each reserve's current state
 	marks          map[string]*liqMarks         // prices for every asset, rates at every event's transaction
 	now            time.Time
+	// projectedThrough is the last ledger every writer of the pool's event tables has fully written; 0 when unknown.
+	projectedThrough uint32
+	// coveredBidKind is the protocol's proven bad-debt bid kind; fills are covered d-tokens only when it is auctionLegDToken.
+	coveredBidKind string
 }
 
 // badDebtPart accumulates one part of one reserve.
@@ -46,9 +50,19 @@ type badDebtPart struct {
 	d, clipped *big.Int // nil when reason is set; clipped sums only events at or before the position's ledger
 	reason     string
 	events     int
-	under      *big.Int
-	usd        *big.Rat
-	usdReason  string
+	// under and usd are each nil, with their own first-cause reason, once any event lacks that field's input.
+	under       *big.Int
+	underReason string
+	usd         *big.Rat
+	usdReason   string
+}
+
+// badDebtValue is one event's (or the position's) conversion: underlying and USD, each nil with its reason when not derivable.
+type badDebtValue struct {
+	under       *big.Int
+	underReason string
+	usd         *big.Rat
+	usdReason   string
 }
 
 func newBadDebtPart() *badDebtPart {
@@ -61,8 +75,8 @@ func (p *badDebtPart) refuse(reason string) {
 	}
 }
 
-// add books d d-tokens worth under underlying (nil, usdReason when not convertible) at price-converted usd.
-func (p *badDebtPart) add(d *big.Int, clip bool, under *big.Int, usd *big.Rat, usdReason string) {
+// add books d d-tokens and their conversion v.
+func (p *badDebtPart) add(d *big.Int, clip bool, v badDebtValue) {
 	if p.reason != "" {
 		return
 	}
@@ -70,27 +84,33 @@ func (p *badDebtPart) add(d *big.Int, clip bool, under *big.Int, usd *big.Rat, u
 	if clip {
 		p.clipped.Add(p.clipped, d)
 	}
-	if p.under != nil && under != nil {
-		p.under.Add(p.under, under)
-	} else if p.usdReason == "" {
-		p.under, p.usd, p.usdReason = nil, nil, usdReason
+	switch {
+	case p.under == nil:
+	case v.under == nil:
+		p.under, p.underReason = nil, v.underReason
+	default:
+		p.under.Add(p.under, v.under)
 	}
-	if p.usd != nil && usd != nil {
-		p.usd.Add(p.usd, usd)
-	} else if p.usd != nil {
-		p.usd, p.usdReason = nil, usdReason
+	switch {
+	case p.usd == nil:
+	case v.usd == nil:
+		p.usd, p.usdReason = nil, v.usdReason
+	default:
+		p.usd.Add(p.usd, v.usd)
 	}
 }
 
 func (p *badDebtPart) view() LendingBadDebtPart {
 	v := LendingBadDebtPart{Events: p.events}
 	if p.reason != "" {
-		v.DTokensReason, v.USDReason = strRef(p.reason), strRef(p.reason)
+		v.DTokensReason, v.UnderlyingReason, v.USDReason = strRef(p.reason), strRef(p.reason), strRef(p.reason)
 		return v
 	}
 	v.DTokens = strRef(p.d.String())
 	if p.under != nil {
 		v.Underlying = strRef(p.under.String())
+	} else {
+		v.UnderlyingReason = strRef(p.underReason)
 	}
 	if p.usd != nil {
 		v.USD = strRef(ratString(p.usd, 2))
@@ -110,17 +130,17 @@ func (r *badDebtReserve) parts() []*badDebtPart {
 }
 
 // value converts one event's d-tokens at the reserve state its transaction stored and the price at or before it.
-func (in badDebtInputs) value(asset string, d *big.Int, ledger uint32, tx string, at time.Time) (*big.Int, *big.Rat, string) {
+func (in badDebtInputs) value(asset string, d *big.Int, ledger uint32, tx string, at time.Time) badDebtValue {
 	if d.Sign() == 0 {
-		return new(big.Int), new(big.Rat), ""
+		return badDebtValue{under: new(big.Int), usd: new(big.Rat)}
 	}
 	m := in.marks[asset]
 	under, reason := m.underlying(auctionLegDToken, clickhouse.LendingTxRef{Ledger: ledger, TxHash: strings.ToLower(tx)}, d)
 	if under == nil {
-		return nil, nil, reason
+		return badDebtValue{underReason: reason, usdReason: reason}
 	}
 	usd, reason := in.price(m, under, at)
-	return under, usd, reason
+	return badDebtValue{under: under, usd: usd, usdReason: reason}
 }
 
 func (in badDebtInputs) price(m *liqMarks, under *big.Int, at time.Time) (*big.Rat, string) {
@@ -207,6 +227,8 @@ func (in badDebtInputs) book(res map[string]*badDebtReserve) badDebtPoolFacts {
 func (in badDebtInputs) bookEvent(res map[string]*badDebtReserve, e timescale.LendingBadDebtEvent) string {
 	pick := badDebtPartOf(e.Kind)
 	switch {
+	case isBadDebtFill(e.Kind) && in.coveredBidKind != auctionLegDToken:
+		return auctionUSDKindUnknown
 	case e.Kind == timescale.BadDebtKindFillBidUnrecorded:
 		return badDebtReasonBidNotRecorded
 	case pick == nil || e.Kind == timescale.BadDebtKindFillZeroBid:
@@ -221,9 +243,13 @@ func (in badDebtInputs) bookEvent(res map[string]*badDebtReserve, e timescale.Le
 		part.refuse(badDebtReasonAmountNotRecorded)
 		return ""
 	}
-	under, usd, reason := in.value(e.Asset, d, e.Ledger, e.TxHash, e.Ts)
-	part.add(d, in.position.Ledger == 0 || e.Ledger <= in.position.Ledger, under, usd, reason)
+	part.add(d, in.position.Ledger == 0 || e.Ledger <= in.position.Ledger, in.value(e.Asset, d, e.Ledger, e.TxHash, e.Ts))
 	return ""
+}
+
+// isBadDebtFill is every fill kind; their bids are covered d-tokens only where the protocol's bad-debt bid kind is proven.
+func isBadDebtFill(kind string) bool {
+	return kind == timescale.BadDebtKindFill || kind == timescale.BadDebtKindFillZeroBid || kind == timescale.BadDebtKindFillBidUnrecorded
 }
 
 func (f *badDebtPoolFacts) observe(e timescale.LendingBadDebtEvent, positionLedger uint32) {
@@ -274,17 +300,17 @@ func (in badDebtInputs) outstanding(asset string, r *badDebtReserve) {
 		d = new(big.Int)
 	}
 	if d.Sign() == 0 {
-		r.outstanding.add(d, true, new(big.Int), new(big.Rat), "")
+		r.outstanding.add(d, true, badDebtValue{under: new(big.Int), usd: new(big.Rat)})
 		return
 	}
 	cur, ok := in.current[asset]
 	if !ok || cur.DRate == nil {
-		r.outstanding.add(d, true, nil, nil, badDebtReasonCurrentRate)
+		r.outstanding.add(d, true, badDebtValue{underReason: badDebtReasonCurrentRate, usdReason: badDebtReasonCurrentRate})
 		return
 	}
 	under := cur.DTokensToUnderlying(d)
 	usd, reason := in.price(in.marks[asset], under, in.now)
-	r.outstanding.add(d, true, under, usd, reason)
+	r.outstanding.add(d, true, badDebtValue{under: under, usd: usd, usdReason: reason})
 }
 
 func (in badDebtInputs) reserveView(asset string, r *badDebtReserve, f badDebtPoolFacts) LendingBadDebtReserve {
@@ -298,8 +324,10 @@ func (in badDebtInputs) reserveView(asset string, r *badDebtReserve, f badDebtPo
 			return v
 		}
 	}
-	// The backstop's Positions entry was last written by one of these events, or never written when there are none.
-	if len(in.events) > 0 && !f.eventAtPosition {
+	// Every event of the position's ledger must be in Postgres: the writers commit their cursors per cycle, not per ledger, so a
+	// ledger past the last fully written one may hold only some of its events. Then the position was last written by one of
+	// these events, or never written when there are none.
+	if (in.position.Ledger > 0 && in.projectedThrough < in.position.Ledger) || (len(in.events) > 0 && !f.eventAtPosition) {
 		v.ReconcileReason = strRef(badDebtReconcileAsOf)
 		return v
 	}

@@ -26,6 +26,15 @@ func (r *stubBadDebtLending) LendingBadDebtEvents(_ context.Context, _, backstop
 	return r.events, nil
 }
 
+// badDebtCursors reports every writer cursor at last.
+type badDebtCursors struct{ last uint32 }
+
+func (badDebtCursors) ListCursors(context.Context) ([]timescale.Cursor, error) { return nil, nil }
+
+func (c badDebtCursors) GetCursor(_ context.Context, source, sub string) (timescale.Cursor, error) {
+	return timescale.Cursor{Source: source, Sub: sub, LastLedger: c.last}, nil
+}
+
 // badDebtExplorer serves the backstop's position and d_rate 1.0 at every event's transaction.
 type badDebtExplorer struct {
 	*stubExplorerReader
@@ -75,6 +84,9 @@ func badDebtRouteWith(t *testing.T, volumeUSD string, excl []timescale.SourceExc
 	opts := v1.Options{
 		Explorer: ex, Lending: lr, History: &stubHistoryReader{points: pts, twapPoints: pts}, VerifiedCurrencies: newTestCatalogue(t),
 		Substance: pricingguard.NewSubstanceGate(thinStore{thin: map[string]bool{}}, pricingguard.SubstanceGateOptions{}),
+		Cursors:   badDebtCursors{last: 103}, LendingBadDebtOptions: v1.LendingBadDebtOptions{
+			LendingWriters: map[string][]v1.TVLWriterCursor{"blend": {{Source: "projector", Sub: "blend"}}},
+		},
 	}
 	if excl != nil {
 		opts.Exclusions = pricingguard.NewSourceExclusionGate(exclTable{rows: excl}, pricingguard.SourceExclusionGateOptions{})
@@ -111,7 +123,7 @@ func TestLendingPoolBadDebt_ReconcilesAndValuesAtEvent(t *testing.T) {
 	if moved["d_tokens"] != "20000000" || moved["usd"] != "1.00" || out["usd"] != "0.25" || out["underlying"] != "5000000" {
 		t.Errorf("moved %v outstanding %v", moved, out)
 	}
-	if r["reconciled"] != true || r["residual_d_tokens"] != "0" {
+	if r["reconciled"] != true || r["residual_d_tokens"] != "0" || data["events_written_through"] != float64(103) {
 		t.Errorf("reconciled %v residual %v", r["reconciled"], r["residual_d_tokens"])
 	}
 	tot, _ := data["totals_usd"].(map[string]any)["covered_by_backstop"].(map[string]any)

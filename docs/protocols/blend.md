@@ -65,14 +65,19 @@ per reserve, how much went each way, in d-tokens (the pool's debt units), in the
 | `outstanding` | Debt the backstop still carries now, at today's rate and price. |
 
 The backstop is the address the pool's own storage names. On BLNT the backstop is split into loss tiers and which
-address carries the debt is not verified, so `repaid_by_backstop` and `outstanding` are null there.
+address carries the debt is not verified, so `repaid_by_backstop` and `outstanding` are null there. What a BLNT bad-debt
+auction bid is made of is not proven either, so `covered_by_backstop` is null there too (`leg_kind_unknown`).
 
 Each event is valued when it happened: the d-token rate its own transaction wrote, and the last hourly price at or
 before it. A value that cannot be worked out is null with a reason, never `"0"`. A `"0"` over `events: 0` is a real zero.
+If any one event lacks a rate, `underlying` is null (`underlying_reason`); if any one lacks a price, `usd` is null
+(`usd_reason`). Neither is ever the sum of only the events that could be valued.
 
 `reconciled` checks that the debt moved equals the other four parts added up, in d-tokens, over the events up to the
 ledger the backstop's position was last written (`position_ledger`). `residual_d_tokens` is the gap. It is null when a
-part is missing or no recorded event is at that ledger (the event tables may be behind the lake). In `totals_usd` a
+part is missing; when the event tables are not yet fully written up to that ledger (`events_written_through`, the
+slowest writer's cursor, is behind it), because a half-written ledger would show a false gap; or when no recorded
+event is at that ledger. In `totals_usd` a
 part's sum over reserves is a lower bound when `excluded` names a reserve left out.
 
 ## Pool factories (trust roots)

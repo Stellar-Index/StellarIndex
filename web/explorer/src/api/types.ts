@@ -2576,7 +2576,9 @@ export interface paths {
          *     The backstop is the address the pool's instance storage names.
          *     BLNT's backstop is tiered and which address carries moved debt is
          *     not verified, so its `repaid_by_backstop` and `outstanding` are null
-         *     (`backstop_role_unverified`).
+         *     (`backstop_role_unverified`). BLNT's bad-debt bid kind is not
+         *     proven either, so its `covered_by_backstop` is null
+         *     (`leg_kind_unknown`).
          *
          *     Event parts are valued at each event (`valued_at: event_time`):
          *     d-tokens to underlying at the reserve state the event's transaction
@@ -2584,8 +2586,10 @@ export interface paths {
          *     that closed at or before the event, through the same gates as
          *     `/liquidations`. USD sums are exact and rounded once to 2 dp. A part
          *     that cannot be derived is null with a reason, never 0; `"0"` with
-         *     `events: 0` is a true zero. `events` is 0 for `outstanding`, a state
-         *     read.
+         *     `events: 0` is a true zero. `underlying` and `usd` are each null,
+         *     with `underlying_reason` / `usd_reason` naming the first event that
+         *     lacked that field's input, as soon as any one event does: no partial
+         *     sum is served. `events` is 0 for `outstanding`, a state read.
          *
          *     `reconciled` checks, in d-tokens, moved = covered + socialised +
          *     repaid + outstanding over the events at or before
@@ -2593,9 +2597,12 @@ export interface paths {
          *     written; later events are counted in the parts and in
          *     `events_after_position`). `residual_d_tokens` is moved minus the
          *     other four. Null with `reconcile_reason` when a part is null
-         *     (`part_not_derivable`) or no recorded event is at
-         *     `position_ledger` (`as_of_mismatch`: the event tables lag the
-         *     lake, or something untracked wrote the position).
+         *     (`part_not_derivable`), or (`as_of_mismatch`) when
+         *     `position_ledger` is past `events_written_through` (the last ledger
+         *     every writer of the pool's event tables has fully written; writers
+         *     commit per cycle, so a later ledger may hold only some of its
+         *     events), or no recorded event is at `position_ledger` (something
+         *     untracked wrote the position).
          *
          *     `totals_usd` sums each part over the reserves; `lower_bound` is true
          *     when `excluded` names a reserve left out, and `usd` is null when no
@@ -7235,12 +7242,14 @@ export interface components {
             /** @description d-token base units. */
             d_tokens: string | null;
             /** @enum {string|null} */
-            d_tokens_reason: "bid_not_recorded" | "amount_not_recorded" | "asset_not_recorded" | "backstop_unresolved" | "backstop_role_unverified" | "lake_unavailable" | "position_unread" | null;
+            d_tokens_reason: "bid_not_recorded" | "amount_not_recorded" | "asset_not_recorded" | "backstop_unresolved" | "backstop_role_unverified" | "lake_unavailable" | "position_unread" | "leg_kind_unknown" | null;
             /** @description Underlying base units: each event at the d_rate its transaction wrote, outstanding at the current d_rate. */
             underlying: string | null;
+            /** @description Why underlying is null, first cause: d_tokens_reason, or rate_at_fill_unrecorded, rate_unread or current_rate_unavailable. */
+            underlying_reason: string | null;
             /** @description 2 dp, rounded once. */
             usd: string | null;
-            /** @description Why usd is null: d_tokens_reason, or a valuation reason as on /liquidations (rate_at_fill_unrecorded, rate_unread, no_price_within_bound, price_withheld, price_thin_market, price_thin_at_fill, price_unread) or current_rate_unavailable. */
+            /** @description Why usd is null, first cause: d_tokens_reason, or a valuation reason as on /liquidations (rate_at_fill_unrecorded, rate_unread, no_price_within_bound, price_withheld, price_thin_market, price_thin_at_fill, price_unread) or current_rate_unavailable. */
             usd_reason: string | null;
             events: number;
         };
@@ -20845,6 +20854,7 @@ export interface operations {
                      *         "backstop_reason": null,
                      *         "position_ledger": 61341315,
                      *         "events_after_position": 0,
+                     *         "events_written_through": 61341400,
                      *         "zero_bid_fills": 1,
                      *         "unrecorded_bid_fills": 0,
                      *         "reserves": [
@@ -20856,7 +20866,8 @@ export interface operations {
                      *               "underlying": "1100000000",
                      *               "usd": "33.00",
                      *               "usd_reason": null,
-                     *               "events": 1
+                     *               "underlying_reason": null,
+                     *               "events:1": null
                      *             },
                      *             "covered_by_backstop": {
                      *               "d_tokens": "400000000",
@@ -20864,7 +20875,8 @@ export interface operations {
                      *               "underlying": "440000000",
                      *               "usd": "13.20",
                      *               "usd_reason": null,
-                     *               "events": 1
+                     *               "underlying_reason": null,
+                     *               "events:1": null
                      *             },
                      *             "socialised_to_suppliers": {
                      *               "d_tokens": "600000000",
@@ -20872,7 +20884,8 @@ export interface operations {
                      *               "underlying": "660000000",
                      *               "usd": "19.80",
                      *               "usd_reason": null,
-                     *               "events": 1
+                     *               "underlying_reason": null,
+                     *               "events:1": null
                      *             },
                      *             "repaid_by_backstop": {
                      *               "d_tokens": "0",
@@ -20880,7 +20893,8 @@ export interface operations {
                      *               "underlying": "0",
                      *               "usd": "0.00",
                      *               "usd_reason": null,
-                     *               "events": 0
+                     *               "underlying_reason": null,
+                     *               "events:0": null
                      *             },
                      *             "outstanding": {
                      *               "d_tokens": "0",
@@ -20888,7 +20902,8 @@ export interface operations {
                      *               "underlying": "0",
                      *               "usd": "0.00",
                      *               "usd_reason": null,
-                     *               "events": 0
+                     *               "underlying_reason": null,
+                     *               "events:0": null
                      *             },
                      *             "reconciled": true,
                      *             "reconcile_reason": null,
@@ -20954,6 +20969,11 @@ export interface operations {
                             position_ledger: number | null;
                             /** @description Events later than position_ledger, counted in the parts but not the identity. */
                             events_after_position: number;
+                            /**
+                             * Format: int64
+                             * @description Last ledger every writer of the pool's event tables has fully written (lowest writer cursor); null when unknown. The identity is checked only when it reaches position_ledger.
+                             */
+                            events_written_through: number | null;
                             /** @description Bad-debt fills whose bid map was empty: each covered 0. */
                             zero_bid_fills: number;
                             /** @description Bad-debt fills that state no bid (Blend V1). */

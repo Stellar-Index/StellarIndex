@@ -22,12 +22,14 @@ type LendingBadDebtView struct {
 	Backstop       *string `json:"backstop"`
 	BackstopReason *string `json:"backstop_reason"`
 	// PositionLedger is the ledger the backstop's position was last written at; the identity counts events up to it.
-	PositionLedger      *uint32                 `json:"position_ledger"`
-	EventsAfterPosition int                     `json:"events_after_position"`
-	ZeroBidFills        int                     `json:"zero_bid_fills"`
-	UnrecordedBidFills  int                     `json:"unrecorded_bid_fills"`
-	Reserves            []LendingBadDebtReserve `json:"reserves"`
-	TotalsUSD           LendingBadDebtTotals    `json:"totals_usd"`
+	PositionLedger      *uint32 `json:"position_ledger"`
+	EventsAfterPosition int     `json:"events_after_position"`
+	// EventsWrittenThrough is the last ledger every writer of the pool's event tables has fully written; null when unknown.
+	EventsWrittenThrough *uint32                 `json:"events_written_through"`
+	ZeroBidFills         int                     `json:"zero_bid_fills"`
+	UnrecordedBidFills   int                     `json:"unrecorded_bid_fills"`
+	Reserves             []LendingBadDebtReserve `json:"reserves"`
+	TotalsUSD            LendingBadDebtTotals    `json:"totals_usd"`
 }
 
 // LendingBadDebtReserve is one reserve's parts; Reconciled checks moved = covered + socialised + repaid + outstanding in d-tokens.
@@ -48,9 +50,11 @@ type LendingBadDebtPart struct {
 	DTokens       *string `json:"d_tokens"`
 	DTokensReason *string `json:"d_tokens_reason"`
 	Underlying    *string `json:"underlying"`
-	USD           *string `json:"usd"`
-	USDReason     *string `json:"usd_reason"`
-	Events        int     `json:"events"`
+	// UnderlyingReason is why Underlying is null: the d_tokens reason, or the first event whose reserve rate is unrecorded.
+	UnderlyingReason *string `json:"underlying_reason"`
+	USD              *string `json:"usd"`
+	USDReason        *string `json:"usd_reason"`
+	Events           int     `json:"events"`
 }
 
 // LendingBadDebtTotals is each part's USD summed over the pool's reserves.
@@ -73,6 +77,12 @@ type LendingBadDebtTotal struct {
 type LendingBadDebtExclusion struct {
 	Asset  string `json:"asset"`
 	Reason string `json:"reason"`
+}
+
+// LendingBadDebtOptions wires the bad-debt route's as-of check.
+type LendingBadDebtOptions struct {
+	// LendingWriters names, per lending source, the cursors of every writer of its event tables.
+	LendingWriters map[string][]TVLWriterCursor
 }
 
 // lendingBadDebtReader is the event history behind GET /v1/lending/pools/{pool}/bad-debt.
@@ -145,8 +155,14 @@ func (s *Server) handleLendingPoolBadDebt(w http.ResponseWriter, r *http.Request
 		in.position, in.backstopReason = s.badDebtPosition(ctx, pool, backstop, &flags)
 	}
 	in.now = s.now()
+	in.projectedThrough = s.badDebtWrittenThrough(ctx, protocol, &flags)
+	in.coveredBidKind, _ = auctionLegKinds(protocol, blend.AuctionTypeBadDebt)
 	in.marks = s.badDebtMarks(ctx, pool, liquidationStateModel(protocol, lineage), in, &flags)
 	view := LendingBadDebtView{Pool: pool, Protocol: protocol, ValuedAt: liquidationValuedAt}
+	if in.projectedThrough > 0 {
+		through := in.projectedThrough
+		view.EventsWrittenThrough = &through
+	}
 	if backstop != "" {
 		view.Backstop = strRef(backstop)
 	}
@@ -260,6 +276,31 @@ func (s *Server) badDebtMarks(ctx context.Context, pool, model string, in badDeb
 		}
 	}
 	return out
+}
+
+// badDebtWrittenThrough is the lowest last-committed ledger over the source's event-table writers: each commits its cursor only
+// after writing every event up to it. 0 (unknown, so the identity is not checked) when a writer or its cursor is not known.
+func (s *Server) badDebtWrittenThrough(ctx context.Context, source string, flags *Flags) uint32 {
+	cr, ok := s.Cursors.(TVLCursorReader)
+	writers := s.LendingWriters[source]
+	if !ok || len(writers) == 0 {
+		return 0
+	}
+	var through uint32
+	for i, w := range writers {
+		c, err := cr.GetCursor(ctx, w.Source, w.Sub)
+		if err != nil {
+			if !errors.Is(err, timescale.ErrNotFound) {
+				s.logger.Warn("lending bad debt: writer cursor read failed", "source", w.Source, "sub", w.Sub, "err", err)
+				flags.Degraded = true
+			}
+			return 0
+		}
+		if i == 0 || c.LastLedger < through {
+			through = c.LastLedger
+		}
+	}
+	return through
 }
 
 func writeLendingBadDebtUnavailable(w http.ResponseWriter, r *http.Request) {
