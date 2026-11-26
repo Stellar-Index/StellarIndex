@@ -28,7 +28,8 @@ func TestLendingPoolRevenue_FinalRevisionAndClipping(t *testing.T) {
 	}
 	h0 := time.Date(2031, 1, 1, 0, 0, 0, 0, time.UTC)
 	hr := func(i int) time.Time { return h0.Add(time.Duration(i) * time.Hour) }
-	const floor, poolBThru, redoFrom, wm = 900_000_001, 900_000_050, 900_000_070, 900_000_100
+	// Far below every other test's range: stellar.ledgers is shared, and its max is the lake tip other tests pin.
+	const floor, poolBThru, redoFrom, wm = 3_141_001, 3_141_050, 3_141_070, 3_141_100
 	for seq, at := range map[uint32]time.Time{
 		floor: hr(0).Add(5 * time.Second), poolBThru: hr(1).Add(3599 * time.Second),
 		redoFrom: hr(2).Add(10 * time.Second), wm: hr(3).Add(3599 * time.Second),

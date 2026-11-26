@@ -255,7 +255,7 @@ const ROUTE_WORDS = new Set(
   liquidity-pools livez login logout lookup markets me metadata methodology mev
   movements network notices observations ohlc operations oracle orderbook pairs
   passkey pools positions premium price price-alerts prices protocols rates
-  readyz register reserves resolve rotate-secret rwa sac-wrappers sdex search
+  readyz register reserves resolve revenue rotate-secret rwa sac-wrappers sdex search
   sep10 series signer-on signup since-inception sources sponsors sponsorships
   stablecoins stats status status-notices stream streams supply throughput tip
   token top-accounts trades transactions transfers trustline-history tvl twap
