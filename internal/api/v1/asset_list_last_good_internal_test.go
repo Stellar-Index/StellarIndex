@@ -148,6 +148,37 @@ func TestAssetList_IdleOldRowsHeaderMatchesStaleReplay(t *testing.T) {
 	}
 }
 
+// A stale replay of a cached page is degraded, refresh_failed and no-store, when its rows' last refresh failed; a replay stale
+// by the page's age alone is not.
+func TestAssetList_StaleReplayIsDegradedOnlyWhenItsRowsFailed(t *testing.T) {
+	const target = "/v1/assets?limit=25"
+	srv, reader, clock := newCountingListingServer(t, &countingDirectory{})
+	catalogue := NewCachedAssetsReader(&flakyListingReader{countingListingReader: reader}, AssetCatalogueTTL)
+	srv.AssetsReader = catalogue
+	getAssetList(t, srv, target)
+	waitAssetListSettled(t, srv)
+
+	clock.advance(assetListCacheTTL + min(assetListCacheTTL, cacheFillBudget) + time.Second)
+	aged := getListingAnswer(t, srv, target)
+	waitAssetListSettled(t, srv)
+	if aged.cache != "HIT" || !aged.stale || aged.counted != 0 || aged.cacheControl == "no-store" {
+		t.Errorf("aged page: cache=%q stale=%v counted=%v (%q) cache-control=%q, want a stale, uncounted, cacheable HIT",
+			aged.cache, aged.stale, aged.counted, aged.reason, aged.cacheControl)
+	}
+
+	catalogue.mu.Lock()
+	for _, e := range catalogue.entries {
+		e.refreshFailed = true
+	}
+	catalogue.mu.Unlock()
+	failed := getListingAnswer(t, srv, target)
+	if failed.cache != "HIT" || !failed.stale || failed.reason != obs.DegradedRefreshFailed || failed.counted != 1 ||
+		failed.cacheControl != "no-store" {
+		t.Errorf("rows refresh failed: cache=%q stale=%v reason=%q counted=%v cache-control=%q, want a stale no-store HIT, %q once",
+			failed.cache, failed.stale, failed.reason, failed.counted, failed.cacheControl, obs.DegradedRefreshFailed)
+	}
+}
+
 // Every other degraded exit of the listing names its cause, on the classic and the unified page alike.
 func TestAssetList_DegradedExitsNameTheirReason(t *testing.T) {
 	for _, target := range lastGoodTargets {

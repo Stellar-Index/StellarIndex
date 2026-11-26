@@ -49,6 +49,8 @@ type assetListHit struct {
 	body  []byte
 	env   Envelope
 	stale bool
+	// lastGood names why the replay is a last-good copy, "" when it is not.
+	lastGood string
 }
 
 // assetListResponseCache caches the rendered default /v1/assets listing (handleAssetListFromAssets), covering all the
@@ -107,7 +109,13 @@ func (c *assetListResponseCache) read(key string, claim bool) (hit assetListHit,
 	}
 	env := e.env
 	env.Flags.Stale = true
-	return assetListHit{body: e.stale, env: env, stale: true}, refresh, true
+	hit = assetListHit{body: e.stale, env: env, stale: true}
+	// Rows whose last refresh failed make the replay a last-good copy. A page refresh that built nothing cacheable does not:
+	// a page over rows merely past their TTL is uncacheable too.
+	if e.rowsFailed != nil && e.rowsFailed() {
+		hit.lastGood, hit.env.Flags.Degraded = obs.DegradedRefreshFailed, true
+	}
+	return hit, refresh, true
 }
 
 // staleLocked judges the page by its own age and its rows by theirs: the rows (env.AsOf when they predate the build) are held
@@ -277,12 +285,17 @@ func (s *Server) refreshAssetListPage(
 	go runDetachedFill(s.logger, "api-assets-listing-page-refresh", cacheFillBudget, make(chan struct{}), build, settle)
 }
 
-// writeCachedAssetList replays a cached listing body.
-func writeCachedAssetList(w http.ResponseWriter, body []byte, stale bool) {
-	obs.MarkResponseFlags(w, false, stale)
+// writeCachedAssetList replays a cached listing body; a last-good replay is no-store and counted with its reason.
+func writeCachedAssetList(w http.ResponseWriter, hit assetListHit) {
+	degraded := hit.lastGood != ""
+	if degraded {
+		w.Header().Set("Cache-Control", "no-store")
+		obs.MarkDegradedReason(w, hit.lastGood)
+	}
+	obs.MarkResponseFlags(w, degraded, hit.stale)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Stellarindex-Cache", "HIT")
-	_, _ = w.Write(body)
+	_, _ = w.Write(hit.body)
 }
 
 // AssetListPrewarmCadence is how often [Server.PrewarmAssetList] runs: one page TTL.
