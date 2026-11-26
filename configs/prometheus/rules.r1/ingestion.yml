@@ -1376,6 +1376,26 @@ groups:
             covers a dead one). Its proof gauge still shows the last run's
             verdict, which is no longer current.
 
+      # The proof counted stored interest rows holding a version no event explains: a reserve moved outside accrual
+      # by a cause the fold cannot reproduce. Set only by a proof run over its series' whole range and held until
+      # the next, so a host whose proof never ran has no series and stays quiet. `for: 1h` rides out a scrape gap.
+      - alert: stellarindex_lending_interest_unexplained_versions
+        expr: max by (ops_job) (stellarindex_lending_interest_unexplained_versions) > 0
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#lending-interest-unexplained-versions
+          summary: "lending interest rows hold reserve versions no event explains"
+          description: |
+            The last {{ $labels.ops_job }} run counted {{ $value }} versions in
+            stellar.lending_interest_hourly whose b_rate, fee entry or backstop
+            credit moved outside accrual with no same-transaction pool event
+            that states the move exactly. Those hours' interest totals are not
+            the reserve's whole movement; the runbook's query lists the rows.
+
       # Whole-transaction skip counters (tx_read_errors, tx_event_read_errors,
       # entry_meta_unsupported) plus evicted_keys_unreadable (a ledger's evictions): each
       # means events or an entry walk vanished, indistinguishable downstream from an
