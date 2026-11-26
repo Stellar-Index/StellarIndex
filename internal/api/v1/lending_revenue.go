@@ -12,7 +12,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// lendingRevenueReader is the lake read behind GET /v1/lending/pools/{pool}/revenue.
+// lendingRevenueReader is the lake read behind GET /v1/lending/pools/{pool}/revenue; each reserve's Hours are the rows
+// its Buckets sum, so USD can value every hour at its own price.
 type lendingRevenueReader interface {
 	LendingPoolRevenue(ctx context.Context, pool, asset string, q clickhouse.LendingHistoryQuery) (clickhouse.LendingRevenue, error)
 }
@@ -45,12 +46,14 @@ type LendingRevenueView struct {
 	Protocol *string `json:"protocol"`
 	Interval string  `json:"interval"`
 	// From and To bound the hours summed: [from, to), to rounded down to its hour.
-	From       WireTime                    `json:"from"`
-	To         WireTime                    `json:"to"`
-	Coverage   LendingRevenueCoverage      `json:"coverage"`
-	LowerBound bool                        `json:"lower_bound"`
-	Excluded   []LendingRevenueExclusion   `json:"excluded"`
-	Reserves   []LendingRevenueReserveView `json:"reserves"`
+	From             WireTime                    `json:"from"`
+	To               WireTime                    `json:"to"`
+	Coverage         LendingRevenueCoverage      `json:"coverage"`
+	LowerBound       bool                        `json:"lower_bound"`
+	Excluded         []LendingRevenueExclusion   `json:"excluded"`
+	PriceMaxAgeHours int                         `json:"price_max_age_hours"`
+	TotalsUSD        LendingRevenueTotalsUSD     `json:"totals_usd"`
+	Reserves         []LendingRevenueReserveView `json:"reserves"`
 }
 
 // LendingRevenueCoverage is what the interest rows cover: from_ledger (the derive floor) through through_ledger, whose
@@ -79,6 +82,7 @@ type LendingRevenueReserveView struct {
 	FeeRateInferred bool                   `json:"fee_rate_inferred"`
 	LowerBound      bool                   `json:"lower_bound"`
 	Totals          *LendingRevenueAmounts `json:"totals"`
+	USD             LendingRevenueUSD      `json:"usd"`
 	Points          []LendingRevenuePoint  `json:"points"`
 }
 
@@ -87,6 +91,7 @@ type LendingRevenuePoint struct {
 	T       WireTime `json:"t"`
 	Partial bool     `json:"partial"`
 	LendingRevenueAmounts
+	USD LendingRevenueUSD `json:"usd"`
 }
 
 // LendingRevenueAmounts are base-unit decimal strings; interest_accrued = supplier_share + backstop_take + protocol_fee.
@@ -167,7 +172,8 @@ func (s *Server) handleLendingPoolRevenue(w http.ResponseWriter, r *http.Request
 			view.Reserves[i].Decimals = &d
 		}
 	}
-	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(time.Now().UTC()), Flags: s.revenueFlags(ctx, rev)})
+	flags := s.valueRevenue(ctx, &view, rev, s.revenueFlags(ctx, rev))
+	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(time.Now().UTC()), Flags: flags})
 }
 
 // revenueFlags is stale when the lake is, or the lake tip has run past the hour after the coverage by more than one

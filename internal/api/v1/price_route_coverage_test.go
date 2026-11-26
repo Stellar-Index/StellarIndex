@@ -85,7 +85,7 @@ var priceRouteCoverage = map[string]priceCoverage{
 	"GET /v1/lending/pools/{pool}/config-history":           lendingUncovered,
 	"GET /v1/lending/pools/{pool}/backstop":                 lendingUncovered,
 	"GET /v1/lending/pools/{pool}/backstop/history":         lendingUncovered,
-	"GET /v1/lending/pools/{pool}/revenue":                  {state: covNone, reason: "base units, no USD price"},
+	"GET /v1/lending/pools/{pool}/revenue":                  gated,
 	"GET /v1/lending/pools/{pool}/history":                  gated,
 	"GET /v1/lending/accounts/{account}/earnings":           lendingUncovered,
 	"GET /v1/lending/pools/{pool}/auctions":                 lendingUncovered,

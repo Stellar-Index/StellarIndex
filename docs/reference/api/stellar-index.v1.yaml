@@ -4759,9 +4759,16 @@ paths:
         Interest booked on each reserve of a Blend V1, Blend V2 or BLNT
         pool, per hour (`interval=1h`) or UTC day (`interval=1d`), summed
         exactly from the derived hourly interest record. Every amount is a
-        decimal string in the reserve token's base units (`decimals`);
-        nothing is in USD, and amounts of different reserves are never
-        added together.
+        decimal string in the reserve token's base units (`decimals`), and
+        amounts of different reserves are never added together in base
+        units. Beside them, `usd` values each bucket and reserve hour by
+        hour at each hour's own price (`LendingRevenueUSD`, daily buckets
+        included), and `totals_usd` adds the valued reserves across the
+        pool; an hour with no price is left out and counted, so the sum is
+        a lower bound, and a reserve with amounts but no price at all is
+        null, never `"0.00"`. A reserve with no valued amount is `"0.00"`
+        and reads no prices; prices are read only over the hours a reserve
+        has amounts in.
 
         Interest is booked when the reserve is next touched on chain, so it
         lands in the hour of that touch, not spread over the hours it
@@ -4821,6 +4828,21 @@ paths:
                   lower_bound: true
                   excluded:
                     - { kind: window, asset: null, reason: interest_not_derived, amount: null, count: null }
+                  price_max_age_hours: 6
+                  totals_usd:
+                    interest_accrued_usd: '125.00'
+                    supplier_share_usd: '100.00'
+                    supplier_credited_usd: '100.00'
+                    backstop_take_usd: '25.00'
+                    protocol_fee_usd: '0.00'
+                    backstop_drawn_usd: '20.00'
+                    default_loss_usd: '0.00'
+                    priced_hours: 1
+                    unpriced_hours: 0
+                    price_carried_hours: 0
+                    lower_bound: true
+                    usd_reason: null
+                    excluded: []
                   reserves:
                     - asset: CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75
                       decimals: 7
@@ -4845,6 +4867,19 @@ paths:
                         unexplained_versions: 0
                         unordered_versions: 0
                         accrual_errors: 0
+                      usd:
+                        interest_accrued_usd: '125.00'
+                        supplier_share_usd: '100.00'
+                        supplier_credited_usd: '100.00'
+                        backstop_take_usd: '25.00'
+                        protocol_fee_usd: '0.00'
+                        backstop_drawn_usd: '20.00'
+                        default_loss_usd: '0.00'
+                        priced_hours: 1
+                        unpriced_hours: 0
+                        price_carried_hours: 0
+                        lower_bound: true
+                        usd_reason: null
                       points:
                         - t: '2026-11-15T00:00:00Z'
                           partial: false
@@ -4866,6 +4901,19 @@ paths:
                           unexplained_versions: 0
                           unordered_versions: 0
                           accrual_errors: 0
+                          usd:
+                            interest_accrued_usd: '125.00'
+                            supplier_share_usd: '100.00'
+                            supplier_credited_usd: '100.00'
+                            backstop_take_usd: '25.00'
+                            protocol_fee_usd: '0.00'
+                            backstop_drawn_usd: '20.00'
+                            default_loss_usd: '0.00'
+                            priced_hours: 1
+                            unpriced_hours: 0
+                            price_carried_hours: 0
+                            lower_bound: false
+                            usd_reason: null
                 as_of: '2026-11-16T00:00:01Z'
                 flags:
                   stale: false
@@ -4896,6 +4944,15 @@ paths:
                             required: [derive_rev, from_ledger, through_ledger, through_hour]
                           lower_bound: { type: boolean }
                           excluded: { type: array, items: { $ref: "#/components/schemas/LendingRevenueExclusion" } }
+                          price_max_age_hours: { type: integer, description: "How far before an hour its price may be." }
+                          totals_usd:
+                            description: "The valued reserves' USD summed across the pool. A reserve with no USD value is named in `excluded` and left out, never added as zero; `lower_bound` also when the view's `lower_bound` is."
+                            allOf:
+                              - { $ref: "#/components/schemas/LendingRevenueUSD" }
+                              - type: object
+                                properties:
+                                  excluded: { type: array, items: { $ref: "#/components/schemas/LendingRevenueUSDExclusion" } }
+                                required: [excluded]
                           reserves:
                             type: array
                             items:
@@ -4910,6 +4967,7 @@ paths:
                                   oneOf:
                                     - { $ref: "#/components/schemas/LendingRevenueAmounts" }
                                     - { type: "null" }
+                                usd: { $ref: "#/components/schemas/LendingRevenueUSD" }
                                 points:
                                   type: array
                                   items:
@@ -4918,10 +4976,11 @@ paths:
                                         properties:
                                           t: { type: string, format: date-time, description: "Bucket start." }
                                           partial: { type: boolean, description: "The bucket is cut short by `to` or the coverage." }
-                                        required: [t, partial]
+                                          usd: { $ref: "#/components/schemas/LendingRevenueUSD" }
+                                        required: [t, partial, usd]
                                       - { $ref: "#/components/schemas/LendingRevenueAmounts" }
-                              required: [asset, decimals, fee_rate_inferred, lower_bound, totals, points]
-                        required: [pool, protocol, interval, from, to, coverage, lower_bound, excluded, reserves]
+                              required: [asset, decimals, fee_rate_inferred, lower_bound, totals, usd, points]
+                        required: [pool, protocol, interval, from, to, coverage, lower_bound, excluded, price_max_age_hours, totals_usd, reserves]
                     required: [data]
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -17188,6 +17247,49 @@ components:
         amount: { type: [string, "null"], description: "Base units, a magnitude ≥ 0 (`unexplained_supply_loss`)." }
         count: { type: [integer, "null"], format: int64 }
       required: [kind, asset, reason, amount, count]
+    LendingRevenueUSD:
+      type: object
+      description: |
+        Amounts valued in USD hour by hour: each hour's amounts at that
+        hour's price (the newest hourly VWAP at or before it, at most
+        `price_max_age_hours` old, never a later one), summed exactly and
+        rounded once to cents. Each point, each reserve total and the pool
+        total is rounded on its own from the exact sum, so rounded points
+        need not add up to the rounded total. Every `*_usd` figure is null
+        together, with `usd_reason`, when nothing could be valued. On
+        `totals_usd` the hour counts are reserve-hours: an hour counts once
+        per reserve.
+      properties:
+        interest_accrued_usd: { type: [string, "null"] }
+        supplier_share_usd: { type: [string, "null"] }
+        supplier_credited_usd: { type: [string, "null"], description: "May be negative." }
+        backstop_take_usd: { type: [string, "null"] }
+        protocol_fee_usd: { type: [string, "null"] }
+        backstop_drawn_usd: { type: [string, "null"], description: "realised.backstop_drawn valued; a lower bound like it." }
+        default_loss_usd: { type: [string, "null"], description: "Losses socialised to suppliers, a magnitude." }
+        priced_hours: { type: integer, description: "Hours carrying an amount that were valued." }
+        unpriced_hours: { type: integer, description: "Hours carrying an amount with no price within the bound: left out, so the figures are a lower bound." }
+        price_carried_hours: { type: integer, description: "Valued hours whose price is more than one hour older than the hour." }
+        price_basis: { type: string, enum: [transitive, stablecoin_proxy], description: "Buckets and reserves: set when every valued hour's price has this basis, as on `/history` (`transitive`: crossed through XLM; `stablecoin_proxy`: from a stablecoin-quoted book). Omitted when traded against fiat:USD, when bases mix, and on `totals_usd`." }
+        price_basis_hours:
+          type: object
+          description: "Buckets and reserves: when the valued hours' bases mix, the count of valued hours per non-fiat basis; the rest were traded against fiat:USD. Omitted otherwise."
+          additionalProperties: { type: integer }
+        lower_bound: { type: boolean, description: "Some amount is left out: an unpriced hour, or (reserve and pool) a base-unit exclusion." }
+        usd_reason:
+          type: [string, "null"]
+          description: "Why nothing is valued. `amounts_excluded`: nothing was summed in base units (see `excluded`). `no_price_within_bound` (bucket, reserve) and `price_missing` (pool): no hour carrying an amount had a price. Otherwise the price series' refusal: `unpriced` (no USD market), `decimals_unknown`, `price_scale_mismatch`, `withheld` (a scam-flagged issuer, or a thin market: display-only prices value nothing here, as on `/history`), `price_read_failed`."
+          enum: [amounts_excluded, no_price_within_bound, price_missing, unpriced, decimals_unknown, price_scale_mismatch, withheld, price_read_failed, null]
+      required: [interest_accrued_usd, supplier_share_usd, supplier_credited_usd, backstop_take_usd, protocol_fee_usd,
+        backstop_drawn_usd, default_loss_usd, priced_hours, unpriced_hours, price_carried_hours, lower_bound, usd_reason]
+    LendingRevenueUSDExclusion:
+      type: object
+      description: A reserve the pool's USD totals leave out, wholly or for `count` hours.
+      properties:
+        asset: { type: string }
+        reason: { type: string, enum: [price_missing, unpriced, decimals_unknown, price_scale_mismatch, withheld, price_read_failed] }
+        count: { type: integer, description: "The reserve's hours carrying an amount that were not valued." }
+      required: [asset, reason, count]
     LendingRevenueAmounts:
       type: object
       description: "Base-unit decimal strings. Counts are versions: a version is one change of the reserve's on-chain state."
