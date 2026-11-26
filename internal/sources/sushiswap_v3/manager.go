@@ -37,8 +37,8 @@ type managerShape struct {
 	fields []string
 }
 
-// managerShapes is the post-upgrade wire surface verified against the lake. A body with any other field set, field type or
-// topic count is refused: the pre-upgrade shape is unverified, so it must fail closed rather than be guessed.
+// managerShapes is the wire surface verified against the lake. A body with any other field set, field type or
+// topic count is refused rather than guessed. Both WASM versions emit these shapes (testdata/manager_events.txt).
 var managerShapes = map[string]managerShape{
 	EventMint:              {topics: 2, fields: []string{"token_id"}},
 	EventBurn:              {topics: 2, fields: []string{"token_id"}},

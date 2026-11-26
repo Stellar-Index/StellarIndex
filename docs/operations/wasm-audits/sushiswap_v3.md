@@ -182,13 +182,13 @@ Every pool is on `003710b3…` at its last instance change.
 
 `CARTUL5AWDZYBSN7HUUJZSKCAKCIAKM7M54Z76G6KRYCK4XPR3OHUQZ4` (contract id
 `233a2fa0b0f380c9bf3d289cc942028480299f67799ff8de54702572ef8edc7a`) is
-gated as the `sushiswap_v3` position-manager role. It emitted `upgraded`
-at ledger 61,594,920 and `migrated` at 61,594,924, so at least two hashes
-are expected. None is in `audited_wasm.json` yet: `wasm-drift` reports the
-manager as unaudited, and a `sushiswap_v3` replay gate refuses, until they
-are.
+gated as the `sushiswap_v3` position-manager role. It has run two hashes
+(below). Neither is in `audited_wasm.json` yet, because the string check
+of the contract bytes (query 4) has not been run: `wasm-drift` reports the
+manager as unaudited, and a `sushiswap_v3` replay gate refuses, until both
+are attested.
 
-Lineage:
+Lineage (run 2026-11-26 on the lake):
 
 ```sql
 SELECT contract_hash, wasm_hash, min(ledger_seq), max(ledger_seq), count()
@@ -197,14 +197,39 @@ WHERE contract_hash = '233a2fa0b0f380c9bf3d289cc942028480299f67799ff8de54702572e
 GROUP BY contract_hash, wasm_hash ORDER BY 3;
 ```
 
-Literals to string-check per hash (query 4 above): `mint`, `burn`,
-`collect`, `upgraded`, `migrated`, `increase_liquidity`,
-`decrease_liquidity`, `token_id`, `liquidity`, `recipient`.
-
-| wasm_hash | role | first seen | last instance change | literals | body shape |
+| wasm_hash | role | lineage ledgers | instance changes | literals | body shape |
 | --- | --- | --- | --- | --- | --- |
-| _from the lineage query_ | position_manager | | | | pre-upgrade: unverified |
-| _from the lineage query_ | position_manager | | | | post-upgrade: verified from lake samples (`testdata/manager_events.txt`) |
+| `dae1af1c2863e907e6b58dc861bb7ae610c9b951d23af7902a6afc247b923b0a` | position_manager | 61,472,663 – 61,594,920 | 24 | not yet checked | matches the decoder: all 12 events of the era share the post-upgrade (topic, topic count, body length); 8 decode to exact columns |
+| `be969de545da89a04508e4952e94a53a77e76ecfa67d74b23fd56e0be42290d4` | position_manager | 61,594,920 – 65,682,021 | 5,912 | not yet checked | matches the decoder: 15 sampled events decode to exact columns |
+
+The amount scale is anchored independently: the `decrease_liquidity` at
+61,487,425 (first hash) carries the same liquidity and amounts as the
+pool-side `burn` it drove (`TestManagerAmounts_MatchThePoolSide`).
+
+String check, one statement per hash (query 4 with the code entry's
+`LedgerKey`, `base64(0x00000007 || hash)`):
+
+```sql
+SELECT 'dae1af1c…', ledger_seq, length(c),
+       [position(c, 'mint') > 0, position(c, 'burn') > 0, position(c, 'collect') > 0,
+        position(c, 'upgraded') > 0, position(c, 'migrated') > 0,
+        position(c, 'increase_liquidity') > 0, position(c, 'decrease_liquidity') > 0,
+        position(c, 'token_id') > 0, position(c, 'liquidity') > 0, position(c, 'recipient') > 0,
+        position(c, 'amount0') > 0, position(c, 'amount1') > 0]
+FROM (SELECT ledger_seq, base64Decode(entry_xdr) c
+      FROM stellar.ledger_entry_changes
+      WHERE entry_type = 'contract_code'
+        AND ledger_seq BETWEEN 40000000 AND 65700000
+        AND key_xdr = 'AAAAB9rhrxwoY+kH5rWNyGG7euYQyblR0jr3kCpq/CR7kjsK'
+      LIMIT 1);
+-- second hash: same statement with 'be969de5…' and
+--   key_xdr = 'AAAAB76WneVF2omgRQjklS6UpTp3527Ppn10sj/VbgvkIpDU'
+```
+
+A miss on a literal of 9 characters or fewer does not prove absence (a
+short `Symbol` can compile to a packed integer; see "Limits of the string
+check"). `increase_liquidity` and `decrease_liquidity` cannot be packed,
+so a miss on either of those is a real finding.
 
 Manifest entry for each hash (`internal/wasmaudit/audited_wasm.json`):
 
@@ -217,8 +242,10 @@ Manifest entry for each hash (`internal/wasmaudit/audited_wasm.json`):
 }
 ```
 
-Do not add the pre-upgrade hash until a body sampled below 61,594,920
-decodes under the verified shape, or the decoder is extended for it.
+Attesting needs, in one commit: the string-check rows above filled in, the
+two manifest entries, and a captured event under
+`test/fixtures/sushiswap_v3/<wasm_hash>/` for each hash
+(`TestManifest_NewHashNeedsFixture`).
 
 ## Decision
 

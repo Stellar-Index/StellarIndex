@@ -94,8 +94,8 @@ func strCol(s string) string {
 // TestManagerFixtures decodes every captured manager event to its exact columns, or refuses it.
 func TestManagerFixtures(t *testing.T) {
 	fixtures := loadManagerFixtures(t)
-	if len(fixtures) < 15 {
-		t.Fatalf("loaded %d fixtures, want at least the 15 census samples", len(fixtures))
+	if len(fixtures) < 23 {
+		t.Fatalf("loaded %d fixtures, want at least the 15 post- and 8 pre-upgrade samples", len(fixtures))
 	}
 	d := managerDecoder()
 	for _, fx := range fixtures {
@@ -135,6 +135,38 @@ func TestManagerFixtures(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestManagerAmounts_MatchThePoolSide anchors the manager's u128 scale on an independent event: the pre-upgrade
+// decrease_liquidity at ledger 61,487,425 drove the pool's burn there (goldenBurn), whose owner is the manager.
+func TestManagerAmounts_MatchThePoolSide(t *testing.T) {
+	var dec managerFixture
+	for _, fx := range loadManagerFixtures(t) {
+		if fx.kind == EventDecreaseLiquidity && fx.ledger == 61_487_425 {
+			dec = fx
+		}
+	}
+	out, err := managerDecoder().Decode(managerEvent(MainnetPositionManager, dec.topics, dec.data))
+	if err != nil || len(out) != 1 {
+		t.Fatalf("manager decrease Decode = %v, %v", out, err)
+	}
+	m := out[0].(ManagerEvent)
+	pool, err := decodePositionFields(EventBurn, goldenBurn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pool.Owner != MainnetPositionManager {
+		t.Fatalf("pool burn owner = %s, want the manager", pool.Owner)
+	}
+	for _, c := range []struct{ name, manager, pool string }{
+		{"liquidity", m.Liquidity.String(), pool.Liquidity.String()},
+		{"amount0", m.Amount0.String(), pool.Amount0.String()},
+		{"amount1", m.Amount1.String(), pool.Amount1.String()},
+	} {
+		if c.manager != c.pool {
+			t.Errorf("%s: manager %s, pool %s", c.name, c.manager, c.pool)
+		}
 	}
 }
 

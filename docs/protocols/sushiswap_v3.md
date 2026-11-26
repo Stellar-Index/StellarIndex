@@ -268,10 +268,24 @@ row per event, keyed by `token_id`:
 - No manager event announces an NFT transfer, so a holder change after
   `mint` is not visible here.
 
-The decoder takes only the exact field sets above (all from post-upgrade
-lake samples, `internal/sources/sushiswap_v3/testdata/manager_events.txt`).
-Any other body is a counted decode error, never a guessed row. The
-pre-upgrade shape (before 61,594,920) has not been verified yet.
+The decoder takes only the exact field sets above. Any other body is a
+counted decode error, never a guessed row. Both WASM versions emit the
+same shapes: the pre-upgrade era (before 61,594,920) has only 12 events
+(6 `increase_liquidity`, 4 `mint`, 1 `decrease_liquidity`, 1 `collect`,
+ledgers 61,487,383 – 61,525,605), and every (topic, topic count, body
+length) in it matches the post-upgrade one; 8 of the 12 and 15
+post-upgrade events decode to exact columns
+(`internal/sources/sushiswap_v3/testdata/manager_events.txt`). The
+pre-upgrade `decrease_liquidity` at 61,487,425 carries the same liquidity
+and amounts as the pool-side `burn` it drove (`TestManagerAmounts_MatchThePoolSide`).
+
+The manager's `protocol_contracts.first_ledger` is the source genesis
+(61,487,379), not its first event (61,487,383): every curated row is
+stamped with its source's genesis
+(`TestGatedRegistryOptions_indexerReconcilesCuratedRows` in
+`internal/pipeline/gated_registry_curated_test.go`). The column is a
+lower bound served by `/v1/protocols/{name}`; no cursor floor or replay
+bound reads it (those use `FactoryGenesisLedger`).
 
 Nothing serves these rows yet. A per-position route would read
 `sushiswap_v3_manager_events` by `(manager, token_id)` for the holder
