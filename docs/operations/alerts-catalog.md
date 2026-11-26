@@ -435,7 +435,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_aggregator_composite_freeze_suppression_dominant` | `composite_freeze_suppressed_total` vs `anomaly_freeze_engaged_total` | suppression > 2x engaged over 1 h, 30 min | ticket | [anomaly-freeze-engaged](runbooks/anomaly.md#stellarindex_anomaly_freeze_engaged) |
-| `stellarindex_aggregator_composite_corroboration_unavailable` | `composite_corroboration{verdict="unavailable"}` | == 1 for 6 h per (pair, window); nothing can be suppressed | ticket | [anomaly-freeze-engaged](runbooks/anomaly.md#stellarindex_anomaly_freeze_engaged) |
+| `stellarindex_aggregator_composite_corroboration_unavailable` | `composite_corroboration{verdict="unavailable"}` | == 1 for 6 h per (pair, window); nothing can be suppressed | ticket | [composite-corroboration-unavailable](runbooks/anomaly.md#stellarindex_aggregator_composite_corroboration_unavailable) |
 | `stellarindex_anomaly_freeze_escalated` | `anomaly_freeze_escalated_total` | increase > 0 in 15 min (4-extension ladder exhausted; will NOT auto-unfreeze) | page | [freeze-lifecycle](runbooks/freeze-lifecycle.md#stellarindex_anomaly_freeze_escalated) |
 | `stellarindex_anomaly_freeze_extension_rate` | `anomaly_freeze_extensions_total` | increase >= 3 in 1 h, 10 min | ticket | [freeze-lifecycle](runbooks/freeze-lifecycle.md#stellarindex_anomaly_freeze_extension_rate) |
 | `stellarindex_anomaly_freeze_ladder_write_failures` | `anomaly_freeze_ladder_write_failures_total` per op | increase > 0 in 15 min | ticket | [freeze-lifecycle](runbooks/freeze-lifecycle.md#stellarindex_anomaly_freeze_ladder_write_failures) |

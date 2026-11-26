@@ -1478,6 +1478,12 @@ Gauge, labels `pair`, `window`, `leg`.
 
 Max |venue VWAP − leg VWAP| / leg VWAP in basis points across venues printing a priced leg. Above `leg_dispersion_bps` (default `tolerance_bps`, 75) the leg cannot corroborate. An uncomputable venue VWAP refuses the leg and the gauge is not updated.
 
+### `stellarindex_aggregator_quote_surface_bps`
+
+Gauge, labels `pair`, `window`, `leg`.
+
+Signed gap (stablecoin-proxy VWAP − own-quote VWAP) / own-quote VWAP in basis points for each priced composite-reference leg that holds both surfaces: prints quoted in a USD stablecoin and taken at par, and prints quoted in real USD. The window is split into window/24 sub-buckets (minimum 1 minute: 5m→1m, 1h→2m, 24h→1h); the value is the volume-weighted median gap over sub-buckets where both surfaces traded, or the median of the newest three of them when that is larger. With fewer than three shared sub-buckets, or less than half of either surface's volume in them, it is the whole-window VWAP gap. |value| above `leg_dispersion_bps` refuses the leg (`leg_quote_surface=...`). Absent when the leg has no proxy prints or no own-quote prints. Triage: [composite corroboration unavailable](../../operations/runbooks/anomaly.md#stellarindex_aggregator_composite_corroboration_unavailable).
+
 ### `stellarindex_aggregator_composite_freeze_suppressed_total`
 
 Counter, labels `pair`, `window`.

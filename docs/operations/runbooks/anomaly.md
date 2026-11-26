@@ -202,6 +202,41 @@ Verify `stellarindex_anomaly_freeze_recovered_total` resumes climbing within 60 
 
 Escalate: record stall duration, max backlog, and which transport failed.
 
+## stellarindex_aggregator_composite_corroboration_unavailable
+
+P3 (ticket). Expr: `stellarindex_aggregator_composite_corroboration{verdict="unavailable"} == 1`, `for: 6h`. No served price is wrong: the composite reference could not judge, so a phase-2 fire on `pair` freezes with no corroboration path (the direct print and the freeze serve as if the reference did not exist).
+
+### Check
+
+The cause is the `unavailable=<reason>` field of the aggregator INFO line `composite reference unavailable` (logged once per change of cause; also in `freeze_events.detail->>'reason'` after `composite_unavailable:`):
+
+```sh
+ssh root@136.243.90.96 "journalctl -u stellarindex-aggregator --since '6 hours ago' --no-pager | grep 'composite reference unavailable' | tail -5"
+ssh root@136.243.90.96 "curl -s http://localhost:9465/metrics | grep -E 'stellarindex_aggregator_(quote_surface_bps|composite_reference_leg_(sources|dispersion_bps))'"
+```
+
+| `unavailable=` | Meaning |
+|---|---|
+| `leg_sources=N` | A priced leg had fewer than `min_leg_sources` venues. |
+| `leg_dispersion=Xbps` | The leg's venues disagree by more than `leg_dispersion_bps`. |
+| `leg_quote_surface=Xbps` | The leg's stablecoin-quoted prints (taken at par) and its real-USD prints disagree by more than `leg_dispersion_bps`: two different USDs. |
+| `leg_quote_surface=uncomputable` | A surface VWAP could not be computed; the leg is refused, not skipped. |
+| `leg_not_refreshed`, `fx_*`, `no_chain` | Leg not published this tick, FX snap missing/stale, or no triangulation configured. |
+
+For `leg_quote_surface`, the log field `leg_quote_surface` reads `<leg>:<signed bps>/aligned=<n>` (median of `n` sub-buckets where both surfaces traded, plus the newest three) or `/whole_window(overlap=<n>)` (too little overlap to align, so the whole-window VWAPs were compared). `stellarindex_aggregator_quote_surface_bps{pair,window,leg}` carries the same signed value: positive means stablecoin prints sit above real-USD prints.
+
+### Likely causes
+
+- A real stablecoin de-peg: the gap persists in every window (5m, 1h, 24h) with the same sign, and the stablecoin's own market (`USDC/fiat:USD`, `USDT/fiat:USD` prices on `/v1/price`, or the issuer's redemption status) shows the same move.
+- A trend artefact of the whole-window fallback: `whole_window(...)` on the 24h window during a strong move, while the 1h window's `quote_surface_bps` is inside the bound. The two surfaces trade at different times of day and the fallback cannot align them.
+- Thin legs or dispersed venues: `leg_sources` / `leg_dispersion` causes; see the composite-reference config in `[aggregate.composite_reference]`.
+
+### Fix
+
+1. De-peg: no action on the aggregator; refusing the composite is the intended outcome. Track the stablecoin's peg and record it in the incident log.
+2. Trend artefact on `whole_window`: no action; it clears as the window rolls or once overlap reaches three sub-buckets holding half of each surface's volume. If it recurs on `aligned=` readings with a quiet 1h window, capture both windows' `quote_surface_bps` and the log lines and escalate as a defect in the surface check.
+3. Do NOT raise `leg_dispersion_bps` or `tolerance_bps` to clear this alert: both also gate de-peg detection.
+
 ## Related
 
 - [Alerts catalogue](../alerts-catalog.md)

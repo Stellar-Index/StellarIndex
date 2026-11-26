@@ -137,8 +137,12 @@ type legRef struct {
 	// stablecoin-proxy source pair ([aggregate.ProxyPair]): prints quoted in a stablecoin, priced here at par with real USD.
 	proxyShare float64
 
-	// surfaceDivergence is |proxyVWAP - ownQuoteVWAP| / ownQuoteVWAP, exposing a stablecoin de-peg the par rewrite absorbs; nil when a surface is empty, surfaceUncomputable when a VWAP failed.
+	// surfaceDivergence is |surfaceGap|, the time-aligned disagreement of proxy and own-quote prints that exposes a stablecoin de-peg the
+	// par rewrite absorbs; nil when a surface is empty, surfaceUncomputable when a VWAP failed. See [surfaceReading].
 	surfaceDivergence   *big.Rat
+	surfaceGap          *big.Rat
+	surfaceOverlap      int
+	surfaceAligned      bool
 	surfaceUncomputable bool
 }
 
@@ -154,42 +158,76 @@ func (lr legRef) quoteSurfaceRefusal(maxBps int) string {
 	return ""
 }
 
+// surfaceReading is one leg's quote-surface comparison: gap is the signed (proxy - own) / own (nil when a surface is empty or the
+// comparison failed), overlap the sub-buckets holding both surfaces, aligned whether gap is their median (else the whole-window compare).
+type surfaceReading struct {
+	gap          *big.Rat
+	overlap      int
+	aligned      bool
+	uncomputable bool
+}
+
 // quoteSurfaces measures how much of a published bucket came through a stablecoin-proxy rewrite (proxied holds those trade IDs) and how
-// far
-// those prints sit from the pair's own-quote prints; both are priced with computeNormalizedVWAP, as the leg VWAP is.
+// far those prints sit from the pair's own-quote prints, time-aligned per [Orchestrator.alignedSurfaceGap]; every VWAP is priced with
+// computeNormalizedVWAP, as the leg VWAP is.
 func (o *Orchestrator) quoteSurfaces(
-	pair canonical.Pair, trades []canonical.Trade, proxied map[string]struct{},
-) (share float64, divergence *big.Rat, uncomputable bool) {
+	pair canonical.Pair, window time.Duration, trades []canonical.Trade, proxied map[string]struct{},
+) (share float64, reading surfaceReading) {
 	if len(proxied) == 0 {
-		return 0, nil, false
+		return 0, surfaceReading{}
 	}
 	scaled := aggregate.NormalizeAmountScale(trades, amountScaleDecimalsFor).Trades()
 	var proxy, own []canonical.Trade
-	proxyBase, totalBase := new(big.Int), new(big.Int)
+	proxyBase, ownBase := new(big.Int), new(big.Int)
 	for i := range trades {
-		totalBase.Add(totalBase, scaled[i].BaseAmount.BigInt())
 		if _, ok := proxied[trades[i].ID()]; ok {
 			proxy = append(proxy, trades[i])
 			proxyBase.Add(proxyBase, scaled[i].BaseAmount.BigInt())
 			continue
 		}
 		own = append(own, trades[i])
+		ownBase.Add(ownBase, scaled[i].BaseAmount.BigInt())
 	}
+	totalBase := new(big.Int).Add(proxyBase, ownBase)
 	if len(proxy) == 0 || totalBase.Sign() <= 0 {
-		return 0, nil, false
+		return 0, surfaceReading{}
 	}
 	share, _ = new(big.Rat).SetFrac(proxyBase, totalBase).Float64() // i128:ok a share for reporting, not a served amount
 	if len(own) == 0 {
-		return share, nil, false
+		return share, surfaceReading{}
 	}
+	gap, overlap, aligned, ok := o.alignedSurfaceGap(pair, trades, scaled, proxied, window, proxyBase, ownBase)
+	if !ok {
+		return share, surfaceReading{uncomputable: true}
+	}
+	if aligned {
+		return share, surfaceReading{gap: gap, overlap: overlap, aligned: true}
+	}
+	// Too little overlap to align: the whole-window compare still judges. It can refuse a trend, never pass a de-peg, and a refused
+	// composite leaves the direct print serving.
 	proxyVWAP, perr := o.computeNormalizedVWAP(proxy, pair)
 	ownVWAP, oerr := o.computeNormalizedVWAP(own, pair)
 	if perr != nil || oerr != nil || proxyVWAP.Sign() <= 0 || ownVWAP.Sign() <= 0 {
-		return share, nil, true
+		return share, surfaceReading{uncomputable: true}
 	}
-	divergence = new(big.Rat).Sub(proxyVWAP, ownVWAP)
-	divergence.Abs(divergence).Quo(divergence, ownVWAP)
-	return share, divergence, false
+	gap = new(big.Rat).Sub(proxyVWAP, ownVWAP)
+	gap.Quo(gap, ownVWAP)
+	return share, surfaceReading{gap: gap, overlap: overlap}
+}
+
+// surfaceString renders the leg's surface reading for logs: `+12.3bps/aligned=20` or `-80.0bps/whole_window(overlap=1)`; "" when
+// unmeasured.
+func (lr legRef) surfaceString() string {
+	switch {
+	case lr.surfaceUncomputable:
+		return "uncomputable"
+	case lr.surfaceGap == nil:
+		return ""
+	case lr.surfaceAligned:
+		return fmt.Sprintf("%+.1fbps/aligned=%d", ratBps(lr.surfaceGap), lr.surfaceOverlap)
+	default:
+		return fmt.Sprintf("%+.1fbps/whole_window(overlap=%d)", ratBps(lr.surfaceGap), lr.surfaceOverlap)
+	}
 }
 
 // legDispersion computes each venue's own VWAP over the post-filter survivors against the leg VWAP. (nil, false): under two venues, guard N/A. (nil, true): a venue VWAP could not be computed, which is NOT a pass, so the caller fails closed.
@@ -252,6 +290,11 @@ type compositeReference struct {
 	// bps (see legRef.dispersion); absent for FX legs.
 	legDispersionBps map[string]float64
 
+	// legSurfaceBps maps each priced leg with both quote surfaces to its signed surface gap in bps (legRef.surfaceGap); legSurface is
+	// the same reading with its overlap, for logs.
+	legSurfaceBps map[string]float64
+	legSurface    map[string]string
+
 	// unavailable names why the reference could not be evaluated (e.g. "leg_sources=1", "fx_stale", "leg_not_refreshed"); empty when it
 	// resolved.
 	unavailable string
@@ -296,6 +339,40 @@ func (r compositeReference) legDispersionString() string {
 		parts = append(parts, fmt.Sprintf("%s:%.1f", k, r.legDispersionBps[k]))
 	}
 	return " composite_leg_dispersion_bps={" + strings.Join(parts, ",") + "}"
+}
+
+// recordLegReadings copies a priced leg's dispersion and quote-surface readings onto the reference for its gauges and logs.
+func (r compositeReference) recordLegReadings(leg canonical.Pair, legRefs map[string]legRef) {
+	lr, ok := legRefs[leg.String()]
+	if !ok || isFXLeg(leg) {
+		return
+	}
+	if lr.dispersion != nil {
+		r.legDispersionBps[leg.String()] = ratBps(lr.dispersion)
+	}
+	if lr.surfaceGap != nil {
+		r.legSurfaceBps[leg.String()] = ratBps(lr.surfaceGap)
+	}
+	if s := lr.surfaceString(); s != "" {
+		r.legSurface[leg.String()] = s
+	}
+}
+
+// legSurfaceString renders legSurface deterministically: `{crypto:XLM/fiat:USD:+12.3bps/aligned=20}`; "" when nothing was measured.
+func (r compositeReference) legSurfaceString() string {
+	if len(r.legSurface) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(r.legSurface))
+	for k := range r.legSurface {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, k+":"+r.legSurface[k])
+	}
+	return "{" + strings.Join(parts, ",") + "}"
 }
 
 // resolved reports whether the reference produced a composite (corroborated or refuted): those readings may stand in for the prior-tick
@@ -351,23 +428,31 @@ func (o *Orchestrator) chainForTarget(pair canonical.Pair) (TriangulationChain, 
 
 // recordLegRef captures a confidently-published bucket as a CURRENT-tick leg, at the publish point in refreshPairWindow. Rebuilt every Tick; same single-Tick-at-a-time invariant as tickEdgeQuotes.
 func (o *Orchestrator) recordLegRef(pair canonical.Pair, window time.Duration, vwap *big.Rat, trades []canonical.Trade) {
-	o.setTickLegRef(pair, window, o.newLegRef(pair, vwap, trades, nil))
+	o.setTickLegRef(pair, window, o.newLegRef(pair, window, vwap, trades, nil))
 }
 
 // newLegRef builds the reference-leg reading for a published bucket; proxied is the set of trade IDs fetchForTarget rewrote from a
 // stablecoin-proxy source pair.
-func (o *Orchestrator) newLegRef(pair canonical.Pair, vwap *big.Rat, trades []canonical.Trade, proxied map[string]struct{}) legRef {
+func (o *Orchestrator) newLegRef(
+	pair canonical.Pair, window time.Duration, vwap *big.Rat, trades []canonical.Trade, proxied map[string]struct{},
+) legRef {
 	dispersion, uncomputable := o.legDispersion(pair, trades, vwap)
-	share, surfaceDiv, surfaceUncomputable := o.quoteSurfaces(pair, trades, proxied)
-	return legRef{
+	share, surface := o.quoteSurfaces(pair, window, trades, proxied)
+	lr := legRef{
 		price:                  new(big.Rat).Set(vwap), // defensive copy, as newEdgeQuote
 		sources:                distinctSourceCount(trades),
 		dispersion:             dispersion,
 		dispersionUncomputable: uncomputable,
 		proxyShare:             share,
-		surfaceDivergence:      surfaceDiv,
-		surfaceUncomputable:    surfaceUncomputable,
+		surfaceGap:             surface.gap,
+		surfaceOverlap:         surface.overlap,
+		surfaceAligned:         surface.aligned,
+		surfaceUncomputable:    surface.uncomputable,
 	}
+	if surface.gap != nil {
+		lr.surfaceDivergence = new(big.Rat).Abs(surface.gap)
+	}
+	return lr
 }
 
 // setTickLegRef records lr as this tick's reference leg for (pair, window).
@@ -411,6 +496,7 @@ func (o *Orchestrator) resolveCompositeReference(
 	cfg := o.cfg.CompositeReference.withDefaults()
 	ref := compositeReference{
 		verdict: compositeVerdictUnavailable, legSources: map[string]int{}, legDispersionBps: map[string]float64{},
+		legSurfaceBps: map[string]float64{}, legSurface: map[string]string{},
 	}
 	chain, ok := o.chainForTarget(pair)
 	if !ok {
@@ -424,9 +510,7 @@ func (o *Orchestrator) resolveCompositeReference(
 	composite := big.NewRat(1, 1)
 	for _, leg := range chain.Legs {
 		price, sources, why := o.referenceLeg(ctx, leg, window, now, cfg)
-		if lr, ok := o.tickLegRefs[window][leg.String()]; ok && !isFXLeg(leg) && lr.dispersion != nil {
-			ref.legDispersionBps[leg.String()] = ratBps(lr.dispersion)
-		}
+		ref.recordLegReadings(leg, o.tickLegRefs[window])
 		if sources > 0 {
 			// Recorded even when the leg is the reason the reference is
 			// unavailable (a thin leg), so the operator sees HOW thin.
@@ -541,6 +625,10 @@ func (o *Orchestrator) emitCompositeReference(pair canonical.Pair, window time.D
 	labels := prometheus.Labels{"pair": pair.String(), "window": windowLabel(window)}
 	obs.AggregatorCompositeReferenceLegSources.DeletePartialMatch(labels)
 	obs.AggregatorCompositeReferenceLegDispersionBps.DeletePartialMatch(labels)
+	obs.AggregatorQuoteSurfaceBps.DeletePartialMatch(labels)
+	for leg, bps := range ref.legSurfaceBps {
+		obs.AggregatorQuoteSurfaceBps.WithLabelValues(pair.String(), windowLabel(window), leg).Set(bps)
+	}
 	for leg, n := range ref.legSources {
 		obs.AggregatorCompositeReferenceLegSources.WithLabelValues(pair.String(), windowLabel(window), leg).Set(float64(n))
 	}
@@ -555,6 +643,7 @@ func (o *Orchestrator) emitCompositeReference(pair canonical.Pair, window time.D
 		"divergence_pct", ref.divergencePct,
 		"leg_sources", ref.legSourcesString(),
 		"leg_dispersion_bps", strings.TrimPrefix(ref.legDispersionString(), " composite_leg_dispersion_bps="),
+		"leg_quote_surface", ref.legSurfaceString(),
 	}
 	if ref.unavailable != "" {
 		attrs = append(attrs, "unavailable", ref.unavailable)
@@ -584,6 +673,7 @@ func (o *Orchestrator) clearCompositeReference(pair canonical.Pair, window time.
 	obs.AggregatorCompositeCorroboration.DeletePartialMatch(labels)
 	obs.AggregatorCompositeReferenceLegSources.DeletePartialMatch(labels)
 	obs.AggregatorCompositeReferenceLegDispersionBps.DeletePartialMatch(labels)
+	obs.AggregatorQuoteSurfaceBps.DeletePartialMatch(labels)
 }
 
 // currentCompositeReference returns this tick's reference reading for
