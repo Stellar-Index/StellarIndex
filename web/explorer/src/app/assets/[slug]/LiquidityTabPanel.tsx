@@ -29,6 +29,11 @@ import { LiquidityVenueBars } from './LiquidityVenueBars';
 import { bakedAtDeploy } from './priceProvenance';
 import { withheldNote } from './headerNotes';
 
+/** poolsForAssetPath is the panel's /v1/pools read, shared with the build warm-up. */
+export function poolsForAssetPath(assetID: string): string {
+  return `/v1/pools?asset=${encodeURIComponent(assetID)}&limit=100&order_by=volume_24h_usd_desc`;
+}
+
 /**
  * fetchPoolsForAsset returns the pool rows, or `null` when we could not
  * read them at all (CI stub, 404, persistent 503/timeout/transport error).
@@ -44,10 +49,10 @@ import { withheldNote } from './headerNotes';
 async function fetchPoolsForAsset(
   assetID: string,
 ): Promise<{ rows: PoolRow[]; truncated: boolean; degraded: boolean } | null> {
-  const env = await buildFetchEnvelope<PoolRow[]>(
-    `/v1/pools?asset=${encodeURIComponent(assetID)}&limit=100&order_by=volume_24h_usd_desc`,
-    { softFail: true, attempts: 2 },
-  );
+  const env = await buildFetchEnvelope<PoolRow[]>(poolsForAssetPath(assetID), {
+    softFail: true,
+    attempts: 2,
+  });
   if (!Array.isArray(env.data)) return null;
   return {
     rows: env.data,

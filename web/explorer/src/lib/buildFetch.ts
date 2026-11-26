@@ -53,7 +53,9 @@
  *    fetch, and failBuild() is a no-op — the CI fallback branches keep
  *    rendering so networkless smoke builds still pass.
  * 5. A degraded (partial) 200 from a core read is asked again a bounded
- *    number of times (DEGRADED_REASK_DELAYS_MS); one still degraded is
+ *    number of times (DEGRADED_REASK_DELAYS_MS), within one summed sleep
+ *    budget for the whole build (REASK_BUDGET_MS) and only while the route's
+ *    re-asks still heal (REASK_UNHEALED_LIMIT); one still degraded is
  *    returned with `degraded: true` for the page to mark, and listed in the
  *    postbuild summary. It does not fail the build: the data is real, only
  *    incomplete, and one thin asset must not block a deploy.
@@ -75,7 +77,13 @@
  */
 
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 
 import { API_BASE_URL, buildHeaders } from '@/api/client';
@@ -267,18 +275,100 @@ export function routeTemplate(path: string): string {
 // The API marks a partial 200 (a cold section that missed its deadline) only by
 // `Cache-Control: no-store` (Flags.Degraded never reaches the body) and keeps
 // filling it in the background, so these core reads are asked again before
-// the answer is baked. Two re-asks, 15 s in all: a few fill deadlines, not a
-// stall; the waits hold no in-flight slot.
-export const DEGRADED_REASK_DELAYS_MS = [5_000, 10_000] as const;
-const REASK_DEGRADED_ROUTES = new Set([
-  '/v1/assets',
-  '/v1/assets/{id}',
-  '/v1/markets',
-  '/v1/pools',
-]);
+// the answer is baked. A pools answer heals within ~1.5 s; the others get one
+// re-ask after one fill deadline. The waits hold no in-flight slot.
+export const DEGRADED_REASK_DELAYS_MS: ReadonlyMap<string, readonly number[]> =
+  new Map([
+    ['/v1/assets', [4_000]],
+    ['/v1/assets/{id}', [4_000]],
+    ['/v1/markets', [4_000]],
+    ['/v1/pools', [1_500, 4_000]],
+  ]);
+
+// Summed re-ask sleep the whole build (every process) may spend; past it a
+// partial answer is baked marked. Bounds the build at minutes even when every
+// answer is partial.
+export const REASK_BUDGET_MS = 5 * 60_000;
+
+// This many re-asks in a row on one route still partial means the API is
+// replaying one cached copy: re-asking it again cannot heal, so stop.
+export const REASK_UNHEALED_LIMIT = 8;
+
+let reaskSleptMs = 0;
+const unhealedCounts = new Map<string, number>();
+const unhealedStreak = new Map<string, number>();
+const reaskDisabled = new Set<string>();
 
 function isDegradedAnswer(res: Response): boolean {
   return res.headers.get('cache-control')?.trim().toLowerCase() === 'no-store';
+}
+
+/** buildReaskSleptMs is this process's summed re-ask sleep. */
+export function buildReaskSleptMs(): number {
+  return reaskSleptMs;
+}
+
+/** buildReaskDisabled is the routes this process stopped re-asking. */
+export function buildReaskDisabled(): ReadonlySet<string> {
+  return reaskDisabled;
+}
+
+type SiblingTally = { reaskSleptMs?: number; reaskDisabled?: string[] };
+
+// The other build processes' tallies, so the budget and a disabled route hold
+// across `next build`'s render passes.
+function siblingTallies(): SiblingTally[] {
+  if (process.env.NEXT_PHASE !== 'phase-production-build') return [];
+  let files: string[];
+  try {
+    files = readdirSync(COUNTS_DIR);
+  } catch {
+    return [];
+  }
+  const own = `${process.pid}.json`;
+  return files
+    .filter((f) => f.endsWith('.json') && f !== own)
+    .map((f) => {
+      try {
+        return JSON.parse(
+          readFileSync(join(COUNTS_DIR, f), 'utf8'),
+        ) as SiblingTally;
+      } catch {
+        return {}; // mid-write: costs at most one re-ask over budget
+      }
+    });
+}
+
+// reserveReask books `delayMs` of the build's re-ask budget for `route`, or
+// refuses when the route is disabled or the budget would be overspent.
+function reserveReask(route: string, delayMs: number): boolean {
+  const others = siblingTallies();
+  if (
+    reaskDisabled.has(route) ||
+    others.some((t) => t.reaskDisabled?.includes(route))
+  ) {
+    return false;
+  }
+  const spent = others.reduce(
+    (s, t) => s + (t.reaskSleptMs ?? 0),
+    reaskSleptMs,
+  );
+  if (spent + delayMs > REASK_BUDGET_MS) return false;
+  reaskSleptMs += delayMs;
+  writeTally();
+  return true;
+}
+
+function noteReaskOutcome(route: string, healed: boolean): void {
+  if (healed) {
+    unhealedStreak.set(route, 0);
+    return;
+  }
+  unhealedCounts.set(route, (unhealedCounts.get(route) ?? 0) + 1);
+  const streak = (unhealedStreak.get(route) ?? 0) + 1;
+  unhealedStreak.set(route, streak);
+  if (streak >= REASK_UNHEALED_LIMIT) reaskDisabled.add(route);
+  writeTally();
 }
 
 // HTTP requests this process sent, per route, retries included: what the API sees.
@@ -286,6 +376,7 @@ const requestCounts = new Map<string, number>();
 // Re-asks after a degraded answer, per route; paths baked degraded or unavailable.
 const reaskCounts = new Map<string, number>();
 const bakedDegraded = new Set<string>();
+let warmupRequests = 0;
 
 /** buildRequestCounts is this process's route → requests-sent tally. */
 export function buildRequestCounts(): ReadonlyMap<string, number> {
@@ -307,8 +398,14 @@ export function buildBakedDegraded(): ReadonlySet<string> {
 // postbuild step prints the sum.
 const COUNTS_DIR = join(process.cwd(), '.next', 'build-fetch-counts');
 
-function countRequest(route: string): void {
+/** buildWarmupRequests is the requests this process sent from buildWarmUp. */
+export function buildWarmupRequests(): number {
+  return warmupRequests;
+}
+
+function countRequest(route: string, warmUp: boolean): void {
   requestCounts.set(route, (requestCounts.get(route) ?? 0) + 1);
+  if (warmUp) warmupRequests++;
   writeTally();
 }
 
@@ -331,6 +428,12 @@ function writeTally(): void {
         requests: Object.fromEntries(requestCounts),
         reasked: Object.fromEntries(reaskCounts),
         degraded: [...bakedDegraded],
+        warmup: warmupRequests,
+        reaskSleptMs,
+        reaskBudgetMs: REASK_BUDGET_MS,
+        unhealed: Object.fromEntries(unhealedCounts),
+        reaskDisabled: [...reaskDisabled],
+        reaskUnhealedLimit: REASK_UNHEALED_LIMIT,
       }),
     );
   } catch {
@@ -390,6 +493,20 @@ export function buildFetchEnvelope<T>(
   opts?: { timeoutMs?: number; attempts?: number; softFail?: boolean },
 ): Promise<BuildFetchEnvelope<T>> {
   if (isCIStub) return Promise.resolve({ data: null });
+  const url = buildUrl(path);
+  const hit = memo.get(url);
+  if (hit) return hit as Promise<BuildFetchEnvelope<T>>;
+  const p = fetchWithRetry<T>(url, path, {
+    timeoutMs: opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    maxAttempts: opts?.attempts ?? MAX_ATTEMPTS,
+    softFail: opts?.softFail ?? false,
+    warmUp: false,
+  });
+  memo.set(url, p);
+  return p;
+}
+
+function buildUrl(path: string): string {
   const base = `${API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
   // EDGE-CACHE BYPASS: static-export builds must read the
   // ORIGIN's current truth, not whatever mix of Cloudflare cache entries
@@ -400,30 +517,66 @@ export function buildFetchEnvelope<T>(
   // param makes every build URL cache-unique, so requests go straight to
   // origin; the in-process memo still dedupes within each worker process
   // (price batch chunks also across processes, via buildFetchPriceBatch).
-  const url = `${base}${base.includes('?') ? '&' : '?'}b=${BUILD_NONCE}`;
-  const hit = memo.get(url);
-  if (hit) return hit as Promise<BuildFetchEnvelope<T>>;
-  const p = fetchWithRetry<T>(url, path, {
-    timeoutMs: opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-    maxAttempts: opts?.attempts ?? MAX_ATTEMPTS,
-    softFail: opts?.softFail ?? false,
-  });
-  memo.set(url, p);
-  return p;
+  return `${base}${base.includes('?') ? '&' : '?'}b=${BUILD_NONCE}`;
+}
+
+// Warm-up stops starting requests after this, so a slow API costs the build
+// minutes, not 2 × WARMUP keys × the 8 s timeout.
+export const WARMUP_DEADLINE_MS = 3 * 60_000;
+
+/**
+ * buildWarmUp asks each path once, before the pages that read it render, so
+ * the API starts filling a cold answer early. A complete answer is memoised
+ * for the pages; a partial or failed one is discarded and never fails the
+ * build. No re-asks; MAX_IN_FLIGHT lanes, so other reads interleave.
+ */
+export async function buildWarmUp(paths: readonly string[]): Promise<void> {
+  if (isCIStub) return;
+  const queue = [...new Set(paths)];
+  const deadline = Date.now() + WARMUP_DEADLINE_MS;
+  const lane = async () => {
+    for (let path = queue.shift(); path !== undefined; path = queue.shift()) {
+      if (Date.now() >= deadline) return;
+      const url = buildUrl(path);
+      if (memo.has(url)) continue;
+      try {
+        const env = await fetchWithRetry(url, path, {
+          timeoutMs: DEFAULT_TIMEOUT_MS,
+          maxAttempts: 1,
+          softFail: true,
+          warmUp: true,
+        });
+        if (env.data !== null && !env.degraded && !memo.has(url)) {
+          memo.set(url, Promise.resolve(env));
+        }
+      } catch {
+        // A warm-up is advisory: the page's own read applies its contract.
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: MAX_IN_FLIGHT }, lane));
 }
 
 async function fetchWithRetry<T>(
   url: string,
   path: string,
-  opts: { timeoutMs: number; maxAttempts: number; softFail: boolean },
+  opts: {
+    timeoutMs: number;
+    maxAttempts: number;
+    softFail: boolean;
+    warmUp: boolean;
+  },
 ): Promise<BuildFetchEnvelope<T>> {
-  const { timeoutMs, maxAttempts, softFail } = opts;
+  const { timeoutMs, maxAttempts, softFail, warmUp } = opts;
   const route = routeTemplate(path);
-  const reaskDegraded = REASK_DEGRADED_ROUTES.has(route);
+  const reaskDelays = DEGRADED_REASK_DELAYS_MS.get(route);
+  // A warm-up neither re-asks nor lists a path: it bakes nothing.
+  const noteDegraded = reaskDelays !== undefined && !warmUp;
   let lastErr: unknown = null;
   let throttleWaits = 0;
   let unavailableWaits = 0;
   let degradedReasks = 0;
+  let reaskPending = false;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       // Taken before the global slot so a queued batch never idles on one;
@@ -434,7 +587,7 @@ async function fetchWithRetry<T>(
       try {
         await acquireSlot();
         try {
-          countRequest(route);
+          countRequest(route, warmUp);
           res = await fetch(url, {
             headers: buildHeaders(),
             signal: AbortSignal.timeout(timeoutMs),
@@ -489,7 +642,7 @@ async function fetchWithRetry<T>(
         // everything else fails the build so the contract break is visible
         // instead of silently baked in.
         if (softFail) {
-          if (reaskDegraded) noteBakedDegraded(path);
+          if (noteDegraded) noteBakedDegraded(path);
           return { data: null };
         }
         let extra = '';
@@ -513,15 +666,26 @@ async function fetchWithRetry<T>(
       const env = (await res.json()) as Omit<BuildFetchEnvelope<T>, 'data'> & {
         data?: T;
       };
-      const degraded = reaskDegraded && isDegradedAnswer(res);
-      if (degraded && degradedReasks < DEGRADED_REASK_DELAYS_MS.length) {
-        await sleep(DEGRADED_REASK_DELAYS_MS[degradedReasks]);
+      const degraded = reaskDelays !== undefined && isDegradedAnswer(res);
+      if (reaskPending) {
+        noteReaskOutcome(route, !degraded);
+        reaskPending = false;
+      }
+      const delay = reaskDelays?.[degradedReasks];
+      if (
+        degraded &&
+        !warmUp &&
+        delay !== undefined &&
+        reserveReask(route, delay)
+      ) {
+        await sleep(delay);
         degradedReasks++;
         countReask(route);
+        reaskPending = true;
         attempt--; // a partial answer is not a spent transport attempt
         continue;
       }
-      if (degraded) noteBakedDegraded(path);
+      if (degraded && noteDegraded) noteBakedDegraded(path);
       return {
         data: env.data ?? null,
         flags: env.flags,
@@ -540,7 +704,7 @@ async function fetchWithRetry<T>(
     // Opt-in non-fatal caller (build-time live-price enrichment): the
     // value is refreshed client-side, so degrade the page rather than
     // abort the export. See the softFail note in the module header.
-    if (reaskDegraded) noteBakedDegraded(path);
+    if (noteDegraded) noteBakedDegraded(path);
     return { data: null };
   }
   throw new BuildFetchError(
