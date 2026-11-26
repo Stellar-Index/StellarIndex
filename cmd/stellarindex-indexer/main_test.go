@@ -691,33 +691,33 @@ func TestRecordHashdb_DurationExcludesMarshal(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 
+	// Fake clock that only the marshal hook advances: the write path sees no time pass, so the
+	// recorded duration is exactly 0 unless the timer wrongly spans the marshal.
 	const injectedMarshalDelay = 200 * time.Millisecond
-	orig := marshalLedgerCloseMeta
-	t.Cleanup(func() { marshalLedgerCloseMeta = orig })
+	fakeNow := time.Unix(1_700_000_000, 0)
+	origNow, origMarshal := hashdbNow, marshalLedgerCloseMeta
+	t.Cleanup(func() { hashdbNow, marshalLedgerCloseMeta = origNow, origMarshal })
+	hashdbNow = func() time.Time { return fakeNow }
 	marshalLedgerCloseMeta = func(lcm sdkxdr.LedgerCloseMeta) ([]byte, error) {
-		time.Sleep(injectedMarshalDelay)
+		fakeNow = fakeNow.Add(injectedMarshalDelay)
 		return lcm.MarshalBinary()
 	}
 
-	lcm := bloatedLedgerCloseMeta(9000, 200000)
+	lcm := bloatedLedgerCloseMeta(9000, 1)
 
 	beforeSum := histogramSampleSum(t, obs.HashdbAppendDurationSeconds, "outcome", "ok")
+	beforeCount := obstest.HistogramSampleCount(t, obs.HashdbAppendDurationSeconds, "outcome", "ok")
 
 	var lastAppended atomic.Uint32
 	recordHashdb(db, lcm, logger, &lastAppended)
 
-	afterSum := histogramSampleSum(t, obs.HashdbAppendDurationSeconds, "outcome", "ok")
-	observed := afterSum - beforeSum
-
-	if observed <= 0 {
-		t.Fatalf("HashdbAppendDurationSeconds{ok} did not advance")
+	observed := histogramSampleSum(t, obs.HashdbAppendDurationSeconds, "outcome", "ok") - beforeSum
+	if got := obstest.HistogramSampleCount(t, obs.HashdbAppendDurationSeconds, "outcome", "ok") - beforeCount; got != 1 {
+		t.Fatalf("HashdbAppendDurationSeconds{ok} sample count advanced by %d, want 1", got)
 	}
-	// The write takes microseconds even on a loaded runner; the ceiling leaves headroom for
-	// WriteAt jitter yet sits far below the injected 200ms a timer-placement regression leaks.
-	const maxWantedObserved = 20 * time.Millisecond
-	if observed > maxWantedObserved.Seconds() {
-		t.Errorf("HashdbAppendDurationSeconds{ok} observed=%.6fs exceeds %.3fs — timer includes the LedgerCloseMeta marshal (which this test made take >= %.3fs), not just hashdb.Append's WriteAt",
-			observed, maxWantedObserved.Seconds(), injectedMarshalDelay.Seconds())
+	if observed != 0 {
+		t.Errorf("HashdbAppendDurationSeconds{ok} observed=%.6fs, want exactly 0 — timer includes the %.3fs LedgerCloseMeta marshal, not just the hashdb write",
+			observed, injectedMarshalDelay.Seconds())
 	}
 }
 

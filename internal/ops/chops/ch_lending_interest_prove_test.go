@@ -147,6 +147,14 @@ func TestProveInterest_Mismatches(t *testing.T) {
 			"event column", func(p *proofFixture) { p.stored[1].ExplainedVersions = 1 },
 			"mismatch CPOOL CASSET " + h1 + " explained_versions: stored 1, recomputed 0",
 		},
+		{
+			"default loss", func(p *proofFixture) { p.stored[1].Row.DefaultLoss = big.NewInt(-7) },
+			"mismatch CPOOL CASSET " + h1 + " default_loss: stored -7, recomputed 0",
+		},
+		{
+			"default versions", func(p *proofFixture) { p.stored[1].Row.DefaultVersions = 1 },
+			"mismatch CPOOL CASSET " + h1 + " default_versions: stored 1, recomputed 0",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := newProofFixture(t)
@@ -165,9 +173,10 @@ func TestProveInterest_StaleRevisionIsIncomplete(t *testing.T) {
 	p := newProofFixture(t)
 	p.stored[2].DeriveRev = 1
 	p.stored[2].Row.Gross = big.NewInt(-1) // an older arithmetic's value is not a mismatch
+	p.stored[2].Row.UnreconciledVersions++ // nor is its unclassified version an unexplained one
 	out, gauge, err := p.prove(t, lendingRun{})
-	if err == nil || !strings.Contains(err.Error(), "INCOMPLETE") || gauge != "0" ||
-		!strings.Contains(out, "derive_rev 1, this binary derives 2") || !strings.Contains(out, "3 hours proved, 0 mismatched, 1 INCOMPLETE") {
+	if err == nil || !strings.Contains(err.Error(), "INCOMPLETE") || gauge != "0" || !strings.Contains(out, "unexplained versions 4\n") || // the other three rows' alone
+		!strings.Contains(out, "derive_rev 1, this binary derives 3") || !strings.Contains(out, "3 hours proved, 0 mismatched, 1 INCOMPLETE") {
 		t.Fatalf("err %v gauge %s:\n%s", err, gauge, out)
 	}
 }

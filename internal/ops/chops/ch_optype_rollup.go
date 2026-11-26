@@ -11,7 +11,8 @@ import (
 
 // chOpTypeRollup maintains the per-account counts rollups, stellar.account_op_type_counts and stellar.account_movement_counts
 // (deploy/clickhouse/account_op_types.sql Step 6): each lake partition is one count() FINAL + atomic REPLACE PARTITION, the open one stopping an hour behind the contiguous
-// tip. A recompute smaller than the live partition is refused unless -shrink-ok. -max-closed 0 is the backfill: heavy, serialize it
+// tip. A recompute smaller than the live build is refused unless -shrink-ok; a partition holding several builds (a restart
+// resurrected the replaced one) is replaced without it. -max-closed 0 is the backfill: heavy, serialize it
 // under run-heavy-job.sh. The dry run reads the plan and writes nothing.
 func chOpTypeRollup(args []string) error {
 	fs := flag.NewFlagSet("ch-optype-rollup", flag.ContinueOnError)
