@@ -117,7 +117,7 @@ Bigger than ~1M ledgers (replay ceiling ~720k ledgers/hour: 5 s tick, 60 s per-c
 
 Liquidity-only correction (aquarius example):
 
-1. Decompress the `aquarius_liquidity` chunks over the range first ([pre-flight](#pre-flight-decompress-the-replay-window-first), `hypertable_name IN ('aquarius_liquidity')`; it is the only table this run writes). Required: a rebuild into compressed chunks fails or crawls ([supply runbook](supply.md)). A decompressed chunk is 5-20x larger, so get the owner's approval on production and check disk first.
+1. `aquarius_liquidity` is the only table this run writes. If the table is large or the dry run's would-write (step 2) is over ~1M rows, decompress its chunks over the range first ([pre-flight](#pre-flight-decompress-the-replay-window-first), `hypertable_name IN ('aquarius_liquidity')`): a rebuild of that size into compressed chunks fails or crawls. A decompressed chunk is 5-20x larger, so get the owner's approval on production and check disk first. Below that, write directly and watch for `context deadline exceeded`; a ~131k-row rebuild over 3.3M ledgers wrote into compressed chunks in about 5 minutes with no failed rows. Do step 2 before choosing.
 2. Dry run without `-to`, note the `-to not specified — defaulting to the live projector cursor (N)` line, and pin `-to N` from then on: `stellarindex-ops projected-rebuild -config PATH -source aquarius -from F -to N -only-kinds aquarius.liquidity -dry-run`.
 3. No-go if decode errors > 0, if the summary names unlayered pools, or if `aquarius.liquidity` would-write is below the stored count, `SELECT count(*) FROM aquarius_liquidity WHERE ledger BETWEEN F AND N AND token_index = 0`. Would-write may exceed it: the stream reads the lake without FINAL, so a duplicated lake row counts twice and upserts once.
 4. `-write` with the same `-from F -to N`. The summary prints the run's `derive_generation` G.
@@ -189,7 +189,7 @@ The rewind is recorded in `projection_dirty_windows` (migration 0125) before the
 
 Replays through compressed Timescale history livelock: upserts into compressed `trades` and `aquarius_*` chunks blow write deadlines, the projector holds the cursor and retry-storms (100k+ abandoned inserts/hour). The nightly 22:45Z policies recompress, so a chunk decompressed yesterday re-blocks today, and any table newly given a policy joins the trap.
 
-Before ANY replay whose window overlaps compressed chunks, decompress every compressed chunk of EVERY table the source writes (`trades` plus its per-source hypertables) across the window:
+Before ANY replay whose window overlaps compressed chunks, decompress every compressed chunk of EVERY table the source writes (`trades` plus its per-source hypertables) across the window. This is required for `trades` and large per-source tables; for a small table (a liquidity-only rebuild of ~100k rows) it is a judgement call (see "Liquidity-only correction" under [The tool](#the-tool)).
 
 ```sql
 SELECT format('SELECT decompress_chunk(%L);',
@@ -200,7 +200,7 @@ WHERE c.hypertable_name IN ('trades', '<source tables...>')
   AND c.range_end > '<window start ts>';
 ```
 
-Run the emitted statements (large chunks under `run-heavy-job.sh`), then start the replay; the nightly policy recompresses. An already-wedged replay shows `Insert*: context deadline exceeded` storms with a frozen cursor; decompress the blocking chunk and the sink-side adaptive shrink converges the window.
+Run the emitted statements (large chunks under `run-heavy-job.sh`), then start the replay; the nightly policy recompresses. Schedule a rebuild that writes without decompressing for after the table's compression policy has run: `SELECT hypertable_name, next_start FROM timescaledb_information.jobs WHERE proc_name = 'policy_compression';`. If a `projected-rebuild -write` window fails (a transient ClickHouse error such as "Too many simultaneous queries", or held inserts), the windows already completed stay checkpointed; re-run the same command with the same binary and it resumes (`-resume` is the default). An already-wedged replay shows `Insert*: context deadline exceeded` storms with a frozen cursor; decompress the blocking chunk and the sink-side adaptive shrink converges the window.
 
 ## stellarindex_projector_row_quarantined
 
