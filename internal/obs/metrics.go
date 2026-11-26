@@ -1500,7 +1500,7 @@ var MonthlyQuotaFailClosedTotal = prometheus.NewCounter(
 var GateAdmissionPersistFailuresTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_gate_admission_persist_failures_total",
-		Help: "Failed writes of a live factory-child gate admission (protocol_contracts, soroswap_pairs, sushiswap_v3_pools), per source.",
+		Help: "Failed writes of a live factory-child gate admission (protocol_contracts, soroswap_pairs, sushiswap_v3_pools, aquarius_pools), per source.",
 	},
 	[]string{"source"},
 )
