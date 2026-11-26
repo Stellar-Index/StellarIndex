@@ -23,6 +23,8 @@ type assetDetailEntry struct {
 	// must not carry the route's shared-cache band.
 	degraded bool
 	stale    bool
+	// reason is the [detailDegradedReason] of a degraded entry, replayed on every serve.
+	reason string
 }
 
 // assetDetailResponseCache caches the whole /v1/assets/{id} response by normalised asset_id, so new fields and overlays flow
@@ -128,6 +130,9 @@ func renderAssetDetailEnvelope(detail AssetDetail, flags Flags) ([]byte, error) 
 func writeCachedAssetDetail(w http.ResponseWriter, entry *assetDetailEntry) {
 	if entry.degraded {
 		w.Header().Set("Cache-Control", "no-store")
+	}
+	if entry.degraded && entry.reason != "" {
+		obs.MarkDegradedReason(w, entry.reason)
 	}
 	obs.MarkResponseFlags(w, entry.degraded, entry.stale)
 	w.Header().Set("Content-Type", "application/json")

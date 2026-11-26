@@ -14,6 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -551,6 +552,9 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	// A cached serve stamps the data's actual observation time, never now(), and a last-good copy
 	// (failed or late refresh) stamps flags.stale. An uncached read leaves
 	// observedAt zero and writeEnvelope defaults as_of to now.
+	if len(unread) > 0 {
+		obs.NoteDegradedCause(mCtx, obs.DegradedPartialRead)
+	}
 	env := Envelope{
 		Data:  rows,
 		Flags: Flags{Stale: stale, Degraded: stale || len(unread) > 0, Truncated: truncated, IncludesUnread: unread},
@@ -659,6 +663,7 @@ func (s *Server) fanOutAssetMarkets(ctx context.Context, reader MarketsReader, a
 			}
 			// A failed leg's rows are missing: the list is a lower bound (truncated) as well as not current (stale).
 			stale, truncated = true, true
+			obs.NoteDegradedCause(ctx, obs.DegradedPartialRead)
 			continue
 		}
 		// Oldest observed-at across legs; any stale leg makes the composite stale.
