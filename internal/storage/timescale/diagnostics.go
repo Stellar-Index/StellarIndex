@@ -522,6 +522,8 @@ const seedSourceEntryCountsSQL = `
             UNION ALL
             SELECT 'sushiswap_v3'       AS source, count(*) AS c FROM sushiswap_v3_position_events
             UNION ALL
+            SELECT 'sushiswap_v3'       AS source, count(*) AS c FROM sushiswap_v3_manager_events
+            UNION ALL
             SELECT 'phoenix'            AS source, count(*) AS c FROM phoenix_initialize
             UNION ALL
             SELECT 'phoenix'            AS source, count(*) AS c FROM phoenix_admin_events

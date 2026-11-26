@@ -130,6 +130,7 @@ var projRoutes = []projRoute{
 	// recognized but emit no consumer.Event, so they need no route.
 	{typeName: "sushiswap_v3.TradeEvent", table: "trades", kind: "sushiswap_v3.trade", disp: reconciledByKind},
 	{typeName: "sushiswap_v3.PositionEvent", table: "sushiswap_v3_position_events", kind: "sushiswap_v3.position", disp: reconciledByKind},
+	{typeName: "sushiswap_v3.ManagerEvent", table: "sushiswap_v3_manager_events", kind: "sushiswap_v3.manager", disp: reconciledByKind},
 
 	// ── upshift ──
 	// One consumer.Event carries all four decoded kinds into one table, one row each. The eight
@@ -490,6 +491,7 @@ func TestCatalogue_DeclaredKindsMatchDecoderOutput(t *testing.T) {
 		{defindex.AdminEvent{}, "defindex.vault.admin", "defindex_admin_events"},
 		{sushiswap_v3.TradeEvent{}, "sushiswap_v3.trade", "trades"},
 		{sushiswap_v3.PositionEvent{}, "sushiswap_v3.position", "sushiswap_v3_position_events"},
+		{sushiswap_v3.ManagerEvent{}, "sushiswap_v3.manager", "sushiswap_v3_manager_events"},
 		// upshift: one kind covers deposit / withdraw / share transfer /
 		// deployed-assets change — the row's event_kind column
 		// discriminates them, the wire EventKind does not.

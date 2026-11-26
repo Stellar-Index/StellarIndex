@@ -17,7 +17,10 @@ status: current
 >   self-describing and needs no RPC sweep.
 > - **Last verified:** 2026-09-05 (source: `internal/sources/sushiswap_v3`;
 >   lake sweep over ledgers 61,487,379 → 64,276,390).
-> - **Gate status:** ✅ **GATED (factory + 58 pools).**
+> - **Gate status:** ✅ **GATED** — factory, 58 in-code pools (81 announced
+>   by the factory as of ledger 65,676,216, lake census 2026-11-26; the rest
+>   are admitted by `pool_created`), and the position manager, listed as an
+>   instance.
 
 ## What SushiSwap V3 on Stellar is
 
@@ -117,6 +120,13 @@ decoder identifies nothing — see "Gating" below.
 | pool | `swap` | `{amount0 i128, amount1 i128, liquidity u128, recipient, sender, sqrt_price_x96 u256, tick i32}` | **`trades`** |
 | pool | `mint`, `burn`, `collect` | position lifecycle | projected to `sushiswap_v3_position_events` |
 | pool | `init`, `upgraded`, `migrated` | pool lifecycle | recognized, projects zero rows |
+| position manager | `mint`, `burn` (topics: symbol, holder-at-event Address) | `{token_id u32}` | **`sushiswap_v3_manager_events`** |
+| position manager | `increase_liquidity`, `decrease_liquidity` | `{amount0 u128, amount1 u128, liquidity u128, token_id u32}` | **`sushiswap_v3_manager_events`** |
+| position manager | `collect` | `{amount0 u128, amount1 u128, recipient Address, token_id u32}` | **`sushiswap_v3_manager_events`** |
+| position manager | `upgraded`, `migrated` | lifecycle | recognized, projects zero rows |
+
+The position manager's `mint` and `burn` are the only two-element topics
+in the protocol; the second element is the position holder at that event.
 
 Whole-history counts (ledgers 61,487,379 → 64,276,390, swept
 2026-09-05):
@@ -190,6 +200,11 @@ Per ADR-0035, `Matches()` therefore keys on contract identity only:
   This is the trust root. Without it any contract could announce a pool
   with token identities of its choosing, register itself, and have its
   own swaps recorded as real trades.
+- A position-manager topic is accepted **only** from
+  `sushiswap_v3.MainnetPositionManagers`, and that role is checked before
+  the pool role: the manager and the pools share `mint`, `burn` and
+  `collect`, so the emitter's role, not the topic, picks the body schema.
+  A manager is never decoded as a pool, nor a pool as a manager.
 - Every other event is accepted **only** from a registered pool.
 
 The registry is seeded four ways, all rooted at the factory:
@@ -237,6 +252,77 @@ amounts as `NUMERIC`; `collect` has no liquidity delta (NULL). Token
 identities come from the pool registry, and an unmapped pool fails
 closed like a swap. `init`, `upgraded` and `migrated` stay recognized
 and project zero rows.
+
+### Position manager
+
+`CARTUL5AWDZYBSN7HUUJZSKCAKCIAKM7M54Z76G6KRYCK4XPR3OHUQZ4` (first event
+ledger 61,487,383; upgraded at 61,594,920, migrated at 61,594,924) opens
+positions on the pools in its own name, so a pool-side
+`sushiswap_v3_position_events` row it drove has the manager as `owner`.
+Its own events go to `sushiswap_v3_manager_events` (migration 0238), one
+row per event, keyed by `token_id`:
+
+- `mint` / `burn` link a token id to an address (`owner`, from topic[1]).
+  That address is the holder **at that event**, not necessarily the current
+  holder.
+- `increase_liquidity` / `decrease_liquidity` carry the liquidity delta and
+  both token amounts; `collect` carries the amounts and the `recipient`.
+- No manager body names the pool. The pool is the one whose
+  `sushiswap_v3_position_events` row shares the manager event's
+  `(ledger, tx_hash)` and has the manager as `owner`.
+- The NFT is transferable: both WASM versions contain the literals
+  `transfer`, `transfer_from`, `approve`, `approve_for_all` and
+  `owner_of`. Yet no manager event outside the seven above has ever been
+  emitted (whole-history census, 2026-11-26). Either no transfer has
+  happened, or a transfer emits no event; the lake's events cannot tell
+  which. A holder change after `mint` is therefore not visible here.
+
+The decoder takes only the exact field sets above. Any other body, and any
+manager event outside the seven verified (topic, topic count) shapes, is a
+counted decode error naming its topic (`ErrUnrecognisedManagerEvent`),
+never a guessed or silently dropped row. The first NFT `transfer` or
+`approve` event, if one is ever emitted, therefore shows up in the
+per-source decode-error metric and the projector log the day it happens.
+Both WASM versions emit the
+same shapes: the pre-upgrade era (before 61,594,920) has only 12 events
+(6 `increase_liquidity`, 4 `mint`, 1 `decrease_liquidity`, 1 `collect`,
+ledgers 61,487,383 – 61,525,605), and every (topic, topic count, body
+length) in it matches the post-upgrade one; 8 of the 12 and 15
+post-upgrade events decode to exact columns
+(`internal/sources/sushiswap_v3/testdata/manager_events.txt`). The
+pre-upgrade `decrease_liquidity` at 61,487,425 carries the same liquidity
+and amounts as the pool-side `burn` it drove (`TestManagerAmounts_MatchThePoolSide`).
+
+The manager's `protocol_contracts.first_ledger` is the source genesis
+(61,487,379), not its first event (61,487,383): every curated row is
+stamped with its source's genesis
+(`TestGatedRegistryOptions_indexerReconcilesCuratedRows` in
+`internal/pipeline/gated_registry_curated_test.go`). The column is a
+lower bound served by `/v1/protocols/{name}`; no cursor floor or replay
+bound reads it (those use `FactoryGenesisLedger`).
+
+Catch-up after deploy, which rewrites only the manager table, never
+trades:
+
+```sh
+# 1. dry run; note the -to it prints
+stellarindex-ops projected-rebuild -config PATH -source sushiswap_v3 -from 61487383 -only-kinds sushiswap_v3.manager -dry-run
+# 2. write, with -to pinned to the dry run's printed value
+stellarindex-ops projected-rebuild -config PATH -source sushiswap_v3 -from 61487383 -only-kinds sushiswap_v3.manager -to <printed> -write
+```
+
+The run skips the aggregate refresh, since it writes no trade. It records
+a projection dirty window over the range, because the manager table is
+reconciled (`TestOnlyKinds_SushiswapV3ManagerCatchUp`). From deploy until
+the catch-up finishes, `sushiswap_v3` completeness drops and a leading
+gap is reported on the `sushiswap_v3-manager` gap target. Both are true
+alarms: the table is empty behind the live cursor. Run the catch-up right
+after deploy.
+
+Nothing serves these rows yet. A per-position route would read
+`sushiswap_v3_manager_events` by `(manager, token_id)` for the holder
+and movements, and join `sushiswap_v3_position_events` on
+`(ledger, tx_hash)` for the pool and tick range.
 
 ## References
 
