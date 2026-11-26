@@ -2270,9 +2270,14 @@ export interface paths {
          * @description Interest booked on each reserve of a Blend V1, Blend V2 or BLNT
          *     pool, per hour (`interval=1h`) or UTC day (`interval=1d`), summed
          *     exactly from the derived hourly interest record. Every amount is a
-         *     decimal string in the reserve token's base units (`decimals`);
-         *     nothing is in USD, and amounts of different reserves are never
-         *     added together.
+         *     decimal string in the reserve token's base units (`decimals`), and
+         *     amounts of different reserves are never added together in base
+         *     units. Beside them, `usd` values each bucket and reserve hour by
+         *     hour at each hour's own price (`LendingRevenueUSD`, daily buckets
+         *     included), and `totals_usd` adds the valued reserves across the
+         *     pool; an hour with no price is left out and counted, so the sum is
+         *     a lower bound, and a reserve with no price at all is null, never
+         *     `"0.00"`.
          *
          *     Interest is booked when the reserve is next touched on chain, so it
          *     lands in the hour of that touch, not spread over the hours it
@@ -7230,6 +7235,46 @@ export interface components {
             amount: string | null;
             /** Format: int64 */
             count: number | null;
+        };
+        /**
+         * @description Amounts valued in USD hour by hour: each hour's amounts at that
+         *     hour's price (the newest hourly VWAP at or before it, at most
+         *     `price_max_age_hours` old, never a later one), summed exactly and
+         *     rounded once to cents. Every `*_usd` figure is null together, with
+         *     `usd_reason`, when nothing could be valued.
+         */
+        LendingRevenueUSD: {
+            interest_accrued_usd: string | null;
+            supplier_share_usd: string | null;
+            /** @description May be negative. */
+            supplier_credited_usd: string | null;
+            backstop_take_usd: string | null;
+            protocol_fee_usd: string | null;
+            /** @description realised.backstop_drawn valued; a lower bound like it. */
+            backstop_drawn_usd: string | null;
+            /** @description Losses socialised to suppliers, a magnitude. */
+            default_loss_usd: string | null;
+            /** @description Hours carrying an amount that were valued. */
+            priced_hours: number;
+            /** @description Hours carrying an amount with no price within the bound: left out, so the figures are a lower bound. */
+            unpriced_hours: number;
+            /** @description Valued hours whose price is more than one hour older than the hour. */
+            price_carried_hours: number;
+            /** @description Some amount is left out: an unpriced hour, or (reserve and pool) a base-unit exclusion. */
+            lower_bound: boolean;
+            /**
+             * @description Why nothing is valued. `amounts_excluded`: nothing was summed in base units (see `excluded`). `no_price_within_bound` (bucket, reserve) and `price_missing` (pool): no hour carrying an amount had a price. Otherwise the price series' refusal: `unpriced` (no USD market), `decimals_unknown`, `price_scale_mismatch`, `withheld` (a scam-flagged issuer, or a thin market: display-only prices value nothing here, as on `/history`), `price_read_failed`.
+             * @enum {string|null}
+             */
+            usd_reason: "amounts_excluded" | "no_price_within_bound" | "price_missing" | "unpriced" | "decimals_unknown" | "price_scale_mismatch" | "withheld" | "price_read_failed" | null;
+        };
+        /** @description A reserve the pool's USD totals leave out, wholly or for `count` hours. */
+        LendingRevenueUSDExclusion: {
+            asset: string;
+            /** @enum {string} */
+            reason: "price_missing" | "unpriced" | "decimals_unknown" | "price_scale_mismatch" | "withheld" | "price_read_failed";
+            /** @description The reserve's hours carrying an amount that were not valued. */
+            count: number;
         };
         /** @description Base-unit decimal strings. Counts are versions: a version is one change of the reserve's on-chain state. */
         LendingRevenueAmounts: {
@@ -20011,6 +20056,22 @@ export interface operations {
                      *             "count": null
                      *           }
                      *         ],
+                     *         "price_max_age_hours": 6,
+                     *         "totals_usd": {
+                     *           "interest_accrued_usd": "125.00",
+                     *           "supplier_share_usd": "100.00",
+                     *           "supplier_credited_usd": "100.00",
+                     *           "backstop_take_usd": "25.00",
+                     *           "protocol_fee_usd": "0.00",
+                     *           "backstop_drawn_usd": "20.00",
+                     *           "default_loss_usd": "0.00",
+                     *           "priced_hours": 1,
+                     *           "unpriced_hours": 0,
+                     *           "price_carried_hours": 0,
+                     *           "lower_bound": true,
+                     *           "usd_reason": null,
+                     *           "excluded": []
+                     *         },
                      *         "reserves": [
                      *           {
                      *             "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
@@ -20042,6 +20103,20 @@ export interface operations {
                      *               "unordered_versions": 0,
                      *               "accrual_errors": 0
                      *             },
+                     *             "usd": {
+                     *               "interest_accrued_usd": "125.00",
+                     *               "supplier_share_usd": "100.00",
+                     *               "supplier_credited_usd": "100.00",
+                     *               "backstop_take_usd": "25.00",
+                     *               "protocol_fee_usd": "0.00",
+                     *               "backstop_drawn_usd": "20.00",
+                     *               "default_loss_usd": "0.00",
+                     *               "priced_hours": 1,
+                     *               "unpriced_hours": 0,
+                     *               "price_carried_hours": 0,
+                     *               "lower_bound": true,
+                     *               "usd_reason": null
+                     *             },
                      *             "points": [
                      *               {
                      *                 "t": "2026-11-15T00:00:00Z",
@@ -20068,7 +20143,21 @@ export interface operations {
                      *                 "unexplained_backstop_residual": "0",
                      *                 "unexplained_versions": 0,
                      *                 "unordered_versions": 0,
-                     *                 "accrual_errors": 0
+                     *                 "accrual_errors": 0,
+                     *                 "usd": {
+                     *                   "interest_accrued_usd": "125.00",
+                     *                   "supplier_share_usd": "100.00",
+                     *                   "supplier_credited_usd": "100.00",
+                     *                   "backstop_take_usd": "25.00",
+                     *                   "protocol_fee_usd": "0.00",
+                     *                   "backstop_drawn_usd": "20.00",
+                     *                   "default_loss_usd": "0.00",
+                     *                   "priced_hours": 1,
+                     *                   "unpriced_hours": 0,
+                     *                   "price_carried_hours": 0,
+                     *                   "lower_bound": false,
+                     *                   "usd_reason": null
+                     *                 }
                      *               }
                      *             ]
                      *           }
@@ -20116,6 +20205,12 @@ export interface operations {
                             };
                             lower_bound: boolean;
                             excluded: components["schemas"]["LendingRevenueExclusion"][];
+                            /** @description How far before an hour its price may be. */
+                            price_max_age_hours: number;
+                            /** @description The valued reserves' USD summed across the pool. A reserve with no USD value is named in `excluded` and left out, never added as zero; `lower_bound` also when the view's `lower_bound` is. */
+                            totals_usd: components["schemas"]["LendingRevenueUSD"] & {
+                                excluded: components["schemas"]["LendingRevenueUSDExclusion"][];
+                            };
                             reserves: {
                                 asset: string;
                                 /** @description The reserve token's exponent; null when not established. */
@@ -20126,6 +20221,7 @@ export interface operations {
                                 lower_bound: boolean;
                                 /** @description Null when an exclusion left nothing of the reserve summed. */
                                 totals: components["schemas"]["LendingRevenueAmounts"] | null;
+                                usd: components["schemas"]["LendingRevenueUSD"];
                                 points: ({
                                     /**
                                      * Format: date-time
@@ -20134,6 +20230,7 @@ export interface operations {
                                     t: string;
                                     /** @description The bucket is cut short by `to` or the coverage. */
                                     partial: boolean;
+                                    usd: components["schemas"]["LendingRevenueUSD"];
                                 } & components["schemas"]["LendingRevenueAmounts"])[];
                             }[];
                         };

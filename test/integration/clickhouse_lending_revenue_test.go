@@ -120,8 +120,10 @@ func TestLendingPoolRevenue_FinalRevisionAndClipping(t *testing.T) {
 	}
 	daily := q
 	daily.Daily = true
+	// A day is folded from the same hour rows the USD valuation prices one by one.
 	if d := read(poolA, assetX, daily); len(d.Reserves) != 1 || len(d.Reserves[0].Buckets) != 1 ||
-		d.Reserves[0].Buckets[0].Sums.Gross.Cmp(new(big.Int).Add(wide, big.NewInt(110))) != 0 {
+		d.Reserves[0].Buckets[0].Sums.Gross.Cmp(new(big.Int).Add(wide, big.NewInt(110))) != 0 ||
+		fmt.Sprint(grossOf(chstore.LendingRevenueReserve{Buckets: d.Reserves[0].Hours})) != "[00=100 01=10 03="+wide.String()+"]" {
 		t.Fatalf("pool A X daily = %+v", d.Reserves)
 	}
 	if b := read(poolB, "", q); !b.Before.Equal(hr(2)) || len(b.Reserves) != 1 || fmt.Sprint(grossOf(b.Reserves[0])) != "[01=2]" {

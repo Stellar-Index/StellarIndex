@@ -61,10 +61,12 @@ type LendingRevenueBucket struct {
 	Sums  LendingRevenueSums
 }
 
-// LendingRevenueReserve is one reserve's buckets; StaleRows counts the hour rows left out for an older derive_rev.
+// LendingRevenueReserve is one reserve's buckets and the hour rows they sum exactly, both ascending (the same slice when
+// hourly); StaleRows counts the hour rows left out for an older derive_rev.
 type LendingRevenueReserve struct {
 	Asset     string
 	Buckets   []LendingRevenueBucket
+	Hours     []LendingRevenueBucket
 	StaleRows uint64
 }
 
@@ -84,10 +86,11 @@ type LendingRevenue struct {
 	Reserves      []LendingRevenueReserve
 }
 
-// lendingRevenueQuery sums one pool's rows per reserve and bucket. FINAL collapses an hour's derives first and the
+// lendingRevenueQuery sums one pool's rows per reserve and hour. FINAL collapses an hour's derives first and the
 // derive_rev test sits outside it, so an older derive cannot resurface; rows of another revision are counted, not summed.
+// Days are folded from these hours in Go, so a day and the hours valued in USD come from one read.
 const lendingRevenueQuery = `WITH ? AS rev
-	SELECT asset, if(? = 1, toStartOfDay(hour), hour) AS bucket, countIf(derive_rev = rev), countIf(derive_rev != rev),
+	SELECT asset, hour AS bucket, countIf(derive_rev = rev), countIf(derive_rev != rev),
 		sumIf(gross, derive_rev = rev), sumIf(supplier_intended, derive_rev = rev), sumIf(supplier_realised, derive_rev = rev),
 		sumIf(backstop, derive_rev = rev), sumIf(protocol_fee, derive_rev = rev), sumIf(interest_drawn, derive_rev = rev),
 		sumIf(gulped, derive_rev = rev), sumIf(reconcile_backstop_loss, derive_rev = rev), sumIf(default_loss, derive_rev = rev),
@@ -177,18 +180,18 @@ func minTime(a, b time.Time) time.Time {
 }
 
 func (r *ExplorerReader) lendingRevenueRows(ctx context.Context, pool, asset string, q LendingHistoryQuery, from, before time.Time) ([]LendingRevenueReserve, error) {
-	daily := 0
+	maxHours := q.MaxPoints
 	if q.Daily {
-		daily = 1
+		maxHours = q.MaxPoints * 24
 	}
-	rows, err := r.conn.Query(ctx, lendingRevenueQuery, lendinginterest.DeriveRev, daily, pool, asset, asset,
-		from.Unix(), before.Unix(), q.MaxPoints+1)
+	rows, err := r.conn.Query(ctx, lendingRevenueQuery, lendinginterest.DeriveRev, pool, asset, asset,
+		from.Unix(), before.Unix(), maxHours+1)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: lending revenue %s: %w", pool, err)
 	}
 	defer func() { _ = rows.Close() }()
 	var out []LendingRevenueReserve
-	read := 0 // buckets of the current reserve, stale-only ones included: LIMIT BY counts them too
+	read := 0 // hours of the current reserve, stale-only ones included: LIMIT BY counts them too
 	for rows.Next() {
 		var a string
 		var bucket time.Time
@@ -203,7 +206,7 @@ func (r *ExplorerReader) lendingRevenueRows(ctx context.Context, pool, asset str
 		if len(out) == 0 || out[len(out)-1].Asset != a {
 			out, read = append(out, LendingRevenueReserve{Asset: a}), 0
 		}
-		if read++; read > q.MaxPoints {
+		if read++; read > maxHours {
 			return nil, ErrLendingHistoryTooManyPoints
 		}
 		res := &out[len(out)-1]
@@ -211,10 +214,32 @@ func (r *ExplorerReader) lendingRevenueRows(ctx context.Context, pool, asset str
 		if current == 0 {
 			continue
 		}
-		res.Buckets = append(res.Buckets, LendingRevenueBucket{Start: bucket.UTC(), Sums: s})
+		res.Hours = append(res.Hours, LendingRevenueBucket{Start: bucket.UTC(), Sums: s})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("clickhouse: lending revenue %s rows: %w", pool, err)
 	}
+	for i := range out {
+		out[i].Buckets = out[i].Hours
+		if q.Daily {
+			out[i].Buckets = foldRevenueDays(out[i].Hours)
+		}
+		if len(out[i].Buckets) > q.MaxPoints {
+			return nil, ErrLendingHistoryTooManyPoints
+		}
+	}
 	return out, nil
+}
+
+// foldRevenueDays sums ascending hour rows into UTC days, exactly.
+func foldRevenueDays(hours []LendingRevenueBucket) []LendingRevenueBucket {
+	var out []LendingRevenueBucket
+	for _, h := range hours {
+		day := time.Date(h.Start.Year(), h.Start.Month(), h.Start.Day(), 0, 0, 0, 0, time.UTC)
+		if len(out) == 0 || !out[len(out)-1].Start.Equal(day) {
+			out = append(out, LendingRevenueBucket{Start: day, Sums: NewLendingRevenueSums()})
+		}
+		out[len(out)-1].Sums.Add(h.Sums)
+	}
+	return out
 }

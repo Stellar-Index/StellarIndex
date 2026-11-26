@@ -24,6 +24,7 @@ var gatedRouteExclusionProof = map[string][]func(*testing.T){
 	"GET /v1/lending/pools/{pool}/liquidations": {TestLendingPoolLiquidations_ExcludedSourceDoesNotValueFill},
 	"GET /v1/rwa/premium":                       {TestRWAPremium_ASourceExcludedDayIsWithheldAndFlagged},
 	"GET /v1/lending/pools/{pool}/history":      {TestLendingHistory_ExcludedSourceDoesNotValueBucket},
+	"GET /v1/lending/pools/{pool}/revenue":      {TestLendingPoolRevenue_ExcludedSourceDoesNotValueHour},
 	"GET /v1/assets/{asset_id}":                 {TestAssetDetail_SourceExclusionWithholdsCataloguePrice, v1.TestAssetRoutes_ExclusionGatesEveryVariant},
 	"GET /v1/price/at":                          {TestPriceAtWithholdsExcludedBucket, TestPriceAtJudgesBucketSources},
 	"GET /v1/price/changes":                     {TestPriceChangesWithholdsExcludedHorizon, TestPriceChangesJudgesBucketSources},
