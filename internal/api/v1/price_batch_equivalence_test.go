@@ -158,6 +158,26 @@ func eqUniverseOptions(*testing.T) v1.Options {
 	}
 }
 
+// eqScamXLM is a classic asset coded XLM under an ordinary issuer: identity is (code, issuer), so it is not lumens.
+var eqScamXLM = eqID("XLM")
+
+func eqXLMSpellingsOptions(t *testing.T) v1.Options {
+	o := eqUniverseOptions(t)
+	r := o.Prices.(*stubPriceReader)
+	for _, p := range []eqPair{
+		{base: eqID("SACQ"), quote: eqXLMSAC, price: "4.0", sources: []string{"soroswap"}},
+		{base: eqID("FAKE"), quote: eqScamXLM, price: "9.0", sources: []string{"sdex"}},
+		{base: eqID("QXLM"), quote: eqScamXLM, price: "7.0", sources: []string{"sdex"}},
+	} {
+		key := p.base + "/" + p.quote
+		r.snapshots[key] = v1.PriceSnapshot{
+			AssetID: p.base, Quote: p.quote, Price: p.price, PriceType: "vwap", ObservedAt: v1.WireTime(eqObservedAt),
+		}
+		r.sources[key] = p.sources
+	}
+	return o
+}
+
 // eqSpec is one server wiring and the ids, quotes and include_thin settings priced against it.
 type eqSpec struct {
 	name    string
@@ -185,6 +205,14 @@ func eqSpecs() []eqSpec {
 		// The XLM quote in its other spelling: per-pair markers key on the spelling that answered.
 		name: "xlm-quote", ids: []string{eqID("FRZQ"), eqID("QXLM"), eqID("DIRC")}, quotes: []string{"crypto:XLM"}, thin: off,
 		build: eqUniverseOptions,
+	}, {
+		// Every XLM quote spelling, and a classic XLM from another issuer that is no spelling of it: SACQ is priced only
+		// against the XLM SAC, FAKE only against the impostor.
+		name: "xlm-spellings",
+		ids: []string{
+			eqID("QXLM"), eqID("FRZQ"), eqID("DIRC"), eqID("SACQ"), eqID("FAKE"), "native", "crypto:XLM", eqXLMSAC, eqScamXLM,
+		},
+		quotes: []string{"native", "crypto:XLM", eqXLMSAC, eqScamXLM}, thin: off, build: eqXLMSpellingsOptions,
 	}, {
 		name: "thin", ids: []string{thinAssetID, clearedAssetID}, quotes: usd, thin: both,
 		build: func(*testing.T) v1.Options {
@@ -441,28 +469,15 @@ func eqKey(spec, id, quote string, thin bool) string {
 }
 
 // eqKnownDivergence pins a pre-existing batch≠single difference so that any change to it is noticed. It is not an
-// endorsement: each entry is a defect on file, and fixing it means deleting the entry.
+// endorsement: each entry is a defect on file, with a comment saying why, and fixing it means deleting the entry.
 type eqKnownDivergence struct {
 	single, batch string   // the two verdicts
 	fields        []string // the differing served fields, when both serve
-	why           string
 }
 
+// eqKnownDivergences is empty: every fixture's batch row equals its /v1/price answer.
 func eqKnownDivergences() map[string]eqKnownDivergence {
-	// /v1/price walks the quote's spellings (native, then crypto:XLM, then the SAC); the batch reads the literal quote
-	// only. Under quote=native every id with no literal X/native market is answered by /v1/price through crypto:XLM
-	// (the USD-anchored crypto cross, which a `native` quote never enters), and omitted by the batch as "no data".
-	const noQuoteWalk = "batch has no quote-alias walk (pre-existing, pinned so a change is noticed)"
-	out := map[string]eqKnownDivergence{}
-	for code, single := range map[string]string{
-		"STAL": "served", "SUBS": "served", "QXLM": "served", "FRZH": "served", "CRSS": "served", "BASI": "served",
-		"TOKN": "served", "FRZN": "withheld", "UNRD": "unread",
-	} {
-		out[eqKey("universe", eqID(code), "native", false)] = eqKnownDivergence{
-			single: single, batch: "missing", fields: []string{"verdict"}, why: noQuoteWalk,
-		}
-	}
-	return out
+	return map[string]eqKnownDivergence{}
 }
 
 // eqAnchors pin what a fixture is FOR, on the single answer, so the harness cannot pass by comparing two equal misses.
@@ -492,6 +507,15 @@ func eqAnchors() map[string]string {
 		eqKey("source-excluded", "native", "fiat:USD", false):  "withheld",
 		eqKey("deadline", "native", "fiat:USD", false):         "unread",
 		eqKey("thin-basis", thinAssetID, "fiat:EUR", true):     "served flag:thin=true flag:triangulated=true",
+		// Each XLM quote spelling reaches the book its alias holds; the impostor reaches only its own.
+		eqKey("xlm-spellings", eqID("QXLM"), "native", false):     `served price="2.0"`,
+		eqKey("xlm-spellings", eqID("QXLM"), eqXLMSAC, false):     `served price="2.0"`,
+		eqKey("xlm-spellings", eqID("SACQ"), "native", false):     `served price="4.0"`,
+		eqKey("xlm-spellings", eqID("SACQ"), "crypto:XLM", false): `served price="4.0"`,
+		eqKey("xlm-spellings", eqID("QXLM"), eqScamXLM, false):    `served price="7.0"`,
+		eqKey("xlm-spellings", eqID("FAKE"), eqScamXLM, false):    `served price="9.0"`,
+		eqKey("xlm-spellings", eqID("FAKE"), "native", false):     "missing",
+		eqKey("xlm-spellings", eqID("SACQ"), eqScamXLM, false):    "missing",
 	}
 }
 
@@ -514,6 +538,35 @@ func eqAnchorHolds(o eqObservation, anchor string) bool {
 func TestPriceBatchEquivalence_RowEqualsSinglePrice(t *testing.T) {
 	eqRowsEqualSingles(t, func(t *testing.T, spec eqSpec) http.Handler { return v1.New(spec.build(t)).Handler() },
 		func(ids []string) []string { return ids })
+}
+
+// TestPriceBatch_EveryXLMQuoteSpellingServesTheSameRow: for an id whose only XLM book sits under one spelling, a batch row
+// under quote=crypto:XLM or the XLM SAC is the row quote=native serves, but for the quote it echoes; the impostor XLM
+// serves none of them. (An id with books under several spellings answers from the first, which is the quote's own.)
+func TestPriceBatch_EveryXLMQuoteSpellingServesTheSameRow(t *testing.T) {
+	ts := startHTTPTest(t, v1.New(eqXLMSpellingsOptions(t)).Handler())
+	for _, id := range []string{eqID("QXLM"), eqID("SACQ")} {
+		want := eqBatch(t, ts.URL, []string{id}, id, "native", false)
+		if want.verdict != "served" {
+			t.Fatalf("%s@native: %s, want served", id, want.verdict)
+		}
+		for _, quote := range []string{"crypto:XLM", eqXLMSAC, eqScamXLM} {
+			got := eqBatch(t, ts.URL, []string{id}, id, quote, false)
+			if quote == eqScamXLM {
+				if got.verdict == "served" && got.fields["price"] == want.fields["price"] {
+					t.Errorf("%s@%s served the lumens price %s", id, quote, got.fields["price"])
+				}
+				continue
+			}
+			if got.fields["quote"] != `"`+quote+`"` {
+				t.Errorf("%s@%s echoes quote %s", id, quote, got.fields["quote"])
+			}
+			got.fields["quote"] = want.fields["quote"]
+			if diff := eqDiff(want, got); len(diff) > 0 {
+				t.Errorf("%s@%s differs from quote=native on %v\n native: %v\n %s: %v", id, quote, diff, want.fields, quote, got.fields)
+			}
+		}
+	}
 }
 
 // eqRowsEqualSingles checks every fixture's batch row, in a batch of pad(ids), against its single /v1/price answer on
