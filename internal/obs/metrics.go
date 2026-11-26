@@ -237,6 +237,7 @@ func registerFreezeLifecycleMetrics() {
 		AggregatorCompositeCorroboration,
 		AggregatorCompositeReferenceLegSources,
 		AggregatorCompositeReferenceLegDispersionBps,
+		AggregatorQuoteSurfaceBps,
 		AggregatorCompositeFreezeSuppressedTotal,
 		AggregatorRouteCorroborationCount,
 	)
@@ -2706,6 +2707,16 @@ var AggregatorCompositeReferenceLegDispersionBps = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_aggregator_composite_reference_leg_dispersion_bps",
 		Help: "Venue dispersion (max |venue VWAP - leg VWAP| / leg VWAP, bps) of each priced composite-reference leg on the last evaluated bucket, per (pair, window, leg).",
+	},
+	[]string{"pair", "window", "leg"},
+)
+
+// AggregatorQuoteSurfaceBps is a composite-reference leg's signed time-aligned gap (stablecoin-proxy VWAP - own-quote VWAP) / own-quote
+// VWAP in bps; |value| above composite_reference.leg_dispersion_bps refuses the leg as two different USDs.
+var AggregatorQuoteSurfaceBps = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_aggregator_quote_surface_bps",
+		Help: "Signed time-aligned gap (stablecoin-proxy VWAP - own-quote VWAP) / own-quote VWAP, bps, of each priced composite-reference leg with both quote surfaces on the last evaluated bucket, per (pair, window, leg).",
 	},
 	[]string{"pair", "window", "leg"},
 )
