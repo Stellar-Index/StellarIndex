@@ -372,20 +372,49 @@ func TestScopeOf(t *testing.T) {
 	}
 }
 
-// A gated aquarius pool in neither in-code layout list decodes liquidity only if its add_pool came first in this run, so
-// the run names it instead of differing silently between runs.
-func TestUnlayeredAquariusPools_NamesPoolsOutsideTheInCodeLists(t *testing.T) {
-	const extra = "CAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC526"
-	dec := aquarius.NewDecoder(contractid.WithSeed([]string{extra}))
-	got := unlayeredAquariusPools(projector.Source{Name: aquarius.SourceName, Decoder: dec})
-	if !reflect.DeepEqual(got, []string{extra}) {
-		t.Errorf("unlayeredAquariusPools = %v, want only %s (the router and in-code pools are layered)", got, extra)
+// A pool whose layout the warm established, from an in-code list or an aquarius_pools row, decodes the same in every run;
+// one with no layout after the warm does not, so the run names it instead of differing silently.
+func TestAquariusLayoutBaseline_NamesOnlyPoolsTheWarmLeftUnlayered(t *testing.T) {
+	const (
+		bare  = "CAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC526" // protocol_contracts only
+		typed = "CABQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQHQZ3" // typed by an aquarius_pools row
+	)
+	dec := aquarius.NewDecoder(contractid.WithSeed([]string{bare}),
+		contractid.WithAttrSeed(map[string]contractid.Attrs{typed: aquarius.PoolAttrs("stable")}))
+	got := newAquariusLayoutBaseline(projector.Source{Name: aquarius.SourceName, Decoder: dec}).unsettled()
+	if !reflect.DeepEqual(got, []string{bare}) {
+		t.Errorf("unsettled = %v, want only %s (the router, in-code pools and the table-typed pool have layouts)", got, bare)
 	}
-	if got := unlayeredAquariusPools(projector.Source{Name: aquarius.SourceName, Decoder: aquarius.NewDecoder()}); len(got) != 0 {
+	if got := newAquariusLayoutBaseline(projector.Source{Name: aquarius.SourceName, Decoder: aquarius.NewDecoder()}).unsettled(); len(got) != 0 {
 		t.Errorf("in-code pools only: got %v, want none", got)
 	}
-	if lines := strings.Join(unlayeredPoolLines([]string{extra}), "\n"); !strings.Contains(lines, extra) || !strings.Contains(lines, "-workers 1") {
+	if got := newAquariusLayoutBaseline(projector.Source{Name: "soroswap", Decoder: dec}).unsettled(); got != nil {
+		t.Errorf("another source: got %v, want nil", got)
+	}
+	if lines := strings.Join(unlayeredPoolLines([]string{bare}), "\n"); !strings.Contains(lines, bare) || !strings.Contains(lines, "-workers 1") {
 		t.Errorf("summary lines must name the pool and the remedy:\n%s", lines)
+	}
+}
+
+// fakeAquariusLayouts stands in for a decoder whose gate grows mid-run, as an in-range add_pool grows aquarius's.
+type fakeAquariusLayouts struct{ gated, unlayered []string }
+
+func (f *fakeAquariusLayouts) GatedContractSet() []string { return f.gated }
+func (f *fakeAquariusLayouts) UnlayeredPools() []string   { return f.unlayered }
+func (*fakeAquariusLayouts) Name() string                 { return "fake" }
+func (*fakeAquariusLayouts) Matches(events.Event) bool    { return false }
+func (*fakeAquariusLayouts) Decode(events.Event) ([]consumer.Event, error) {
+	return nil, nil
+}
+
+// A pool this run admitted from an in-range add_pool was ungated for any window that ran before that add_pool's window,
+// so it is named too, even though it now has a layout.
+func TestAquariusLayoutBaseline_NamesPoolsAdmittedDuringTheRun(t *testing.T) {
+	f := &fakeAquariusLayouts{gated: []string{aquarius.MainnetRouter, "CWARM"}}
+	b := newAquariusLayoutBaseline(projector.Source{Name: aquarius.SourceName, Decoder: f})
+	f.gated = append(f.gated, "CINRANGE")
+	if got := b.unsettled(); !reflect.DeepEqual(got, []string{"CINRANGE"}) {
+		t.Errorf("unsettled = %v, want [CINRANGE]", got)
 	}
 }
 

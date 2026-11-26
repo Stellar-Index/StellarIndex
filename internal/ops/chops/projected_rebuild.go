@@ -670,26 +670,52 @@ type ProjectedRebuildResult struct {
 	// KindsFailed counts outputs by kind the sink refused (insert errors and permanent drops); KindCounts includes them.
 	KindsFailed map[string]int64
 	OnlyKinds   kindFilter
-	// UnlayeredPools names gated aquarius pools in neither in-code layout list ([unlayeredAquariusPools]).
+	// UnlayeredPools names the aquarius pools whose decode depended on window order ([aquariusLayoutBaseline.unsettled]).
 	UnlayeredPools []string
 	Elapsed        time.Duration
 }
 
-// unlayeredAquariusPools names the gated aquarius pools in neither in-code layout list. protocol_contracts does not carry a
-// layout, so such a pool's deposits decode only if this run saw its add_pool first: windows run out of order across
-// workers, so its liquidity can be refused in one run and written in another. Empty for any other source.
-func unlayeredAquariusPools(src projector.Source) []string {
-	if src.Name != aquarius.SourceName {
+// aquariusLayouts is the aquarius decoder's view this report needs; nil for any other source.
+type aquariusLayouts interface {
+	GatedContractSet() []string
+	UnlayeredPools() []string
+}
+
+// aquariusLayoutBaseline is the gate and layout state after the warm (in-code lists, protocol_contracts, aquarius_pools),
+// before any window runs.
+type aquariusLayoutBaseline struct {
+	dec       aquariusLayouts
+	gated     map[string]bool
+	unlayered []string
+}
+
+func newAquariusLayoutBaseline(src projector.Source) *aquariusLayoutBaseline {
+	dec, ok := src.Decoder.(aquariusLayouts)
+	if src.Name != aquarius.SourceName || !ok {
 		return nil
 	}
-	gated, ok := src.Decoder.(interface{ GatedContractSet() []string })
-	if !ok {
+	b := &aquariusLayoutBaseline{dec: dec, gated: map[string]bool{}, unlayered: dec.UnlayeredPools()}
+	for _, id := range dec.GatedContractSet() {
+		b.gated[id] = true
+	}
+	return b
+}
+
+// unsettled names the pools whose liquidity depended on window order: those with no layout after the warm, and those this
+// run admitted from an in-range add_pool. Windows run out of order across workers, so either kind's events can be refused
+// or ungated in one run and written in another.
+func (b *aquariusLayoutBaseline) unsettled() []string {
+	if b == nil {
 		return nil
 	}
-	pools := slices.DeleteFunc(gated.GatedContractSet(), func(id string) bool { return id == aquarius.MainnetRouter })
-	out := aquarius.PoolsWithoutLayout(pools)
+	out := slices.Clone(b.unlayered)
+	for _, id := range b.dec.GatedContractSet() {
+		if !b.gated[id] {
+			out = append(out, id)
+		}
+	}
 	sort.Strings(out)
-	return out
+	return slices.Compact(out)
 }
 
 func unlayeredPoolLines(pools []string) []string {
@@ -697,9 +723,9 @@ func unlayeredPoolLines(pools []string) []string {
 		return nil
 	}
 	return []string{
-		fmt.Sprintf("!! %d aquarius pool(s) have no in-code liquidity layout: %s", len(pools), strings.Join(pools, ",")),
-		"!! their deposit/withdraw decode depended on window order; add each to aquarius.MainnetPools or",
-		"!! MainnetConcentratedPools by its add_pool type and re-run, or compare against a -workers 1 run.",
+		fmt.Sprintf("!! %d aquarius pool(s) had no liquidity layout or gate entry after the warm: %s", len(pools), strings.Join(pools, ",")),
+		"!! their events decoded only if this run met the add_pool first, which depends on window order. Record each",
+		"!! pool's type (aquarius_pools, or an in-code list) and re-run, or compare against a -workers 1 run.",
 	}
 }
 
@@ -765,6 +791,7 @@ func RunProjectedRebuild(ctx context.Context, opts ProjectedRebuildOptions) (Pro
 		return result, nil
 	}
 
+	layouts := newAquariusLayoutBaseline(opts.Source)
 	sched := newWindowScheduler(pending)
 	counters := newProjectedRebuildCounters()
 	start := time.Now()
@@ -800,6 +827,7 @@ func RunProjectedRebuild(ctx context.Context, opts ProjectedRebuildOptions) (Pro
 	}
 
 	fillProjectedRebuildResult(&result, counters, opts.Source, logger)
+	result.UnlayeredPools = layouts.unsettled()
 	result.Elapsed = time.Since(start)
 	return result, runErr
 }
@@ -818,7 +846,6 @@ func fillProjectedRebuildResult(result *ProjectedRebuildResult, counters *projec
 	result.KindCounts = counters.kindCounts
 	result.KindsSkipped = counters.skippedKinds
 	result.KindsFailed = counters.failedKinds
-	result.UnlayeredPools = unlayeredAquariusPools(src)
 }
 
 // capProjectedRebuildWorkers clamps n to [1, projectedRebuildMaxWorkers].

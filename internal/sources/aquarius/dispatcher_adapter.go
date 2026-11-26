@@ -60,6 +60,18 @@ func (*Decoder) Name() string { return SourceName }
 // GatedContractSet returns the current gate (router plus every registered pool) as the contract-id prefilter for the completeness re-derive; it reflects only pools registered so far, so seed the registry first for in-window pools.
 func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
 
+// UnlayeredPools lists the gated pools (router excluded) that have no liquidity layout yet, from neither an in-code list,
+// an aquarius_pools row nor an add_pool this decoder has seen; their deposits and withdraws are refused.
+func (d *Decoder) UnlayeredPools() []string {
+	var out []string
+	for _, id := range d.reg.GatedSet() {
+		if id != MainnetRouter && d.reg.AttrsOf(id)[AttrLiquidityLayout] == "" {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 // Matches implements [dispatcher.Decoder], gating on contract identity, not topic bytes (ADR-0035/0040): a pool `trade` matches only from a registered pool (the bare Symbol("trade") topic is forgeable by look-alike routers and forks), the router's `add_pool` only from the canonical router (trust root); an unregistered real pool fails closed into a recognition gap.
 func (d *Decoder) Matches(ev events.Event) bool {
 	switch classify(&ev) {
