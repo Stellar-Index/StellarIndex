@@ -109,15 +109,22 @@ func TestRouterUpgradeFixtures_addPool(t *testing.T) {
 	}
 }
 
+func rewardsTxHash(t *testing.T, file string) string {
+	t.Helper()
+	fx, _, _ := loadRouterFixture(t, file)
+	return fx.TxHash
+}
+
 func TestRouterUpgradeFixtures_configRewards(t *testing.T) {
 	cases := []struct {
-		file    string
-		pool    string
-		amount  string
-		expires uint64
+		file     string
+		poolFile string
+		pool     string
+		amount   string
+		expires  uint64
 	}{
-		{"config_rewards_65667281_9ec5f48b4c10_3.json", "CDRRS2SLIP7THFGUZVB4QL2RAM2ZHSDMAD2GL5GEXTKK5AY3DQUX3Y7N", "3316077", 1795666520},
-		{"config_rewards_65667281_9ec5f48b4c10_1.json", "CAAJYIESEIKI7KZV67MBSXPCRGKH5WY354WUS55H4UNBD35OSKYPZA7Q", "3831913", 1795666520},
+		{"config_rewards_65667281_9ec5f48b4c10_3.json", "set_rewards_config_65667281_9ec5f48b4c10_2.json", "CDRRS2SLIP7THFGUZVB4QL2RAM2ZHSDMAD2GL5GEXTKK5AY3DQUX3Y7N", "3316077", 1795666520},
+		{"config_rewards_65667281_9ec5f48b4c10_1.json", "set_rewards_config_65667281_9ec5f48b4c10_0.json", "CAAJYIESEIKI7KZV67MBSXPCRGKH5WY354WUS55H4UNBD35OSKYPZA7Q", "3831913", 1795666520},
 	}
 	for _, c := range cases {
 		t.Run(c.file, func(t *testing.T) {
@@ -144,6 +151,29 @@ func TestRouterUpgradeFixtures_configRewards(t *testing.T) {
 			refs, ok := rv.Attributes["refs"].([]string)
 			if !ok || len(refs) != 2 || refs[1] != MainnetXLMSAC {
 				t.Errorf("refs = %v, want 2 entries ending in the XLM SAC", rv.Attributes["refs"])
+			}
+
+			// The pool's own set_rewards_config in the same tx is emitted by a different contract (the pool, not the
+			// router) and carries [expires_at: u64, amount: u128]; the router's config_rewards must agree with it.
+			pfx, pe, _ := loadRouterFixture(t, c.poolFile)
+			if pfx.ContractID != c.pool || pfx.TxHash != rewardsTxHash(t, c.file) {
+				t.Fatalf("pool fixture %s is not the same-tx event of pool %s", c.poolFile, c.pool)
+			}
+			if got := classify(&pe); got != EventSetRewardsConfig {
+				t.Fatalf("pool event classify = %q", got)
+			}
+			pv, err := decodeRewardsEvent(&pe, EventSetRewardsConfig, closedAt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if pv.Amount == nil || pv.Amount.String() != c.amount || pv.Attributes["expires_at"] != c.expires {
+				t.Errorf("pool event amount/expires_at = %v/%v, want %s/%d", pv.Amount, pv.Attributes["expires_at"], c.amount, c.expires)
+			}
+			if pv.ContractID != rv.Attributes["pool"] {
+				t.Errorf("pool event emitter %s != router event pool %v", pv.ContractID, rv.Attributes["pool"])
+			}
+			if pv.Amount.String() != rv.Amount.String() || pv.Attributes["expires_at"] != rv.Attributes["expires_at"] {
+				t.Errorf("router (%v, %v) != pool (%v, %v)", rv.Amount, rv.Attributes["expires_at"], pv.Amount, pv.Attributes["expires_at"])
 			}
 		})
 	}

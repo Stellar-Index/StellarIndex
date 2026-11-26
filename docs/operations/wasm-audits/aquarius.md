@@ -364,7 +364,8 @@ A second byte-search of the same blob for the other router literals
 
 Fixtures: `test/fixtures/aquarius/2f8e7d7f…/` holds four router events emitted
 after `apply_upgrade`: two `add_pool` (ledgers 65,675,280 and 65,675,307) and
-two `config_rewards` (ledger 65,667,281, event indexes 1 and 3).
+two `config_rewards` (ledger 65,667,281, event indexes 1 and 3), plus the two
+pool-side `set_rewards_config` events of that transaction described below.
 `TestRouterUpgradeFixtures_addPool` and `TestRouterUpgradeFixtures_configRewards`
 (`internal/sources/aquarius/router_upgrade_fixture_test.go`) run the decoder
 over them and compare against values hand-decoded from the raw XDR, listed
@@ -393,13 +394,34 @@ registers each announced address in its contract-identity gate and emits no
 event, and does not branch on pool type. The two announced pools are not
 `CBTOQ7X7TLDBRHJW4UYUDR7WR4NAYESZA7FYUZVLAN2JLQG5ZXWJJIG6`.
 
-Limit of the amount check: the `config_rewards` amounts are compared with
-values read from the same event's bytes. There is no same-transaction token
-transfer or pool-side `set_rewards_config` event in the fixtures to cross-check
-the scale or sign of the u128, so a scale change in the amount is not ruled out
-by this fixture. The `add_pool` events carry no amount.
+Pool-side anchor: in the same transaction (ledger 65,667,281, `9ec5f48b…99cf`)
+each router `config_rewards` is preceded by the pool's own `set_rewards_config`,
+emitted by the pool contract rather than the router: event index 0 from
+`CAAJYIES…ZA7Q` before router event 1, and event index 2 from `CDRRS2SL…3Y7N`
+before router event 3. Both are fixtures
+(`set_rewards_config_65667281_9ec5f48b4c10_{0,2}.json`). The pool body is
+`Vec[u64 expires_at, u128 amount]` (u64 at offset 12 with its value at 16,
+u128 at 24 with hi at 28 and lo at 36, 44 bytes); the router body is
+`Vec[address pool, u128 amount, u64 expires_at]`. Corresponding fields:
 
-This is a string, shape and four-event decode check only; the decoder was not
+| field | pool `set_rewards_config` | router `config_rewards` |
+| --- | --- | --- |
+| pool | emitting contract | body[0] address |
+| amount | u128 body[1] | u128 body[1] |
+| expires_at | u64 body[0] | u64 body[2] |
+
+Hand-decoded, they match exactly with the same unit, no scaling: pool
+`CAAJYIES…` amount 3,831,913 and `CDRRS2SL…` amount 3,316,077, both expiring at
+1,795,666,520 (`0x6b07b258`). The test decodes both events with the decoder and
+asserts the pool, amount and `expires_at` of each pair are equal, and equal to
+the hand-decoded values. The `add_pool` events carry no amount.
+
+This meets the README rule for the `config_rewards` amount: the anchor is a
+different contract's event in the same transaction, so a scale or sign change
+in the router's u128 alone would break the equality. It does not rule out the
+same change in the pool and router together, and it is not a token transfer.
+
+This is a string, shape and six-event decode check only; the decoder was not
 re-run against a replay. The hash is in `audited_wasm.json`.
 
 ## Caveats
