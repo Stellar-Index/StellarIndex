@@ -4750,6 +4750,163 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /lending/pools/{pool}/revenue:
+    get:
+      operationId: getLendingPoolRevenue
+      tags: [protocols]
+      summary: Lending pool — interest accrued and its split, per reserve.
+      description: |
+        Interest booked on each reserve of a Blend V1, Blend V2 or BLNT
+        pool, per hour (`interval=1h`) or UTC day (`interval=1d`), summed
+        exactly from the derived hourly interest record. Every amount is a
+        decimal string in the reserve token's base units (`decimals`);
+        nothing is in USD, and amounts of different reserves are never
+        added together.
+
+        Interest is booked when the reserve is next touched on chain, so it
+        lands in the hour of that touch, not spread over the hours it
+        accrued in. `interest_accrued` = `supplier_share` + `backstop_take`
+        + `protocol_fee`. `supplier_credited` is what the b-token rate
+        actually credited suppliers; rounding can leave it below
+        `supplier_share`. `protocol_revenue` is `backstop_take` +
+        `protocol_fee`; `protocol_fee` is non-zero only on BLNT, whose fee
+        rate is inferred from chain data (`fee_rate_inferred`).
+        `realised.backstop_drawn` is backstop credit paid out by interest
+        auctions, a lower bound on every pool. `realised.fee_withdrawn` is
+        null: BLNT fee withdrawals are not derived (`not_derivable`) and
+        Blend has no fee (`not_applicable`). Interest paid by borrowers in
+        cash is not served: a repayment does not say how much of it is
+        interest.
+
+        The window is `[from, to)` with `to` rounded down to its hour;
+        parameters, window limits and the 2,000-point cap are as on
+        `/v1/lending/pools/{pool}/history`, plus `asset` for one reserve.
+        Only hours the interest record covers are summed (`coverage`), and
+        only rows of the current `derive_rev`. A bucket with no point
+        booked nothing. `lower_bound` is true whenever `excluded` names
+        anything; `interest_drawn_partial` is always named. A known pool
+        with no derived interest is a 200 with no reserves and
+        `interest_not_derived`; 404 `not-found` when no lending source
+        knows the pool.
+      parameters:
+        - { name: pool, in: path, required: true, description: Pool contract C-strkey., schema: { type: string } }
+        - { name: asset, in: query, required: false, description: "A reserve token's C-strkey: serve only that reserve.", schema: { type: string } }
+        - { name: interval, in: query, required: false, schema: { type: string, enum: ["1h", "1d"], default: "1d" } }
+        - { name: from, in: query, required: false, description: "RFC 3339, rounded down to the start of its hour (`1h`) or UTC day (`1d`); default `to` - 90 days (`1d`) or 83 days (`1h`).", schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: false, description: "RFC 3339, rounded down to its hour; default now.", schema: { type: string, format: date-time } }
+        - { name: window, in: query, required: false, description: "Duration (`30d`, `72h`); sets from = to - window. Exclusive with `from`.", schema: { type: string } }
+      responses:
+        "200":
+          description: Interest accrued per reserve.
+          content:
+            application/json:
+              example:
+                data:
+                  pool: CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD
+                  protocol: blend
+                  interval: 1d
+                  from: '2026-08-18T00:00:00Z'
+                  to: '2026-11-16T00:00:00Z'
+                  coverage: { derive_rev: 4, from_ledger: 51499541, through_ledger: 63339779, through_hour: '2026-11-15T22:00:00Z' }
+                  lower_bound: true
+                  excluded:
+                    - { kind: field, asset: null, reason: interest_drawn_partial, amount: null, count: null }
+                    - { kind: window, asset: null, reason: interest_not_derived, amount: null, count: null }
+                  reserves:
+                    - asset: CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75
+                      decimals: 7
+                      fee_rate_inferred: false
+                      totals:
+                        interest_accrued: '1250000000'
+                        supplier_share: '1000000000'
+                        supplier_credited: '999999998'
+                        backstop_take: '250000000'
+                        protocol_fee: '0'
+                        protocol_revenue: '250000000'
+                        realised: { backstop_drawn: '200000000', fee_withdrawn: null, fee_withdrawn_reason: not_applicable }
+                        backstop_gulped: '0'
+                        reconcile_backstop_loss: '0'
+                        default_loss: '0'
+                        default_versions: 0
+                        unexplained_supply_loss: '0'
+                        unexplained_supply_versions: 0
+                        unexplained_backstop_residual: '0'
+                        unexplained_versions: 0
+                        unordered_versions: 0
+                        accrual_errors: 0
+                      points:
+                        - t: '2026-11-15T00:00:00Z'
+                          interest_accrued: '1250000000'
+                          supplier_share: '1000000000'
+                          supplier_credited: '999999998'
+                          backstop_take: '250000000'
+                          protocol_fee: '0'
+                          protocol_revenue: '250000000'
+                          realised: { backstop_drawn: '200000000', fee_withdrawn: null, fee_withdrawn_reason: not_applicable }
+                          backstop_gulped: '0'
+                          reconcile_backstop_loss: '0'
+                          default_loss: '0'
+                          default_versions: 0
+                          unexplained_supply_loss: '0'
+                          unexplained_supply_versions: 0
+                          unexplained_backstop_residual: '0'
+                          unexplained_versions: 0
+                          unordered_versions: 0
+                          accrual_errors: 0
+                as_of: '2026-11-16T00:00:01Z'
+                flags:
+                  stale: false
+                  reduced_redundancy: false
+                  triangulated: false
+                  divergence_warning: false
+                  divergence_checked: false
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          pool: { type: string }
+                          protocol: { type: [string, "null"], enum: [blend, blnt, null] }
+                          interval: { type: string, enum: ["1h", "1d"] }
+                          from: { type: string, format: date-time }
+                          to: { type: string, format: date-time }
+                          coverage:
+                            type: object
+                            properties:
+                              derive_rev: { type: integer, description: "The only derive revision summed; rows of another are named `derive_stale`." }
+                              from_ledger: { type: [integer, "null"], format: int64, description: "The derive floor: no interest before it is derived." }
+                              through_ledger: { type: [integer, "null"], format: int64, description: "The lower of the shared interest watermark and the pool's own coverage; the last ledger of its hour." }
+                              through_hour: { type: [string, "null"], format: date-time, description: "The last hour covered." }
+                            required: [derive_rev, from_ledger, through_ledger, through_hour]
+                          lower_bound: { type: boolean }
+                          excluded: { type: array, items: { $ref: "#/components/schemas/LendingRevenueExclusion" } }
+                          reserves:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                asset: { type: string }
+                                decimals: { type: [integer, "null"], description: "The reserve token's exponent; null when not established." }
+                                fee_rate_inferred: { type: boolean, description: "BLNT: the protocol fee rate is inferred from chain data, the contract being closed source." }
+                                totals: { $ref: "#/components/schemas/LendingRevenueAmounts" }
+                                points:
+                                  type: array
+                                  items:
+                                    allOf:
+                                      - type: object
+                                        properties: { t: { type: string, format: date-time, description: "Bucket start." } }
+                                        required: [t]
+                                      - { $ref: "#/components/schemas/LendingRevenueAmounts" }
+                              required: [asset, decimals, fee_rate_inferred, totals, points]
+                        required: [pool, protocol, interval, from, to, coverage, lower_bound, excluded, reserves]
+                    required: [data]
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /lending/accounts/{account}/earnings:
     get:
       operationId: getLendingAccountEarnings
@@ -16993,6 +17150,55 @@ components:
             - positions_overcounted
             - reserve_list_unreadable
       required: [kind, pool, asset, reason]
+    LendingRevenueExclusion:
+      type: object
+      description: Something the revenue sums leave out or cannot vouch for; any one makes them a lower bound.
+      properties:
+        kind: { type: string, enum: [pool, window, reserve, field] }
+        asset: { type: [string, "null"], description: "The reserve concerned; null for the pool, the window or a field." }
+        reason:
+          type: string
+          description: "`interest_not_derived`: the pool has no derived interest (kind `pool`), or part of the window lies before the derive floor or after the coverage (kind `window`). `derive_stale`: `count` hour rows of another derive revision are left out. `redo_pending`: hours a pending re-derive has not yet rewritten are left out. `accrual_excluded`: `count` versions could not be ordered or accrued, so their interest is not summed. `unexplained_supply_loss`: suppliers lost `amount` over `count` versions that no event explains (Blend V1 and BLNT defaults among them), so it is outside `default_loss`. `interest_drawn_partial`: always; `realised.backstop_drawn` omits Blend V1 fills and draws inside unexplained versions."
+          enum:
+            - interest_not_derived
+            - derive_stale
+            - redo_pending
+            - accrual_excluded
+            - unexplained_supply_loss
+            - interest_drawn_partial
+        amount: { type: [string, "null"], description: "Base units (`unexplained_supply_loss`, ≤ 0)." }
+        count: { type: [integer, "null"], format: int64 }
+      required: [kind, asset, reason, amount, count]
+    LendingRevenueAmounts:
+      type: object
+      description: "Base-unit decimal strings. Counts are versions: a version is one change of the reserve's on-chain state."
+      properties:
+        interest_accrued: { type: string, description: "Gross interest booked: supplier_share + backstop_take + protocol_fee." }
+        supplier_share: { type: string, description: "The suppliers' part by the pool's split." }
+        supplier_credited: { type: string, description: "What the b-token rate actually credited suppliers; may be below supplier_share by rounding, and negative." }
+        backstop_take: { type: string, description: "The backstop's cut, credited to the reserve's backstop credit." }
+        protocol_fee: { type: string, description: "BLNT's protocol fee; 0 on Blend." }
+        protocol_revenue: { type: string, description: "backstop_take + protocol_fee." }
+        realised:
+          type: object
+          properties:
+            backstop_drawn: { type: string, description: "Backstop credit paid out by interest auctions; a lower bound (see interest_drawn_partial)." }
+            fee_withdrawn: { type: [string, "null"], description: "Always null: not derived." }
+            fee_withdrawn_reason: { type: string, enum: [not_derivable, not_applicable] }
+          required: [backstop_drawn, fee_withdrawn, fee_withdrawn_reason]
+        backstop_gulped: { type: string, description: "Tokens gulped into backstop credit (≥ 0)." }
+        reconcile_backstop_loss: { type: string, description: "BLNT reconcile_loss charged to backstop credit (≤ 0)." }
+        default_loss: { type: string, description: "Blend V2 defaults socialised to suppliers (≤ 0)." }
+        default_versions: { type: integer, format: int64 }
+        unexplained_supply_loss: { type: string, description: "Supplier loss no event explains, summed hour by hour (≤ 0)." }
+        unexplained_supply_versions: { type: integer, format: int64 }
+        unexplained_backstop_residual: { type: string, description: "Backstop credit change no event explains." }
+        unexplained_versions: { type: integer, format: int64 }
+        unordered_versions: { type: integer, format: int64, description: "Versions whose predecessor is unknown: counted, not summed." }
+        accrual_errors: { type: integer, format: int64, description: "Versions accrual refused: counted, not summed." }
+      required: [interest_accrued, supplier_share, supplier_credited, backstop_take, protocol_fee, protocol_revenue, realised,
+        backstop_gulped, reconcile_backstop_loss, default_loss, default_versions, unexplained_supply_loss,
+        unexplained_supply_versions, unexplained_backstop_residual, unexplained_versions, unordered_versions, accrual_errors]
     LendingReserveConfig:
       type: object
       description: |

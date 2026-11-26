@@ -21,9 +21,8 @@ import (
 // lendingInterestJob names the interest pass's heartbeat (its own cursor series) and log lines.
 const lendingInterestJob = "ch-entry-history-lending-interest"
 
-// lendingInterestRev is every row's derive_rev. Bump it, and re-derive, on any change to blend/accrual.go,
-// blnt/accrual.go or internal/lendinginterest: rows are computed when written, not decoded at read time.
-const lendingInterestRev uint16 = 4
+// lendingInterestRev is every row's derive_rev, shared with the API's reader.
+const lendingInterestRev = lendinginterest.DeriveRev
 
 // interestFlags are the -interest-* flags.
 type interestFlags struct {
