@@ -290,7 +290,7 @@ func TestCheckLendingInterestRow_RefusesAMissingAmount(t *testing.T) {
 	r := lendinginterest.HourRow{
 		Pool: blendTestPool, Asset: blendTestAssetSAC, Protocol: lendinginterest.BLNT,
 		Gross: zero(), ProtocolFee: zero(), Backstop: zero(), SupplierIntended: zero(), SupplierRealised: zero(),
-		BackstopCreditDelta: zero(), BackstopResidual: zero(), SupplyResidual: zero(), FeeCreditResidual: zero(),
+		BackstopCreditDelta: zero(), BackstopResidual: zero(), SupplyResidual: zero(), DefaultLoss: zero(), FeeCreditResidual: zero(),
 		ResidualExplained: zero(), ResidualAttributed: zero(),
 	}
 	if err := checkLendingInterestRow(r); err != nil {
@@ -298,6 +298,7 @@ func TestCheckLendingInterestRow_RefusesAMissingAmount(t *testing.T) {
 	}
 	for _, drop := range []func(*lendinginterest.HourRow){
 		func(r *lendinginterest.HourRow) { r.SupplyResidual = nil },
+		func(r *lendinginterest.HourRow) { r.DefaultLoss = nil },
 		func(r *lendinginterest.HourRow) { r.ResidualAttributed = nil },
 	} {
 		c := r
