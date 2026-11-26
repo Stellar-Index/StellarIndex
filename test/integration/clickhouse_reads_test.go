@@ -257,6 +257,35 @@ func TestRunCensusDay_PrunesByCloseTimeAndSwapsPartition(t *testing.T) {
 		}
 	}
 
+	// (2b) a second swap's replaced parts come back active when the table is reloaded (as on a server restart); the next run
+	// must replace the doubled day without -shrink-ok.
+	if err := chstore.RunCensusDay(ctx, addr, day, false, t.Logf); err != nil {
+		t.Fatalf("RunCensusDay rerun: %v", err)
+	}
+	for _, q := range []string{`DETACH TABLE stellar.contracts_census_daily`, `ATTACH TABLE stellar.contracts_census_daily`} {
+		if err := conn.Exec(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	dayRows := func() uint64 {
+		t.Helper()
+		var n uint64
+		if err := conn.QueryRow(ctx, `SELECT count() FROM stellar.contracts_census_daily WHERE day = ? AND contract_id IN (?, ?)`,
+			day, contractA, contractB).Scan(&n); err != nil {
+			t.Fatalf("count census day: %v", err)
+		}
+		return n
+	}
+	if n := dayRows(); n != 4 {
+		t.Fatalf("after reload the day holds %d row(s), want 4 (both builds: the resurrection this step reproduces)", n)
+	}
+	if err := chstore.RunCensusDay(ctx, addr, day, false, t.Logf); err != nil {
+		t.Fatalf("RunCensusDay over a resurrected build: %v", err)
+	}
+	if n := dayRows(); n != 2 {
+		t.Fatalf("after the heal the day holds %d row(s), want 2", n)
+	}
+
 	// (3) staging is per-run and private: the run's own table is dropped on
 	// exit, and the Tier-1 schema declares no shared twin for anything to
 	// leave behind.
