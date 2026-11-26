@@ -814,6 +814,14 @@ Subcommands:
                           trades in a minute a recomputed twap bucket reads
                           (a dropped stretch above that bucket); -size names
                           it as a gap and raises the floor past it.
+  cagg-history [-config PATH] [-textfile PATH]
+                          Print each continuous aggregate's earliest
+                          materialised bucket (read from its hypertable,
+                          never the view), the start its source says it
+                          should have, and the gap between them. -textfile
+                          writes the start/expected/gap gauges and the
+                          0/1 cagg/twap history_missing gauges for
+                          node_exporter (data-freshness.sh). Read-only.
   ch-supply -config PATH -from N -to N [-ch-addr H:P] [-top N] [-final] [-seed-flows (-write | -dry-run)]
                           Derive every token's total supply from the lake by
                           summing CAP-67 classic + SEP-41 mint/burn/clawback

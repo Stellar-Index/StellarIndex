@@ -2115,6 +2115,10 @@ Gauge. Partitions present on both sides that the last run compared.
 
 Gauge. Unix time the last completed comparison wrote the file.
 
+## Continuous-aggregate history (textfile collector, Go-emitted)
+
+Emitted into `data_freshness.prom` by `stellarindex-ops cagg-history -textfile`, which `data-freshness.sh` runs every 15 minutes; a failed run publishes none of them that tick. Each carries label `view`, one per registered continuous aggregate. `stellarindex_cagg_history_start_seconds` is the earliest bucket in the view's materialisation hypertable (absent when empty; a real-time view's unmaterialised tail does not count). `stellarindex_cagg_expected_start_seconds` is where its history should start: the source's earliest row (for `twap_*`, `prices_1m`'s expected start), raised by a documented floor (`trade_sums_1m`: 26 h) or an armed retention policy on the view or a non-`trades` source. `stellarindex_cagg_history_gap_seconds` is how far the first exceeds the bucket holding the second. The same run emits the 0/1 `stellarindex_cagg_history_missing` (`prices_*`) and `stellarindex_twap_history_missing` (`twap_*`), now gap > 1 day once the source is over 2 days old, and `stellarindex_trades_retention_present`, 1 when any retention policy exists on `trades` (never a floor).
+
 ## Changelog
 
 - 2026-11-15 — added `stellarindex_aggregator_supply_refresh_enabled` and the `stellarindex_prometheus_rules_failing`, `stellarindex_retention_reaper_failing` and `stellarindex_pricingguard_failing_open` alerts.

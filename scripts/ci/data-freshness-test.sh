@@ -425,7 +425,8 @@ fi
 
 # ─── 8. a single psql query failure must not take down the whole tick ─
 #
-# Seven bare `"$PSQL" ... >> "$TMP" <<'SQL'` invocations run under this
+# Seven bare `"$PSQL" ... >> "$TMP" <<'SQL'` invocations (six now, plus the
+# stellarindex-ops cagg-history call) ran under this
 # script's own `set -euo pipefail` with none of the `if ! …; then …; fi`
 # guard the ClickHouse probe uses. Any one of the seven — a lock timeout,
 # a dropped connection, a relation renamed out from under it — aborted the
@@ -439,15 +440,35 @@ QSRC="$WORK/queries.sh"
 {
   printf '%s\n' "${STRICT:-set -euo pipefail}"
   # shellcheck disable=SC2016  # emitted into the harness verbatim; must not expand here
-  printf 'PSQL="$1"\nSTELLARINDEX_POSTGRES_DSN="postgres://dummy"\nTMP="$2"\nPROBE_FAILED=0\n'
+  printf 'PSQL="$1"\nSTELLARINDEX_POSTGRES_DSN="postgres://dummy"\nTMP="$2"\nOPS="$3"\nCONFIG=/dev/null\nPROBE_FAILED=0\n'
   awk '/^# shellcheck disable=SC2129/ { p = 1; next } /^SF_AGE=""$/ { p = 0 } p' "$SRC"
 } > "$QSRC"
 guarded_count="$(grep -c '^if ! PGDSN=' "$QSRC")"
-if [[ "$guarded_count" == 7 ]]; then
-  ok "extracted region carries all 7 guarded psql invocations"
+# shellcheck disable=SC2016  # the literal "$OPS" in the script is what is matched
+if [[ "$guarded_count" == 6 ]] && grep -q '^if "$OPS" cagg-history ' "$QSRC"; then
+  ok "extracted region carries all 6 guarded psql invocations and the guarded cagg-history call"
 else
-  bad "extraction found $guarded_count guarded invocations, want 7 — the markers drifted"
+  bad "extraction found $guarded_count guarded psql invocations (want 6) or no guarded cagg-history call — the markers drifted"
 fi
+
+# Stub stellarindex-ops: writes one sample to its -textfile path, or fails (writing
+# nothing, as the real command does) when OPS_FAIL is set.
+mkdir -p "$WORK/opsbin"
+cat > "$WORK/opsbin/stellarindex-ops" <<'SH'
+#!/usr/bin/env bash
+[[ "$1" == cagg-history ]] || exit 64
+out=""
+while [[ $# -gt 0 ]]; do
+  [[ "$1" == -textfile ]] && out="$2"
+  shift
+done
+[[ -n "${OPS_FAIL:-}" ]] && { echo "cagg-history: stubbed failure" >&2; exit 1; }
+echo "stellarindex_test_sample 1" > "$out"
+SH
+chmod +x "$WORK/opsbin/stellarindex-ops"
+OPS_STUB="$WORK/opsbin/stellarindex-ops"
+# shellcheck disable=SC2016  # emitted into the harness verbatim
+{ cat "$QSRC"; printf 'printf "PROBE_FAILED=%%s\\n" "$PROBE_FAILED"\n'; } > "$WORK/queries-ops-tally.sh"
 
 mkdir -p "$WORK/psqlbin"
 cat > "$WORK/psqlbin/psql" <<'SH'
@@ -469,7 +490,7 @@ chmod +x "$WORK/psqlbin/psql"
 
 QTMP="$WORK/queries-out.$RANDOM"
 : > "$QTMP"
-QERR="$(PSQL_FAIL_MARKER='stellarindex_recognition_ok{source="' bash "$QSRC" "$WORK/psqlbin/psql" "$QTMP" 2>&1 >/dev/null)"
+QERR="$(PSQL_FAIL_MARKER='stellarindex_recognition_ok{source="' bash "$QSRC" "$WORK/psqlbin/psql" "$QTMP" "$OPS_STUB" 2>&1 >/dev/null)"
 QRC=$?
 
 if [[ $QRC -eq 0 ]]; then
@@ -478,9 +499,21 @@ else
   bad "rc=$QRC (want 0): a single psql failure still aborts the whole tick"
 fi
 if [[ "$(grep -c '^stellarindex_test_sample 1$' "$QTMP")" == 6 ]]; then
-  ok "the other 6 queries' output still reaches the textfile"
+  ok "the other 5 queries' and cagg-history's output still reach the textfile"
 else
   bad "expected 6 surviving samples, textfile has: $(cat "$QTMP")"
+fi
+
+# A failed cagg-history run appends nothing (its gauges go absent) and is tallied like a
+# failed query, with the other probes' samples intact.
+: > "$QTMP"
+OERR="$(PSQL_FAIL_MARKER='no-such-query' OPS_FAIL=1 bash "$WORK/queries-ops-tally.sh" "$WORK/psqlbin/psql" "$QTMP" "$OPS_STUB" 2>&1 >"$WORK/ops-tally.out" ||
+  echo "region aborted rc=$?")"
+if grep -qx 'PROBE_FAILED=1' "$WORK/ops-tally.out" && [[ "$(grep -c '^stellarindex_test_sample 1$' "$QTMP")" == 6 ]] &&
+  [[ "$OERR" == *"stellarindex-ops cagg-history) failed"* ]]; then
+  ok "a failed cagg-history run is tallied and named, and the 6 psql samples still publish"
+else
+  bad "cagg-history failure: tally=$(cat "$WORK/ops-tally.out") samples=$(grep -c . "$QTMP") stderr=$OERR"
 fi
 if [[ "$QERR" == *"recognition_ok verdict query failed"* ]]; then
   ok "the skipped query is named on stderr (journal-visible)"
@@ -508,7 +541,7 @@ chmod +x "$WORK/psqlbin/psql-sqlerr"
 # shellcheck disable=SC2016  # emitted into the harness verbatim
 { cat "$QSRC"; printf 'printf "PROBE_FAILED=%%s\\n" "$PROBE_FAILED"\n'; } > "$WORK/queries-tally.sh"
 : > "$QTMP"
-QERR2="$(PSQL_FAIL_MARKER='stellarindex_recognition_ok{source="' bash "$WORK/queries-tally.sh" "$WORK/psqlbin/psql-sqlerr" "$QTMP" 2>&1 >"$WORK/tally.out")"
+QERR2="$(PSQL_FAIL_MARKER='stellarindex_recognition_ok{source="' bash "$WORK/queries-tally.sh" "$WORK/psqlbin/psql-sqlerr" "$QTMP" "$OPS_STUB" 2>&1 >"$WORK/tally.out")"
 if [[ "$QERR2" == *"recognition_ok verdict query failed"* ]]; then
   ok "a SQL error inside psql (exit 0 without ON_ERROR_STOP) is reported as a failed probe"
 else
