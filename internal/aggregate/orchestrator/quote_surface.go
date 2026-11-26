@@ -10,8 +10,17 @@ import (
 )
 
 // The quote-surface check compares proxy and own-quote prints slot by slot, so a price trend under volume that falls at different
-// times of day cannot read as a de-peg while a basis on the served stablecoin prints still does. The aligned reading is the
-// proxy-volume-weighted mean of the per-slot gaps, i.e. the mean disagreement of exactly the prints the par rewrite vouches for.
+// times of day cannot read as a de-peg while a basis on the served stablecoin prints still does. The aligned reading is the mean of
+// every proxy-bearing slot's gap weighted by its proxy base, i.e. the mean disagreement of exactly the prints the par rewrite vouches
+// for. An eligible slot is judged against its own-quote VWAP; an ineligible one against the whole-window own-quote VWAP. Not the
+// larger-magnitude of that and the slot's own prints: one print in a USD-silent slot could then pick a sign-flipped reading sized to
+// cancel the eligible slots' de-peg.
+//
+// Bound when the aligned reading decides alone (coverage c >= 95 %): with eligible references that price their slot's proxy instants,
+// |reading - D| <= (1 - c) * R * (1 + |d|), where D is the true proxy-weighted de-peg, R the window's relative own-quote price range
+// (max/min - 1) and d the largest slot de-peg; the ineligible share counts in full, only its reference can be off, by at most R. Below 95 % the verdict is the larger of the
+// reading and the whole-window gap (the whole-window gap alone with no eligible slot), never more lenient than the whole-window
+// compare. Coverage is of the fetched proxy volume.
 const (
 	// surfaceSubBucketsPerWindow sets the slot at window/24 (5m→1m, 1h→2m, 24h→1h), never finer than closedBucket.
 	surfaceSubBucketsPerWindow = 24
@@ -21,12 +30,13 @@ const (
 	// judged against a thin reference and faking one costs volume in proportion to the proxy volume it would vouch for. Production
 	// own-quote volume is ~1.6x proxy overall, so honest hours clear it with a wide margin.
 	surfaceOwnShareDenom = 4
-	// surfaceCoverageDenom: the aligned reading decides alone only when at most 1/20 (5 %) of the proxy volume lies outside eligible
-	// slots; a de-peg confined to that remainder moves the served leg by at most 5 % of its size (under maxBps for any de-peg < 15 %).
+	// surfaceCoverageDenom: the aligned reading decides alone only when at most 1/20 (5 %) of the proxy volume lies in ineligible
+	// slots, which bounds how far their less certain references can move it (see the bound above).
 	surfaceCoverageDenom = 20
 	// surfaceQuoteFloorPerHour: each surface of an eligible slot must carry >= this many whole quote-currency units per hour of slot
-	// (pro rata for shorter slots), so two tiny surfaces never decide. Production XLM's quietest hours carried ~40k USD own-quote and
-	// ~23k USD proxy volume; a leg thinner than this falls back to the whole-window compare.
+	// length (a partial edge slot must still clear its full-length floor), so two tiny surfaces never decide. Production XLM's
+	// quietest hours carried ~40k USD own-quote and ~23k USD proxy volume. Quote units, not USD: on a weak-currency leg (MXN) it is
+	// proportionally weaker, the venue, ratio and agreement rules still apply.
 	surfaceQuoteFloorPerHour = 10_000
 )
 
@@ -60,8 +70,9 @@ type surfaceCell struct {
 	own                   map[string][]canonical.Trade
 }
 
-// alignedReading is the time-aligned comparison: gap is the proxy-weighted mean of eligible slots' gaps (nil when none is eligible),
-// coverage the share of the window's proxy base volume in eligible slots, decides whether that share lets gap stand alone.
+// alignedReading is the time-aligned comparison: gap is the proxy-weighted mean of every proxy-bearing slot's gap (nil with no
+// eligible slot, so the whole-window compare judges alone, exactly as before alignment), coverage the share
+// of the window's proxy base volume in eligible slots, decides whether that share lets gap stand alone.
 type alignedReading struct {
 	gap      *big.Rat
 	eligible int
@@ -109,19 +120,20 @@ func thinSlot(c *surfaceCell, floor *big.Int) bool {
 		underFloor(c.ownQuote, floor) || underFloor(c.proxyQuote, floor)
 }
 
-// ownReference is a slot's own-quote VWAP when it is eligible: not [thinSlot], and its venues' own VWAPs agree within maxBps (max - min
-// <= maxBps of min), so a venue pricing away from the others cannot pull the reference by more than maxBps. ok=false when a VWAP could
-// not be computed (the caller fails closed).
-func (o *Orchestrator) ownReference(pair canonical.Pair, c *surfaceCell, floor *big.Int, maxBps int) (ref *big.Rat, ok bool) {
-	if thinSlot(c, floor) {
-		return nil, true
-	}
+// relativeGap is (proxy - own) / own.
+func relativeGap(proxy, own *big.Rat) *big.Rat {
+	gap := new(big.Rat).Sub(proxy, own)
+	return gap.Quo(gap, own)
+}
+
+// venuesAgree reports whether the slot's venue VWAPs lie within maxBps of the lowest (max - min <= maxBps of min), so a venue pricing
+// away from the others cannot pull an eligible reference by more than maxBps; ok=false when a venue VWAP could not be computed.
+func (o *Orchestrator) venuesAgree(pair canonical.Pair, c *surfaceCell, maxBps int) (agree, ok bool) {
 	var lo, hi *big.Rat
-	all := make([]canonical.Trade, 0, len(c.own))
 	for _, venueTrades := range c.own {
 		v, err := o.computeNormalizedVWAP(venueTrades, pair)
 		if err != nil || v.Sign() <= 0 {
-			return nil, false
+			return false, false
 		}
 		if lo == nil || v.Cmp(lo) < 0 {
 			lo = v
@@ -129,23 +141,48 @@ func (o *Orchestrator) ownReference(pair canonical.Pair, c *surfaceCell, floor *
 		if hi == nil || v.Cmp(hi) > 0 {
 			hi = v
 		}
-		all = append(all, venueTrades...)
 	}
 	spread := new(big.Rat).Sub(hi, lo)
-	if spread.Mul(spread, big.NewRat(10_000, 1)).Cmp(new(big.Rat).Mul(lo, big.NewRat(int64(maxBps), 1))) > 0 {
-		return nil, true
-	}
-	ref, err := o.computeNormalizedVWAP(all, pair)
-	if err != nil || ref.Sign() <= 0 {
-		return nil, false
-	}
-	return ref, true
+	return spread.Mul(spread, big.NewRat(10_000, 1)).Cmp(new(big.Rat).Mul(lo, big.NewRat(int64(maxBps), 1))) <= 0, true
 }
 
-// alignedSurfaceGap is the proxy-weighted mean of (proxyVWAP_s - ownVWAP_s) / ownVWAP_s over eligible slots; ok=false when a VWAP failed.
+// slotGap is one proxy-bearing slot's signed gap and whether the slot is eligible (not [thinSlot], venues agree): eligible slots
+// compare against their own-quote VWAP, the rest against ownWhole, which no print inside the slot can move. ok=false when a VWAP
+// failed (the caller fails closed).
+func (o *Orchestrator) slotGap(
+	pair canonical.Pair, c *surfaceCell, floor *big.Int, maxBps int, ownWhole *big.Rat,
+) (gap *big.Rat, eligible, ok bool) {
+	proxyVWAP, err := o.computeNormalizedVWAP(c.proxy, pair)
+	if err != nil || proxyVWAP.Sign() <= 0 {
+		return nil, false, false
+	}
+	whole := relativeGap(proxyVWAP, ownWhole)
+	if thinSlot(c, floor) {
+		return whole, false, true
+	}
+	agree, ok := o.venuesAgree(pair, c, maxBps)
+	if !ok {
+		return nil, false, false
+	}
+	if !agree {
+		return whole, false, true
+	}
+	all := make([]canonical.Trade, 0, len(c.own))
+	for _, venueTrades := range c.own {
+		all = append(all, venueTrades...)
+	}
+	ownVWAP, err := o.computeNormalizedVWAP(all, pair)
+	if err != nil || ownVWAP.Sign() <= 0 {
+		return nil, false, false
+	}
+	return relativeGap(proxyVWAP, ownVWAP), true, true
+}
+
+// alignedSurfaceGap is the mean of every proxy-bearing slot's [Orchestrator.slotGap] weighted by its proxy base, with eligible slots'
+// count and share of proxy base; ok=false when a VWAP failed.
 func (o *Orchestrator) alignedSurfaceGap(
 	pair canonical.Pair, trades []canonical.Trade, sw aggregate.ScaledWindow, proxied map[string]struct{}, window time.Duration,
-	proxyBase *big.Int, maxBps int,
+	proxyBase *big.Int, ownWhole *big.Rat, maxBps int,
 ) (reading alignedReading, ok bool) {
 	sub := surfaceSubBucket(window)
 	floor := surfaceQuoteFloor(sw.Decimals(), sub)
@@ -154,28 +191,21 @@ func (o *Orchestrator) alignedSurfaceGap(
 		if len(c.proxy) == 0 || c.proxyBase.Sign() <= 0 {
 			continue
 		}
-		ownVWAP, computed := o.ownReference(pair, c, floor, maxBps)
+		gap, eligible, computed := o.slotGap(pair, c, floor, maxBps, ownWhole)
 		if !computed {
 			return alignedReading{}, false
 		}
-		if ownVWAP == nil {
-			continue
-		}
-		proxyVWAP, err := o.computeNormalizedVWAP(c.proxy, pair)
-		if err != nil || proxyVWAP.Sign() <= 0 {
-			return alignedReading{}, false
-		}
-		gap := new(big.Rat).Sub(proxyVWAP, ownVWAP)
-		gap.Quo(gap, ownVWAP)
 		weighted.Add(weighted, gap.Mul(gap, new(big.Rat).SetInt(c.proxyBase)))
-		covered.Add(covered, c.proxyBase)
-		reading.eligible++
+		if eligible {
+			covered.Add(covered, c.proxyBase)
+			reading.eligible++
+		}
 	}
 	reading.coverage = new(big.Rat).SetFrac(covered, proxyBase)
 	if reading.eligible == 0 {
 		return reading, true
 	}
-	reading.gap = weighted.Quo(weighted, new(big.Rat).SetInt(covered))
+	reading.gap = weighted.Quo(weighted, new(big.Rat).SetInt(proxyBase))
 	rest := new(big.Int).Sub(proxyBase, covered)
 	reading.decides = rest.Mul(rest, big.NewInt(surfaceCoverageDenom)).Cmp(proxyBase) <= 0
 	return reading, true

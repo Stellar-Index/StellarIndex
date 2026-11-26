@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"fmt"
 	"math/big"
 	"math/rand/v2"
 	"testing"
@@ -11,13 +12,14 @@ import (
 
 const surfaceTol = 75
 
-// surfaceOracle is the quote-surface reading of a 24 h window recomputed here from raw sums (hourly slots), independently of the code
-// under test: whole is the whole-window gap; aligned the proxy-weighted mean gap of eligible slots (nil if none), gaps their gaps;
-// coverage their share of proxy volume; decides whether that share is >= 95 %.
+// surfaceOracle is the quote-surface reading recomputed here from raw sums, independently of the code under test: whole is the
+// whole-window gap; gaps every proxy-bearing slot's gap (eligible: vs its own-quote VWAP; else vs the whole-window own VWAP); aligned their proxy-weighted mean (nil with no eligible slot); coverage the eligible share of
+// proxy volume; decides whether it is >= 95 %; verdict the gap the leg is judged by.
 type surfaceOracle struct {
-	whole, aligned, coverage *big.Rat
-	gaps                     []*big.Rat
-	decides                  bool
+	whole, aligned, coverage, verdict *big.Rat
+	gaps                              []*big.Rat
+	eligible                          int
+	decides                           bool
 }
 
 type sums struct{ base, quote *big.Int }
@@ -42,13 +44,13 @@ type oracleSlot struct {
 	venues     map[string]*sums
 }
 
-// hourFloor is 10k USD at the test venues' 8-decimal scale.
-var hourFloor = new(big.Int).Mul(big.NewInt(10_000), big.NewInt(100_000_000))
-
-// eligible: >= 2 own venues, own base >= proxy base / 4, each surface >= 10k USD, venue VWAPs within surfaceTol of the lowest.
-func (s oracleSlot) eligible() bool {
-	if len(s.venues) < 2 || new(big.Int).Mul(s.own.base, big.NewInt(4)).Cmp(s.proxy.base) < 0 ||
-		s.own.quote.Cmp(hourFloor) < 0 || s.proxy.quote.Cmp(hourFloor) < 0 {
+// eligible: >= 2 own venues, own base >= proxy base / 4, each surface >= 10k USD per hour of slot (8-decimal scale), venue VWAPs
+// within surfaceTol of the lowest.
+func (s oracleSlot) eligible(slot time.Duration) bool {
+	floor := new(big.Rat).SetFrac64(10_000*100_000_000*int64(slot), int64(time.Hour))
+	under := func(q *big.Int) bool { return new(big.Rat).SetInt(q).Cmp(floor) < 0 }
+	if len(s.venues) < 2 || new(big.Int).Mul(s.own.base, big.NewInt(4)).Cmp(s.proxy.base) < 0 || under(s.own.quote) ||
+		under(s.proxy.quote) {
 		return false
 	}
 	var lo, hi *big.Rat
@@ -64,11 +66,16 @@ func (s oracleSlot) eligible() bool {
 	return relGap(hi, lo).Cmp(big.NewRat(surfaceTol, 10_000)) <= 0
 }
 
+// surfaceOracleOf is the oracle for a 24 h window (hourly slots).
 func surfaceOracleOf(trades []canonical.Trade, proxied map[string]struct{}) surfaceOracle {
+	return surfaceOracleFor(trades, proxied, time.Hour)
+}
+
+func surfaceOracleFor(trades []canonical.Trade, proxied map[string]struct{}, slot time.Duration) surfaceOracle {
 	slots := map[int64]*oracleSlot{}
 	var proxy, own sums
 	for _, tr := range trades {
-		k := tr.Timestamp.Truncate(time.Hour).Unix()
+		k := tr.Timestamp.Truncate(slot).UnixNano()
 		if slots[k] == nil {
 			slots[k] = &oracleSlot{venues: map[string]*sums{}}
 		}
@@ -91,18 +98,28 @@ func surfaceOracleOf(trades []canonical.Trade, proxied map[string]struct{}) surf
 	out := surfaceOracle{whole: relGap(proxy.price(), own.price())}
 	weighted, covered := new(big.Rat), new(big.Int)
 	for _, s := range slots {
-		if s.proxy.base == nil || s.own.base == nil || !s.eligible() {
+		if s.proxy.base == nil {
 			continue
 		}
-		g := relGap(s.proxy.price(), s.own.price())
+		g := relGap(s.proxy.price(), own.price())
+		switch {
+		case s.own.base != nil && s.eligible(slot):
+			g = relGap(s.proxy.price(), s.own.price())
+			covered.Add(covered, s.proxy.base)
+			out.eligible++
+		}
 		out.gaps = append(out.gaps, g)
 		weighted.Add(weighted, new(big.Rat).Mul(g, new(big.Rat).SetInt(s.proxy.base)))
-		covered.Add(covered, s.proxy.base)
 	}
 	out.coverage = new(big.Rat).SetFrac(covered, proxy.base)
 	out.decides = out.coverage.Cmp(big.NewRat(19, 20)) >= 0
-	if len(out.gaps) > 0 {
-		out.aligned = weighted.Quo(weighted, new(big.Rat).SetInt(covered))
+	out.verdict = out.whole
+	if out.eligible > 0 {
+		out.aligned = weighted.Quo(weighted, new(big.Rat).SetInt(proxy.base))
+		out.verdict = out.aligned
+		if !out.decides && new(big.Rat).Abs(out.whole).Cmp(new(big.Rat).Abs(out.aligned)) > 0 {
+			out.verdict = out.whole
+		}
 	}
 	return out
 }
@@ -262,35 +279,52 @@ func TestQuoteSurface_ThinSlotAttackCostScalesWithProxyVolume(t *testing.T) {
 	}
 }
 
-// genSurfaceCase draws one 24 h case: a trend, a basis from a random slot, random hourly volume profiles and, in thin-evidence cases,
-// quiet own-quote tails, one-venue slots and a third venue printing at the stablecoin price.
-func genSurfaceCase(rng *rand.Rand) func(off time.Duration) surfaceTick {
+// surfaceCase is one generated window: at prints it, depegBps is the true basis (bps) of the proxy print at ts, slopePct the window's
+// total price move in percent.
+type surfaceCase struct {
+	at       func(off time.Duration) surfaceTick
+	depegBps func(ts time.Time) int64
+	slopePct int64
+}
+
+// genSurfaceCase draws one case for a window of slot-length slots starting at start: a trend, a basis from a random slot, random
+// per-slot volume profiles and, in thin-evidence cases, quiet own-quote tails, one-venue slots and a third venue printing at the
+// stablecoin price. Prices change only at slot boundaries (absolute-time aligned, like the code's slots).
+func genSurfaceCase(rng *rand.Rand, start time.Time, window, slot time.Duration) surfaceCase {
+	m := int(window / slot)
+	n := m + 2
+	first := start.Truncate(slot)
+	idx := func(ts time.Time) int { return int(ts.Truncate(slot).Sub(first) / slot) }
 	slope := []int64{-6, 0, 6}[rng.IntN(3)]
-	depegFrom, depegBps := []int{0, rng.IntN(24)}[rng.IntN(2)], []int64{0, -150, 150, 400}[rng.IntN(4)]
-	thin, shifted := rng.IntN(2) == 0, rng.IntN(2) == 0
-	ownQuietFrom, proxyVols, ownVols := 24, []int64{250, 1000}, []int64{250, 1000}
+	depegFrom, depegBps := []int{0, rng.IntN(n), m - 1}[rng.IntN(3)], []int64{0, -150, 150, 400, 5000}[rng.IntN(5)]
+	thin, shifted, spoilDepeg := rng.IntN(2) == 0, rng.IntN(2) == 0, rng.IntN(2) == 0
+	ownQuietFrom, proxyVols, ownVols := n, []int64{250, 1000}, []int64{250, 1000}
 	if thin {
-		ownQuietFrom, proxyVols, ownVols = 24-rng.IntN(10), []int64{0, 250, 1000}, []int64{0, 50, 250, 1000}
+		ownQuietFrom, proxyVols, ownVols = n-rng.IntN(n/2+1), []int64{0, 250, 1000}, []int64{0, 50, 250, 1000}
 	}
-	proxyVol, ownVol := make([]int64, 24), make([]int64, 24)
-	sole, extra := make([]bool, 24), make([]bool, 24)
-	for s := range 24 {
+	proxyVol, ownVol := make([]int64, n), make([]int64, n)
+	sole, extra := make([]bool, n), make([]bool, n)
+	for s := range n {
 		proxyVol[s], ownVol[s] = proxyVols[rng.IntN(len(proxyVols))], ownVols[rng.IntN(len(ownVols))]
 		if shifted && !thin {
 			proxyVol[s], ownVol[s] = 1000, 250
-			if s >= 16 {
+			if 3*s >= 2*n {
 				proxyVol[s], ownVol[s] = 250, 1000
 			}
 		}
 		sole[s], extra[s] = thin && rng.IntN(4) == 0, thin && rng.IntN(4) == 0
 	}
-	return func(off time.Duration) surfaceTick {
-		s := int(off / time.Hour)
-		price := new(big.Rat).Mul(big.NewRat(12, 100), big.NewRat(2400+slope*int64(s), 2400))
-		tk := surfaceTick{proxyPrice: price, ownPrice: price, soleOwn: sole[s]}
-		if s >= depegFrom {
-			tk.proxyPrice = basis(price, depegBps)
+	bps := func(ts time.Time) int64 {
+		if idx(ts) >= depegFrom {
+			return depegBps
 		}
+		return 0
+	}
+	at := func(off time.Duration) surfaceTick {
+		ts := start.Add(off)
+		s := idx(ts)
+		price := new(big.Rat).Mul(big.NewRat(12, 100), big.NewRat(int64(100*n)+slope*int64(s), int64(100*n)))
+		tk := surfaceTick{proxyPrice: basis(price, bps(ts)), ownPrice: price, soleOwn: sole[s]}
 		if proxyVol[s] > 0 {
 			tk.proxyBase = xlm(proxyVol[s])
 		}
@@ -300,56 +334,112 @@ func genSurfaceCase(rng *rand.Rand) func(off time.Duration) surfaceTick {
 		if extra[s] {
 			tk.extraPrice, tk.extraBase = tk.proxyPrice, xlm(ownVol[s]/10+1)
 		}
+		if spoilDepeg && bps(ts) != 0 {
+			tk.extraPrice, tk.extraBase = basis(price, 100), xlm(1) // dust that makes de-pegged slots ineligible
+		}
 		return tk
+	}
+	return surfaceCase{at: at, depegBps: bps, slopePct: slope}
+}
+
+// trueDepeg is the proxy-base-weighted mean of the generated basis over every proxy print.
+func trueDepeg(trades []canonical.Trade, proxied map[string]struct{}, depegBps func(time.Time) int64) *big.Rat {
+	sum, base := new(big.Rat), new(big.Int)
+	for _, tr := range trades {
+		if _, ok := proxied[tr.ID()]; ok {
+			b := tr.BaseAmount.BigInt()
+			sum.Add(sum, new(big.Rat).SetFrac(new(big.Int).Mul(b, big.NewInt(depegBps(tr.Timestamp))), big.NewInt(10_000)))
+			base.Add(base, b)
+		}
+	}
+	return sum.Quo(sum, new(big.Rat).SetInt(base))
+}
+
+type surfaceStats struct{ alone, fallback, relieved, allOver int }
+
+// checkGenerated judges one generated window against the oracle and the decide-alone bound, counting what it exercised.
+func checkGenerated(t *testing.T, name string, window, slot time.Duration, c surfaceCase, trades []canonical.Trade,
+	proxied map[string]struct{}, st *surfaceStats,
+) {
+	t.Helper()
+	want := surfaceOracleFor(trades, proxied, slot)
+	if want.whole == nil {
+		return
+	}
+	lr := readSurface(t, window, trades, proxied)
+	refused := lr.quoteSurfaceRefusal(surfaceTol) != ""
+	if lr.surfaceAligned && exceeds(want.whole) && !refused {
+		st.relieved++
+		// |reading - D| <= (1 - c) * R * (1 + |d|): a pass may hide at most that much true de-peg beyond the tolerance.
+		slack := new(big.Rat).Sub(big.NewRat(1, 1), lr.surfaceCoverage)
+		slack.Mul(slack, big.NewRat(abs64(c.slopePct), 100)).Mul(slack, big.NewRat(10_400, 10_000))
+		limit := slack.Add(slack, big.NewRat(surfaceTol, 10_000))
+		if d := trueDepeg(trades, proxied, c.depegBps); new(big.Rat).Abs(d).Cmp(limit) > 0 {
+			t.Errorf("%s: trend relief passed %.1f bps with a true de-peg of %.1f bps, over the %.1f bps bound", name,
+				gapBps(lr), ratBps(d), ratBps(limit))
+		}
+	}
+	if lr.surfaceAligned != want.decides || lr.surfaceOverlap != want.eligible || lr.surfaceGap.Cmp(want.verdict) != 0 {
+		t.Errorf("%s: aligned=%v overlap=%d gap %.2f bps; oracle decides=%v eligible=%d verdict %.2f bps (coverage %s)", name,
+			lr.surfaceAligned, lr.surfaceOverlap, gapBps(lr), want.decides, want.eligible, ratBps(want.verdict),
+			want.coverage.FloatString(3))
+		return
+	}
+	if want.decides {
+		st.alone++
+	} else {
+		st.fallback++
+		if exceeds(want.whole) && !refused {
+			t.Errorf("%s: coverage %s, whole-window gap %.1f bps refuses but the leg passed at %.1f bps", name,
+				want.coverage.FloatString(3), ratBps(want.whole), gapBps(lr))
+		}
+	}
+	if want.eligible > 0 && everyGapOverSameSign(want.gaps) {
+		st.allOver++
+		if !refused {
+			t.Errorf("%s: every proxy slot over 75 bps with one sign, leg passed at %.1f bps", name, gapBps(lr))
+		}
 	}
 }
 
-// T5: over generated windows, in both coverage regimes, against the independent oracle:
-//   - the reading decides alone exactly when eligible slots hold >= 95 % of proxy volume, and then refuses iff the proxy-weighted mean
-//     gap exceeds 75 bps;
-//   - below that coverage, a whole-window gap over 75 bps always refuses (never weaker than the old check);
-//   - when every eligible slot's gap exceeds 75 bps with one sign, the leg is refused in either regime.
-func TestQuoteSurface_GeneratedWindowsHoldTheDecisionRule(t *testing.T) {
-	var alone, fallback, relieved, allOver int
-	for seed := uint64(1); seed <= 400; seed++ {
-		trades, proxied := buildSurface(t, 24*time.Hour, 10*time.Minute, genSurfaceCase(rand.New(rand.NewPCG(seed, 7))))
-		want := surfaceOracleOf(trades, proxied)
-		if want.whole == nil {
-			continue
-		}
-		lr := readSurface(t, 24*time.Hour, trades, proxied)
-		refused := lr.quoteSurfaceRefusal(surfaceTol) != ""
-		if lr.surfaceAligned != want.decides || lr.surfaceOverlap != len(want.gaps) {
-			t.Errorf("seed %d: aligned=%v overlap=%d, oracle decides=%v eligible=%d (coverage %s)",
-				seed, lr.surfaceAligned, lr.surfaceOverlap, want.decides, len(want.gaps), want.coverage.FloatString(3))
-			continue
-		}
-		if want.decides {
-			alone++
-			if exceeds(want.whole) && !refused {
-				relieved++
-			}
-			if refused != exceeds(want.aligned) {
-				t.Errorf("seed %d: decided alone, refused=%v, oracle aligned gap %.1f bps", seed, refused, ratBps(want.aligned))
-			}
-		} else {
-			fallback++
-			if exceeds(want.whole) && !refused {
-				t.Errorf("seed %d: coverage %s, whole-window gap %.1f bps refuses but the leg passed at %.1f bps",
-					seed, want.coverage.FloatString(3), ratBps(want.whole), gapBps(lr))
-			}
-		}
-		if everyGapOverSameSign(want.gaps) {
-			allOver++
-			if !refused {
-				t.Errorf("seed %d: every eligible slot over 75 bps with one sign, leg passed at %.1f bps", seed, gapBps(lr))
-			}
-		}
+func abs64(v int64) int64 {
+	if v < 0 {
+		return -v
 	}
-	t.Logf("decided alone %d, fallback %d, trend relieved %d, all slots over %d", alone, fallback, relieved, allOver)
-	if alone < 50 || fallback < 50 || relieved < 5 || allOver < 50 {
-		t.Fatalf("generator coverage: decided alone %d, fallback %d, trend relieved %d, all slots over %d; want >= 50, 50, 5, 50",
-			alone, fallback, relieved, allOver)
+	return v
+}
+
+// T5: over generated windows of each size, hour- and minute-aligned (partial edge slots), against the independent oracle: the
+// reading equals the oracle's verdict exactly in both coverage regimes; below 95 % coverage a whole-window gap over 75 bps always
+// refuses; every proxy slot over 75 bps with one sign refuses; and a decide-alone pass that the whole window would have refused hides
+// no more true de-peg than the stated bound allows.
+func TestQuoteSurface_GeneratedWindowsHoldTheDecisionRule(t *testing.T) {
+	sizes := []struct{ window, slot, step time.Duration }{
+		{24 * time.Hour, time.Hour, 10 * time.Minute},
+		{time.Hour, 2 * time.Minute, 20 * time.Second},
+		{5 * time.Minute, time.Minute, 10 * time.Second},
+	}
+	var total surfaceStats
+	for _, sz := range sizes {
+		var st surfaceStats
+		for _, end := range []time.Time{surfaceEnd, surfaceOddEnd} {
+			for seed := uint64(1); seed <= 200; seed++ {
+				c := genSurfaceCase(rand.New(rand.NewPCG(seed, 7)), end.Add(-sz.window), sz.window, sz.slot)
+				trades, proxied := buildSurfaceEnding(t, end, sz.window, sz.step, c.at)
+				name := fmt.Sprintf("%v ending %s seed %d", sz.window, end.Format("15:04"), seed)
+				checkGenerated(t, name, sz.window, sz.slot, c, trades, proxied, &st)
+			}
+		}
+		t.Logf("%v: decided alone %d, fallback %d, trend relieved %d, all slots over %d", sz.window, st.alone, st.fallback,
+			st.relieved, st.allOver)
+		if st.alone < 50 || st.fallback < 50 {
+			t.Errorf("%v generator coverage: decided alone %d, fallback %d; want >= 50 each", sz.window, st.alone, st.fallback)
+		}
+		total.relieved += st.relieved
+		total.allOver += st.allOver
+	}
+	if total.relieved < 10 || total.allOver < 100 {
+		t.Fatalf("generator coverage: trend relieved %d, all slots over %d; want >= 10, 100", total.relieved, total.allOver)
 	}
 }
 
@@ -364,4 +454,100 @@ func everyGapOverSameSign(gaps []*big.Rat) bool {
 		}
 	}
 	return true
+}
+
+// lastHourDepeg is a 24 h leg at par (1000/1000 per 10-minute tick) whose stablecoin prints sit bps off in the window's last hour,
+// with spoil applied to those ticks.
+func lastHourDepeg(t *testing.T, end time.Time, bps int64, spoil func(off time.Duration, tk *surfaceTick)) legRef {
+	t.Helper()
+	trades, proxied := buildSurfaceEnding(t, end, 24*time.Hour, 10*time.Minute, func(off time.Duration) surfaceTick {
+		tk := surfaceTick{proxyPrice: flat(off), ownPrice: flat(off), proxyBase: xlm(1000), ownBase: xlm(1000)}
+		if off >= 23*time.Hour {
+			tk.proxyPrice = basis(flat(off), bps)
+			spoil(off, &tk)
+		}
+		return tk
+	})
+	return readSurface(t, 24*time.Hour, trades, proxied)
+}
+
+// A de-peg confined to slots that are ineligible (< 5 % of proxy volume, so the aligned reading decides alone) still counts in full:
+// the whole-window compare reads ~+104 bps (+2500) and ~+208 bps (+5000), and so must the aligned reading. Ineligibility comes from
+// a dust print on a third venue, from two honest venues 124 bps apart in a fast move's onset hour, or from silent USD venues plus
+// one print at the de-pegged price (which must not set that slot's reference); also with a minute-aligned end, where
+// the de-peg spans a partial slot.
+func TestQuoteSurface_DepegInIneligibleSlotsCountsInFull(t *testing.T) {
+	spoils := map[string]func(off time.Duration, tk *surfaceTick){
+		"dust on a third venue": func(off time.Duration, tk *surfaceTick) {
+			tk.extraPrice, tk.extraBase = basis(flat(off), 100), xlm(1)
+		},
+		"venues 124 bps apart": func(off time.Duration, tk *surfaceTick) {
+			tk.soleOwn, tk.extraPrice, tk.extraBase = true, basis(flat(off), 124), xlm(1000)
+		},
+		"silent USD, one print at the de-pegged price": func(off time.Duration, tk *surfaceTick) {
+			tk.ownBase = nil
+			if off == 23*time.Hour {
+				tk.extraPrice, tk.extraBase = tk.proxyPrice, xlm(1)
+			}
+		},
+	}
+	for name, spoil := range spoils {
+		for _, end := range []time.Time{surfaceEnd, surfaceOddEnd} {
+			for _, bps := range []int64{2500, 5000} {
+				lr := lastHourDepeg(t, end, bps, spoil)
+				if lr.quoteSurfaceRefusal(surfaceTol) == "" || gapBps(lr) < float64(bps)/24-5 {
+					t.Errorf("%s, end %s, +%d bps in the last hour: gap %.1f bps aligned=%v overlap=%d, want refused at >= ~%.0f bps",
+						name, end.Format("15:04"), bps, gapBps(lr), lr.surfaceAligned, lr.surfaceOverlap, float64(bps)/24)
+				}
+			}
+		}
+	}
+}
+
+// An ineligible slot's own prints never set its reference: with a +100 bps de-peg everywhere and the last hour's USD venues silent,
+// one print at 1.312x the price there would read that slot at -2300 bps, larger in magnitude than its +100 bps against the
+// whole-window VWAP, and cancel the other 23 hours (23/24 x 100 - 1/24 x 2300 ~ 0).
+func TestQuoteSurface_IneligibleSlotPrintCannotCancelADepeg(t *testing.T) {
+	trades, proxied := buildSurface(t, 24*time.Hour, 10*time.Minute, func(off time.Duration) surfaceTick {
+		tk := surfaceTick{proxyPrice: basis(flat(off), 100), ownPrice: flat(off), proxyBase: xlm(1000), ownBase: xlm(1000)}
+		if off >= 23*time.Hour {
+			tk.ownBase = nil
+			if off == 23*time.Hour {
+				tk.extraPrice, tk.extraBase = new(big.Rat).Mul(flat(off), big.NewRat(1312, 1000)), xlm(1)
+			}
+		}
+		return tk
+	})
+	lr := readSurface(t, 24*time.Hour, trades, proxied)
+	if lr.quoteSurfaceRefusal(surfaceTol) == "" || gapBps(lr) < 99 || !lr.surfaceAligned {
+		t.Errorf("gap %.1f bps aligned=%v, want ~+100 bps refused on the aligned reading", gapBps(lr), lr.surfaceAligned)
+	}
+}
+
+// The cost of judging ineligible slots against the whole-window reference: under a pure trend an
+// ineligible slot reads its price's distance from the window's USD VWAP. One ineligible end hour (4.2 % of proxy volume, so the
+// aligned reading still decides) sits ~0.48m/(1+m/2) above the VWAP of a linear move m: a 6 %, 30 % or 40 % move passes (~+12, ~+53,
+// ~+67 bps), a 50 % move refuses (~+80 bps; the threshold is ~46 %). In general a pure trend refuses only when ineligible share x
+// distance from the window VWAP > 75 bps.
+func TestQuoteSurface_TrendWithIneligibleSlotsPassesWhileTheirShareIsSmall(t *testing.T) {
+	for _, tc := range []struct {
+		movePct int64
+		refused bool
+	}{{6, false}, {30, false}, {40, false}, {50, true}} {
+		price := func(off time.Duration) *big.Rat {
+			frac := new(big.Rat).SetFrac64(int64(off), int64(24*time.Hour))
+			return new(big.Rat).Mul(big.NewRat(12, 100), frac.Mul(frac, big.NewRat(tc.movePct, 100)).Add(frac, big.NewRat(1, 1)))
+		}
+		trades, proxied := buildSurface(t, 24*time.Hour, 10*time.Minute, func(off time.Duration) surfaceTick {
+			return surfaceTick{
+				proxyPrice: price(off), ownPrice: price(off), proxyBase: xlm(1000), ownBase: xlm(1000),
+				soleOwn: off >= 23*time.Hour,
+			}
+		})
+		lr := readSurface(t, 24*time.Hour, trades, proxied)
+		if got := lr.quoteSurfaceRefusal(surfaceTol) != ""; got != tc.refused || !lr.surfaceAligned || lr.surfaceOverlap != 23 {
+			t.Errorf("%d %% move, last hour ineligible: refused=%v gap %.1f bps aligned=%v overlap=%d, want refused=%v decided alone",
+				tc.movePct, got, gapBps(lr), lr.surfaceAligned, lr.surfaceOverlap, tc.refused)
+		}
+	}
 }

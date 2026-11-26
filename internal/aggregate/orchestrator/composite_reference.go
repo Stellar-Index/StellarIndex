@@ -200,7 +200,12 @@ func (o *Orchestrator) quoteSurfaces(
 	if len(own) == 0 {
 		return share, surfaceReading{}
 	}
-	aligned, ok := o.alignedSurfaceGap(pair, trades, sw, proxied, window, proxyBase, maxBps)
+	proxyVWAP, perr := o.computeNormalizedVWAP(proxy, pair)
+	ownVWAP, oerr := o.computeNormalizedVWAP(own, pair)
+	if perr != nil || oerr != nil || proxyVWAP.Sign() <= 0 || ownVWAP.Sign() <= 0 {
+		return share, surfaceReading{uncomputable: true}
+	}
+	aligned, ok := o.alignedSurfaceGap(pair, trades, sw, proxied, window, proxyBase, ownVWAP, maxBps)
 	if !ok {
 		return share, surfaceReading{uncomputable: true}
 	}
@@ -209,13 +214,7 @@ func (o *Orchestrator) quoteSurfaces(
 	}
 	// The eligible slots do not speak for the served proxy prints: judge by the larger of the whole-window gap (the check as it was,
 	// which a trend can inflate or, against the basis's sign, shrink) and the aligned gap, so this never passes what the old check refused.
-	proxyVWAP, perr := o.computeNormalizedVWAP(proxy, pair)
-	ownVWAP, oerr := o.computeNormalizedVWAP(own, pair)
-	if perr != nil || oerr != nil || proxyVWAP.Sign() <= 0 || ownVWAP.Sign() <= 0 {
-		return share, surfaceReading{uncomputable: true}
-	}
-	gap := new(big.Rat).Sub(proxyVWAP, ownVWAP)
-	gap.Quo(gap, ownVWAP)
+	gap := relativeGap(proxyVWAP, ownVWAP)
 	if aligned.gap != nil {
 		gap = largerMagnitude(gap, aligned.gap)
 	}

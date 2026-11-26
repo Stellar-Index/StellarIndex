@@ -12,8 +12,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// surfaceEnd is a closed bucket end, hour-aligned like every production window end.
-var surfaceEnd = time.Date(2026, 11, 26, 0, 0, 0, 0, time.UTC)
+// surfaceEnd is a closed bucket end. Production ends are minute-aligned; tests that need partial edge slots end at surfaceOddEnd.
+var (
+	surfaceEnd    = time.Date(2026, 11, 26, 0, 0, 0, 0, time.UTC)
+	surfaceOddEnd = surfaceEnd.Add(37 * time.Minute)
+)
 
 // ownVenues print the own-quote (real USD) volume, split evenly; extraVenue is a third own-quote venue (thin or hostile).
 var ownVenues = []string{"coinbase", "kraken"}
@@ -37,8 +40,16 @@ func buildSurface(
 	t *testing.T, window, step time.Duration, at func(offset time.Duration) surfaceTick,
 ) ([]canonical.Trade, map[string]struct{}) {
 	t.Helper()
+	return buildSurfaceEnding(t, surfaceEnd, window, step, at)
+}
+
+// buildSurfaceEnding is buildSurface for a window ending at end.
+func buildSurfaceEnding(
+	t *testing.T, end time.Time, window, step time.Duration, at func(offset time.Duration) surfaceTick,
+) ([]canonical.Trade, map[string]struct{}) {
+	t.Helper()
 	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
-	start := surfaceEnd.Add(-window)
+	start := end.Add(-window)
 	var trades []canonical.Trade
 	proxied := map[string]struct{}{}
 	for off := time.Duration(0); off < window; off += step {
