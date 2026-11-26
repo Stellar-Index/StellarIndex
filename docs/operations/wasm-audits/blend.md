@@ -514,6 +514,11 @@ It is not a review of those binaries.
     only, so the lot is unknown: the version is **attributed**, never
     explained, and a total over it is a lower bound. Its `backstop_credit -=
     lot_amount` is the same as V2's.
+  - Columns: an explained version's event amounts land by cause in
+    `interest_drawn` (≤ 0, V2 fills only, so a lower bound of the draw on a V1
+    pool) and `gulped` (≥ 0), which with BLNT's `reconcile_backstop_loss` sum
+    to `residual_explained` exactly. An event of the wrong sign for its cause
+    explains nothing.
   - Shape on real bytes: V1 interest fills at 52504175, 52850307, 55803349
     in `test/fixtures/blend/v1-pool-auctions/`. No V2 interest fill or gulp
     is in the repo's fixtures.

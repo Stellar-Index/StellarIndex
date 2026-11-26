@@ -177,7 +177,8 @@ func checkLendingInterest(protos map[string]lendinginterest.Protocol, rows []len
 }
 
 // checkResidualClasses holds a row's event classification whole: each unreconciled version is explained, attributed
-// or unexplained, and the three classes' residuals sum to the row's backstop residual.
+// or unexplained, the three classes' residuals sum to the row's backstop residual, and the explained one is exactly
+// its per-cause columns, each of its cause's sign.
 func checkResidualClasses(r lendinginterest.HourRow) error {
 	sum := new(big.Int).Add(zeroIfNil(r.ResidualExplained), zeroIfNil(r.ResidualAttributed))
 	sum.Add(sum, zeroIfNil(r.ResidualUnexplained))
@@ -186,15 +187,20 @@ func checkResidualClasses(r lendinginterest.HourRow) error {
 	// A default loss is a classified b_rate mismatch's supply residual, which a cut can only lower.
 	defaults := uint64(r.DefaultVersions) <= min(uint64(r.BRateMismatches), uint64(r.ExplainedVersions)+uint64(r.AttributedVersions)) &&
 		loss.Sign() <= 0 && (r.DefaultVersions != 0 || loss.Sign() == 0)
-	if sum.Cmp(zeroIfNil(r.BackstopResidual)) == 0 && n == uint64(r.UnreconciledVersions) && defaults {
+	drawn, gulped, reconciled := zeroIfNil(r.InterestDrawn), zeroIfNil(r.Gulped), zeroIfNil(r.ReconcileBackstopLoss)
+	parts := new(big.Int).Add(drawn, gulped)
+	parts.Add(parts, reconciled)
+	split := parts.Cmp(zeroIfNil(r.ResidualExplained)) == 0 && drawn.Sign() <= 0 && gulped.Sign() >= 0 && reconciled.Sign() <= 0
+	if sum.Cmp(zeroIfNil(r.BackstopResidual)) == 0 && n == uint64(r.UnreconciledVersions) && defaults && split {
 		return nil
 	}
 	return fmt.Errorf("lending interest: pool %s asset %s hour %s: residual explained %v + attributed %v + unexplained %v "+
 		"against backstop_residual %v, versions %d + %d + %d against unreconciled %d, default loss %v over %d of %d b_rate "+
-		"mismatches", r.Pool, r.Asset, r.Hour.Format(time.RFC3339),
+		"mismatches, explained by cause: interest drawn %v (≤ 0) + gulped %v (≥ 0) + reconcile backstop loss %v (≤ 0)",
+		r.Pool, r.Asset, r.Hour.Format(time.RFC3339),
 		r.ResidualExplained, r.ResidualAttributed, r.ResidualUnexplained, r.BackstopResidual,
 		r.ExplainedVersions, r.AttributedVersions, r.UnexplainedVersions, r.UnreconciledVersions, r.DefaultLoss, r.DefaultVersions,
-		r.BRateMismatches)
+		r.BRateMismatches, drawn, gulped, reconciled)
 }
 
 func checkFeeRows(rows []lendinginterest.HourRow, fees *interestState, c *interestChecked) error {

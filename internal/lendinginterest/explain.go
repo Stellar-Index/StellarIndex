@@ -245,6 +245,13 @@ func (st *state) explain(row *HourRow, nexts []Version, residual *big.Int, onlyB
 	case explained:
 		row.ExplainedVersions++
 		row.ResidualExplained.Add(row.ResidualExplained, residual)
+		if residual.Sign() != 0 {
+			for _, e := range st.events[k] {
+				if c, ok := causeColumns[e.Cause]; ok && e.Asset == v.Asset {
+					c.col(row).Add(c.col(row), e.Amount)
+				}
+			}
+		}
 	case attributed:
 		row.AttributedVersions++
 		row.ResidualAttributed.Add(row.ResidualAttributed, residual)
@@ -284,13 +291,30 @@ func (st *state) defaulted(prev blend.ReserveData, nexts []Version, expected *bi
 	return n > 0 && rd.BRate.Cmp(v.Reserve.BRate) == 0
 }
 
+// causeColumn is the HourRow column a Checkable cause's amount sums into within ResidualExplained, and the sign
+// (-1: ≤ 0, +1: ≥ 0) its CauseRule allows that amount.
+type causeColumn struct {
+	col  func(*HourRow) *big.Int
+	sign int
+}
+
+var causeColumns = map[Cause]causeColumn{
+	CauseInterestFill:  {func(r *HourRow) *big.Int { return r.InterestDrawn }, -1},
+	CauseGulp:          {func(r *HourRow) *big.Int { return r.Gulped }, +1},
+	CauseReconcileLoss: {func(r *HourRow) *big.Int { return r.ReconcileBackstopLoss }, -1},
+}
+
 func classify(es []Event, asset string, residual *big.Int) residualClass {
 	sum, checkable, uncheckable := new(big.Int), false, false
 	for _, e := range es {
+		c, ok := causeColumns[e.Cause]
 		switch {
 		case e.Cause == CauseDefaultedDebt:
 		case e.Amount == nil:
 			uncheckable = true
+		case e.Asset == asset && (!ok || e.Amount.Sign() == -c.sign):
+			// No column, or a sign its rule cannot produce: it explains nothing, and residual_explained stays split.
+			return unexplained
 		case e.Asset == asset:
 			checkable = true
 			sum.Add(sum, e.Amount)

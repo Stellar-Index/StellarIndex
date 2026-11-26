@@ -144,7 +144,10 @@ that binary.
   `token_delta` it emits (`pool/gulp.rs`); `reconcile_loss` subtracts the
   `backstop_credit_loss` it emits (`execute_reconcile_loss`). Each is an exact
   integer move, so a residual equal to the transaction's sum of them is
-  explained. A `reconcile_loss` with a supplier or protocol-credit leg also
+  explained, and its amounts land by cause in `interest_drawn` (≤ 0),
+  `gulped` (≥ 0) and `reconcile_backstop_loss` (≤ 0), which sum to
+  `residual_explained`; an event of the wrong sign for its cause explains
+  nothing. A `reconcile_loss` with a supplier or protocol-credit leg also
   moves b_rate (`fixed_div_ceil`) or the fee entry, and that version stays
   unexplained. The same source confirms the 20000 fee rate and the
   floor-with-carry rule (`constants.rs`, `reserve.rs::accrue_protocol_fee`).
@@ -162,7 +165,10 @@ Open before the table is served:
    are not in the repo, so its class is known only after the prove pass.
 4. Unexplained by design: `protocol_credit_loss` (an exact `credit -=
    amount`, but the table has no column for an explained fee residual), the
-   protocol-fee auction fill (type 3) and fee withdrawal (no event).
+   protocol-fee auction fill (type 3) and fee withdrawal (no event). The
+   fold's fee-only credit delta mixes withdrawals with `protocol_credit_loss`
+   and drops a move in an hour with no ResData row of its asset, so it is not
+   stored as a withdrawn amount.
 
 ## References
 
