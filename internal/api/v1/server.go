@@ -1505,6 +1505,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.registerLendingHistoryRoutes()
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/auctions", s.handleLendingPoolAuctions)
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/liquidations", s.handleLendingPoolLiquidations)
+	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/bad-debt", s.handleLendingPoolBadDebt)
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/emissions", s.handleLendingPoolEmissions)
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/top-accounts", s.handleLendingPoolTopAccounts)
 	s.mux.HandleFunc("GET /v1/lending/accounts/{account}/earnings", s.handleLendingAccountEarnings)

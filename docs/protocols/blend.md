@@ -50,6 +50,31 @@ names the reserve with `price_missing`). A reserve with amounts but no price at 
 out of `totals_usd`. Anything the base-unit sums leave out is missing from the USD sums too, so `totals_usd` is a lower
 bound whenever the response's `lower_bound` is.
 
+## Bad debt: `GET /v1/lending/pools/{pool}/bad-debt`
+
+When a borrower's collateral is gone but debt remains, the pool moves that debt onto its backstop's own position. From
+there it is either bought out at auction, written off against suppliers, or it stays on the backstop. The endpoint shows,
+per reserve, how much went each way, in d-tokens (the pool's debt units), in the underlying token and in USD.
+
+| Part | What it means |
+|---|---|
+| `moved_to_backstop` | Debt moved onto the backstop (`bad_debt` events). |
+| `covered_by_backstop` | Debt bidders took over in bad-debt auctions, in return for backstop tokens. A late fill can carry an empty bid (the bid decays to nothing after enough ledgers): it covered 0 and is counted in `zero_bid_fills`. Blend V1 fills do not say what they took, so on a pool with one this part is null (`bid_not_recorded`), never estimated. |
+| `socialised_to_suppliers` | Debt written off (`defaulted_debt`): the d-tokens burnt. Suppliers' loss in underlying is `default_loss` on `/revenue`. |
+| `repaid_by_backstop` | Repays of the backstop's own debt. |
+| `outstanding` | Debt the backstop still carries now, at today's rate and price. |
+
+The backstop is the address the pool's own storage names. On BLNT the backstop is split into loss tiers and which
+address carries the debt is not verified, so `repaid_by_backstop` and `outstanding` are null there.
+
+Each event is valued when it happened: the d-token rate its own transaction wrote, and the last hourly price at or
+before it. A value that cannot be worked out is null with a reason, never `"0"`. A `"0"` over `events: 0` is a real zero.
+
+`reconciled` checks that the debt moved equals the other four parts added up, in d-tokens, over the events up to the
+ledger the backstop's position was last written (`position_ledger`). `residual_d_tokens` is the gap. It is null when a
+part is missing or no recorded event is at that ledger (the event tables may be behind the lake). In `totals_usd` a
+part's sum over reserves is a lower bound when `excluded` names a reserve left out.
+
 ## Pool factories (trust roots)
 
 A contract's events are attributed to Blend only if the contract is one of

@@ -90,6 +90,7 @@ var priceRouteCoverage = map[string]priceCoverage{
 	"GET /v1/lending/accounts/{account}/earnings":           lendingUncovered,
 	"GET /v1/lending/pools/{pool}/auctions":                 lendingUncovered,
 	"GET /v1/lending/pools/{pool}/liquidations":             gated, // TestLendingPoolLiquidations_ExcludedSourceDoesNotValueFill
+	"GET /v1/lending/pools/{pool}/bad-debt":                 gated, // TestLendingPoolBadDebt_ExcludedSourceDoesNotValueEvent
 	"GET /v1/lending/pools/{pool}/emissions":                lendingUncovered,
 	"GET /v1/lending/pools/{pool}/top-accounts":             lendingUncovered,
 	"GET /v1/aggregators":                                   uncovered("aggregator reference prices"),
