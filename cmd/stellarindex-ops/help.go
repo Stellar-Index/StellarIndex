@@ -928,7 +928,7 @@ Subcommands:
                           corrected (use projected-rebuild). -source names: see
                           internal/projector/registry.go. Referenced by the
                           migration 0137/0139 operator follow-ups.
-  projected-rebuild -config PATH -source NAME -from N [-to N] [-workers K] [-window N] [-resume] [-write] [-ch-addr H:P] [-heartbeat PATH] [-allow-live-overlap]
+  projected-rebuild -config PATH -source NAME -from N [-to N] [-workers K] [-window N] [-resume] [-only-kinds K1,K2] [-write] [-ch-addr H:P] [-heartbeat PATH] [-allow-live-overlap]
                           ADR-0048 D3: bulk catch-up for a projected
                           (Soroban-derived) source, replacing
                           projector-replay for any rewind beyond
@@ -936,7 +936,8 @@ Subcommands:
                           the LIVE projector's cursor and is bound by
                           its tick cadence + 60s per-cycle deadline
                           (~720k ledgers/hour ceiling); this tool runs
-                          -workers (default 4, soft-capped 8) parallel
+                          -workers (default 3, capped at 3; 1 for a
+                          correlating decoder) parallel
                           ledger-window goroutines with NO per-cycle
                           deadline, each streaming the ClickHouse lake
                           through the SAME decoder + sink
@@ -973,6 +974,24 @@ Subcommands:
                           row in range left at an older generation
                           beside a row this run wrote with a different
                           ts (dry run: prints the count).
+                          -only-kinds writes only the named decoder
+                          output kinds (EventKind(), e.g.
+                          aquarius.liquidity); the rest are decoded and
+                          counted as skipped. Use it for a decoder fix
+                          that changes ONE kind's stored shape, never
+                          for one that changes trades or cross-table
+                          derived state. A kind the source does not
+                          declare, or the flag passed empty, is refused
+                          up front; a whole-range run that emits none
+                          of a named kind exits non-zero. Pin -to to
+                          the dry run's printed default for -write;
+                          procedure: runbooks/projector.md.
+                          The filter is part of the checkpoint key
+                          (...@<build>#only-kinds=<sorted list>).
+                          Without a trade or oracle kind the aggregate
+                          refresh is skipped as not owed, and when the
+                          source's reconcile waives every named kind's
+                          table no dirty window is recorded.
                           Prints per-topic emitted counts on
                           completion for an operator eyeball-check
                           against the census tables — the ADR-0033
@@ -982,7 +1001,7 @@ Subcommands:
                             stellarindex-ops projected-rebuild \
                               -config /etc/stellarindex.toml \
                               -source blend_backstop -from 51499546 \
-                              -workers 6 -write
+                              -write
   reconcile-balances (-account G... | -sample N) [-ch-addr H:P] [-horizon URL] [-tolerance-stroops N] [-recent-ledgers N] [-min-recent-ledger N] [-sample-seed N] [-sleep-ms N] [-timeout DUR]
                           ADR-0033-style verification harness for the
                           "verified explorer" claim: proves

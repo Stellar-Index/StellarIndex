@@ -127,6 +127,28 @@ func TestGatedRegistryOptions_aquariusLayoutSurvivesRestart(t *testing.T) {
 	}
 }
 
+// The rebuild and audit tools warm with withHook=false: an add_pool they decode admits the pool in memory and never writes
+// aquarius_pools, so a re-derive cannot record a type the live path did not.
+func TestGatedRegistryOptions_aquariusReadOnlyWarmNeverWritesThePoolTable(t *testing.T) {
+	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+	pool := testContractStrkey(t, 0xA3)
+	store := &fakeAquariusStore{fakeProtocolContractStore: fakeProtocolContractStore{rows: map[string][]string{}}}
+	opts, err := gatedRegistryOptions(context.Background(), store, quiet, context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec := aquarius.NewDecoder(opts[aquarius.SourceName]...)
+	if _, err := dec.Decode(aquariusAddPool(t, pool, "concentrated")); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.written) != 0 {
+		t.Fatalf("read-only warm wrote aquarius_pools: %+v", store.written)
+	}
+	if out, err := dec.Decode(aquariusDeposit(t, pool)); err != nil || len(out) != 1 {
+		t.Fatalf("the in-memory admission must still decode the pool: out=%v err=%v", out, err)
+	}
+}
+
 func TestGatedRegistryOptions_aquariusPoolTableUnreadableFailsTheWarm(t *testing.T) {
 	store := &fakeAquariusStore{loadErr: errors.New("relation does not exist")}
 	store.rows = map[string][]string{}

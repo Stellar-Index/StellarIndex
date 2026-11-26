@@ -1322,8 +1322,9 @@ groups:
       # False-fire exclusions (files whose age is not a dead producer):
       # - `ops_job_*.pid<N>.prom`: orphan fallback written when a run loses the
       #   heartbeat flock; never rewritten.
-      # - `ops_job_backfill`, `ops_job_usd_volume_restamp`, `ops_job_tag_tx_index`:
-      #   one-off jobs with no timer. `ops_job_projected_rebuild_<source>`:
+      # - `ops_job_backfill`, `ops_job_ch_backfill`, `ops_job_usd_volume_restamp`,
+      #   `ops_job_tag_tx_index`, `ops_job_supply_seed_sac_balances`,
+      #   `ops_job_supply_seed_claimable_balances`: one-off jobs with no timer. `ops_job_projected_rebuild_<source>`:
       #   finished runs stay with
       #   running=0; live ones are watched by
       #   stellarindex_ops_job_heartbeat_stale.
@@ -1349,7 +1350,7 @@ groups:
         expr: |
           (
             time() - node_textfile_mtime_seconds{
-              file!~".*/ops_job_.*\\.pid[0-9]+\\.prom$|.*/ops_job_(backfill|usd_volume_restamp|tag_tx_index|projected_rebuild_[a-z0-9_]+)\\.prom$|.*/restore_drill.*\\.prom$|.*/verify_archive_tier_d\\.prom$|.*/alertmanager_receivers\\.prom$|.*/heavy_job_.*\\.prom$|.*/ch_lake_backup\\.prom$|.*/galexie_archive_upstream\\.prom$"
+              file!~".*/ops_job_.*\\.pid[0-9]+\\.prom$|.*/ops_job_(backfill|ch_backfill|usd_volume_restamp|tag_tx_index|supply_seed_sac_balances|supply_seed_claimable_balances|projected_rebuild_[a-z0-9_]+)\\.prom$|.*/restore_drill.*\\.prom$|.*/verify_archive_tier_d\\.prom$|.*/alertmanager_receivers\\.prom$|.*/heavy_job_.*\\.prom$|.*/ch_lake_backup\\.prom$|.*/galexie_archive_upstream\\.prom$"
             } > 86400
           )
           unless on (instance, file) (
