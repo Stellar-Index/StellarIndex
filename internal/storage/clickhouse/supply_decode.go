@@ -21,18 +21,26 @@ func IsSupplyFlowSym(sym string) bool {
 	}
 }
 
-// Supply-flow skip reasons. Only SupplySkipNotTokenShaped is expected traffic: topic[0] alone does not identify a token, so any contract
-// (an NFT's `mint` with a u32 id, a pool's one-topic `mint`, say) can emit one, and a contract with no supply loses nothing.
+// Supply-flow skip reasons. Only the two not-token-shaped reasons are expected traffic: topic[0] alone does not identify a token, so any
+// contract (a pool's one-topic `mint`, an NFT's `mint` with a u32 id) can emit one, and a contract with no supply loses nothing.
 const (
-	SupplySkipNotTokenShaped  = "not_token_shaped"
-	SupplySkipAmountNotI128   = "amount_not_i128"
-	SupplySkipBodyUnparseable = "body_unparseable"
+	// SupplySkipTopicNotTokenShaped is topics without the address(es) a SEP-41/CAP-67 event carries; the body is never read.
+	SupplySkipTopicNotTokenShaped = "topic_not_token_shaped"
+	// SupplySkipNotTokenShaped is token-shaped topics with a body that is neither a bare i128 nor a map carrying `amount`.
+	SupplySkipNotTokenShaped = "not_token_shaped"
+	// SupplySkipTopicUnparseable is a topic that is not ScVal XDR, so the event's shape is unknown: a decoder gap, and it alerts.
+	SupplySkipTopicUnparseable = "topic_unparseable"
+	SupplySkipAmountNotI128    = "amount_not_i128"
+	SupplySkipBodyUnparseable  = "body_unparseable"
 	// SupplySkipJudgedNonToken is a skip from a contract judged not a token (judgedNonToken), for that judgement's reason only.
 	SupplySkipJudgedNonToken = "judged_non_token"
 )
 
 // SupplySkipReasons lists every reason ClassifySupplyEventXDR returns, for metric zero-seeding.
-var SupplySkipReasons = []string{SupplySkipNotTokenShaped, SupplySkipAmountNotI128, SupplySkipBodyUnparseable, SupplySkipJudgedNonToken}
+var SupplySkipReasons = []string{
+	SupplySkipTopicNotTokenShaped, SupplySkipNotTokenShaped, SupplySkipTopicUnparseable,
+	SupplySkipAmountNotI128, SupplySkipBodyUnparseable, SupplySkipJudgedNonToken,
+}
 
 // ClassifySupplyBodyXDR type-tests a mint/burn/clawback body before reading its amount: a bare i128 or a map carrying `amount` is
 // token-shaped; skip is "" when the amount decoded, else a SupplySkip* reason.
@@ -73,23 +81,29 @@ func ClassifySupplyBodyXDR(dataXDR string) (amount *big.Int, skip string) {
 
 // supplyTopicsSkip applies the SEP-41/CAP-67 topic shape before any body is read: a transfer is ["transfer", from, to, (asset)]; a mint,
 // burn or clawback has an Address at topic[1] (["mint", to, (asset)], legacy ["mint", admin, to, (asset)]). "" when token-shaped.
+// Any ScAddress arm passes: the amount, not the holder, is what supply sums, and a skip here never alerts.
 func supplyTopicsSkip(topicsXDR []string) string {
+	if len(topicsXDR) == 0 {
+		return SupplySkipTopicNotTokenShaped
+	}
+	t0, err := scval.Parse(topicsXDR[0])
+	if err != nil {
+		return SupplySkipTopicUnparseable
+	}
 	addrTopics := 1
-	if len(topicsXDR) > 0 {
-		if t0, err := scval.Parse(topicsXDR[0]); err == nil && topicName(t0) == "transfer" {
-			addrTopics = 2
-		}
+	if topicName(t0) == "transfer" {
+		addrTopics = 2
 	}
 	if len(topicsXDR) < 1+addrTopics {
-		return SupplySkipNotTokenShaped
+		return SupplySkipTopicNotTokenShaped
 	}
 	for _, t := range topicsXDR[1 : 1+addrTopics] {
 		sv, err := scval.Parse(t)
 		if err != nil {
-			return SupplySkipBodyUnparseable
+			return SupplySkipTopicUnparseable
 		}
 		if sv.Type != xdr.ScValTypeScvAddress {
-			return SupplySkipNotTokenShaped
+			return SupplySkipTopicNotTokenShaped
 		}
 	}
 	return ""

@@ -514,7 +514,8 @@ func callsRegSeed(f *ast.File) bool {
 			return true
 		}
 		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || sel.Sel.Name != "Seed" {
+		// SeedWithAttrs calls Seed, so it fires the same protocol_contracts hook.
+		if !ok || (sel.Sel.Name != "Seed" && sel.Sel.Name != "SeedWithAttrs") {
 			return true
 		}
 		switch recv := sel.X.(type) {

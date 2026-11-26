@@ -677,11 +677,11 @@ groups:
             heal the lake case: the ledgers row exists. A climb on
             every ledger is a TransactionMeta version break.
 
-      # Any contract can emit a mint/burn/clawback; not_token_shaped (an NFT's u32 id) and judged_non_token (a contract
-      # recorded as no token, clickhouse.judgedNonToken) lose no supply and are excluded.
-      # The other reasons are a token-shaped body whose amount did not decode: a supply_flows row is missing.
+      # Any contract can emit a mint/burn/clawback; topic_not_token_shaped (a pool's one-topic mint), not_token_shaped (an
+      # NFT's u32 id) and judged_non_token (a contract recorded as no token, clickhouse.judgedNonToken) lose no supply and
+      # are excluded. The other reasons are an event whose shape or amount did not decode: a supply_flows row may be missing.
       - alert: stellarindex_supply_flow_skipped
-        expr: sum by (reason) (increase(stellarindex_supply_flow_skipped_total{reason!~"not_token_shaped|judged_non_token"}[3h])) > 0
+        expr: sum by (reason) (increase(stellarindex_supply_flow_skipped_total{reason!~"topic_not_token_shaped|not_token_shaped|judged_non_token"}[3h])) > 0
         for: 0m
         keep_firing_for: 1h
         labels:
@@ -693,11 +693,11 @@ groups:
           summary: "Supply events written without a supply_flows row"
           description: |
             stellarindex_supply_flow_skipped_total rose for a reason
-            other than not_token_shaped (amount_not_i128 or
-            body_unparseable) in the last 3 hours.
-            A token-shaped mint/burn/clawback body was not decoded, so
-            that token's supply_flows sum is short. The raw event is in
-            contract_events.
+            that can short a token (topic_unparseable, amount_not_i128
+            or body_unparseable) in the last 3 hours.
+            A mint/burn/clawback whose topics or body did not decode has
+            no supply_flows row, so that token's sum may be short. The
+            raw event is in contract_events.
 
 
       # Served-tier twin of the ch_live_sink rules. The Postgres sink's shutdown drain
@@ -1228,7 +1228,7 @@ groups:
       # A job that skips undecodable records and carries on (a -follow daemon cannot exit on a
       # deterministic skip without crash-looping) advances its watermark past rows it never wrote.
       - alert: stellarindex_ops_job_records_skipped
-        expr: sum by (ops_job, reason) (increase(stellarindex_ops_job_skipped_total{reason!~"not_token_shaped|judged_non_token"}[3h])) > 0
+        expr: sum by (ops_job, reason) (increase(stellarindex_ops_job_skipped_total{reason!~"topic_not_token_shaped|not_token_shaped|judged_non_token"}[3h])) > 0
         for: 0m
         keep_firing_for: 1h
         labels:
@@ -1239,13 +1239,16 @@ groups:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#records-skipped
           summary: "ops job {{ $labels.ops_job }} skipped undecodable records"
           description: |
-            The job dropped records of a token-shaped body it could not
-            decode (reason amount_not_i128, body_unparseable or
-            decode_failed) and moved its watermark past them, so its
-            target table is missing those rows. not_token_shaped skips
-            (an NFT's transfer with a u32 id) are foreign traffic and
-            never alert. The raw events are still in the lake; the job's
-            log names each window with its skip counts by reason.
+            The job dropped records it could not decode (reason
+            topic_unparseable, amount_not_i128, body_unparseable,
+            decode_failed, or token_topic_not_token_shaped for a token
+            emitting an event without its address topics) and moved
+            its watermark past them, so its target table is missing
+            those rows. topic_not_token_shaped and not_token_shaped
+            skips (a pool's one-topic mint, an NFT's u32 transfer) are
+            foreign traffic and never alert. The raw events are still
+            in the lake; the job's log names each window with its skip
+            counts by reason.
 
       # The entry index (stellar.account_entry_ledgers / asset_entry_ledgers) is
       # what per-account and per-asset ledger walks read; a builder that stops

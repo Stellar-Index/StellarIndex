@@ -176,17 +176,16 @@ replay. soroswap requires the pair-registry seed for token identities. Each
 replay records a projection dirty window for its own `-source` only, which is
 why the DELETE is per source.
 
-`projected-rebuild` does not refresh the trades continuous aggregates, and
-their policies only roll forward, so served OHLC, VWAP and volume keep the
-deleted rows' figures until refreshed. After the last source's replay over a
-range:
+The aggregate policies only roll forward, so served OHLC, VWAP and volume keep
+the deleted rows' figures until refreshed. `projected-rebuild -write` and
+`projector-replay` refresh the trade and oracle aggregates over their range
+themselves (`-refresh-caggs`, default true). With `-refresh-caggs=false`, or
+after a failed refresh, run what the command prints:
 
 ```sh
 stellarindex-ops trades-cagg-refresh -config /etc/stellarindex.toml \
   -from <from> -to <to> -write
 ```
-
-`projector-replay` refreshes them itself (`-refresh-caggs`, default true).
 
 ### 4. Truthful watermarks + verification
 

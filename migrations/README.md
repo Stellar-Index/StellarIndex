@@ -544,6 +544,7 @@ rejects a row that is not.
 | 0234 | Corrects the `aquarius_rewards_events` table comment to the 12 kinds the CHECK admits, noting `config_rewards` rows carry the router, not a pool, as `contract_id`. COMMENT only. |
 | 0235 | Adds `customer_webhooks_one_current_key`: the current signing key is raw (`secret_hash`) or sealed (`signing_key_sealed`), never both. Changes no row: a row holding both stops the migration with its id for an operator to resolve by hand (pre-check in `docs/operations/credential-rotation.md`). NOT VALID then VALIDATE in one transaction on a small table. |
 | 0236 | Adds `nonstandard_decimals_assets_decimals_max` (`decimals <= 38`), the lake reader's ceiling, so a hand-seeded value cannot scale served prices by an arbitrary power of ten. NOT VALID then VALIDATE; a row already above 38 stops the migration for an operator to correct (pre-check in `docs/operations/runbooks/dex.md`). |
+| 0237 | Adds `aquarius_pools` (pool, raw `add_pool` pool type, first ledger), written by the live indexer from router `add_pool` events and read at boot to restore each pool's liquidity layout; a recorded type contradicting the in-code pool lists fails the warm. New empty plain table, old-binary-safe; no back-fill (the in-code lists type every pool announced up to the census). |
 ## References
 
 - [ADR-0003 i128 no-truncation](../docs/adr/0003-i128-no-truncation.md)

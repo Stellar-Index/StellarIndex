@@ -62,6 +62,11 @@ func (e ReservesEvent) EventKind() string {
 	return "aquarius.reserves"
 }
 
+// EventKinds is every kind EventKind can return, for callers that validate kind names before any event exists.
+func (ReservesEvent) EventKinds() []string {
+	return []string{ReservesEvent{}.EventKind(), ReservesEvent{Kind: EventReservesSync}.EventKind()}
+}
+
 // Source implements [consumer.Event].
 func (ReservesEvent) Source() string { return SourceName }
 
