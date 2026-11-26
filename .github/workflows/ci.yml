@@ -2317,6 +2317,11 @@ jobs:
         # firewall pointed at the old port. Structural grep, no hosts.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-prometheus-port-var-test.sh
+      - name: local prometheus rule include-list test
+        # The single-host Prometheus loads an INCLUDE list of rules.r1 files;
+        # a file with absent()-style or page rules misfires on a test net.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-local-prometheus-rules-test.sh
       - name: patroni etcd TLS render test
         # etcd and Patroni's etcd3 client must render https with mutual cert
         # auth by default, and the config tasks must refuse missing PEM
