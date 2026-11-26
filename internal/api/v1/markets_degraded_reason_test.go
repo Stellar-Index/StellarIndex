@@ -43,11 +43,15 @@ func serveDegraded(t *testing.T, route string, serve func(ctx context.Context, w
 func poolsDegradedReason(t *testing.T, route string, c *CachedMarketsReader) string {
 	t.Helper()
 	return serveDegraded(t, route, func(ctx context.Context, _ http.ResponseWriter) bool {
+		ctx, reads := withReadReport(ctx)
 		_, _, _, stale, err := c.AllPoolsStale(ctx, timescale.PoolsFilter{Sources: []string{"aquarius"}}, "", 50, timescale.MarketsOrderVolume24hDesc)
 		if err != nil {
 			t.Fatalf("AllPoolsStale: %v", err)
 		}
-		return stale
+		if reads.degradedReason() != "" && !stale {
+			t.Errorf("%s: a last-good copy was served unflagged stale", route)
+		}
+		return reads.degradedReason() != ""
 	})
 }
 
@@ -87,11 +91,19 @@ func TestPoolsDegradedReason_refreshRefusedWhenNoSlot(t *testing.T) {
 }
 
 func TestPoolsDegradedReason_refreshOverrun(t *testing.T) {
-	hold := newUpstreamHold(2) // the refresh parks, so it is in flight while the copy ages past its budget
+	hold := newUpstreamHold(2) // the refresh parks, so it is in flight while it runs past its budget
 	t.Cleanup(hold.release)
 	c := NewCachedMarketsReader(&swrPoolsUpstream{fakeMarketsReader: &fakeMarketsReader{}, hold: hold}, time.Minute)
 	warmPools(t, c)
 	expireMarketsEntries(c)
+	if got := poolsDegradedReason(t, "/t/pools-overrun-started", c); got != "" {
+		t.Errorf("the ask that starts the refresh: reason = %q, want none", got)
+	}
+	c.mu.Lock()
+	for _, e := range c.entries {
+		e.flightAt = e.flightAt.Add(-marketsRefreshBudget)
+	}
+	c.mu.Unlock()
 	if got := poolsDegradedReason(t, "/t/pools-overrun", c); got != obs.DegradedRefreshOverrun {
 		t.Errorf("reason = %q, want %q", got, obs.DegradedRefreshOverrun)
 	}

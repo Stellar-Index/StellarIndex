@@ -137,7 +137,8 @@ func expireMarketsCache(t *testing.T, c *CachedMarketsReader) {
 	}
 }
 
-func TestHandlePools_StaleWhileRevalidateServeIsNoStore(t *testing.T) {
+// The ask that finds old rows and starts their refresh serves them stale, not degraded, so it keeps the route band.
+func TestHandlePools_StaleWhileRevalidateServeKeepsTheBand(t *testing.T) {
 	c := NewCachedMarketsReader(swrMarketsUpstream{}, time.Minute)
 	s := New(Options{Markets: c})
 	const target = "/v1/pools"
@@ -146,13 +147,13 @@ func TestHandlePools_StaleWhileRevalidateServeIsNoStore(t *testing.T) {
 		t.Errorf("cold fill: Cache-Control = %q, want the route band", got)
 	}
 	expireMarketsCache(t, c)
-	if got := serveCacheControl(t, s.handlePools, target); got != "no-store" {
-		t.Errorf("stale-while-revalidate serve: Cache-Control = %q, want no-store", got)
+	if got := serveCacheControl(t, s.handlePools, target); got == "no-store" {
+		t.Errorf("stale-while-revalidate serve: Cache-Control = %q, want the route band", got)
 	}
 	expireMarketsCache(t, c)
 }
 
-func TestHandleMarkets_StaleOrPartialPageIsNoStore(t *testing.T) {
+func TestHandleMarkets_PartialPageIsNoStore(t *testing.T) {
 	c := NewCachedMarketsReader(swrMarketsUpstream{}, time.Minute)
 	s := New(Options{Markets: c})
 
@@ -163,8 +164,8 @@ func TestHandleMarkets_StaleOrPartialPageIsNoStore(t *testing.T) {
 		t.Errorf("failed sparkline enrichment: Cache-Control = %q, want no-store", got)
 	}
 	expireMarketsCache(t, c)
-	if got := serveCacheControl(t, s.handleMarkets, "/v1/markets"); got != "no-store" {
-		t.Errorf("stale-while-revalidate serve: Cache-Control = %q, want no-store", got)
+	if got := serveCacheControl(t, s.handleMarkets, "/v1/markets"); got == "no-store" {
+		t.Errorf("stale-while-revalidate serve: Cache-Control = %q, want the route band", got)
 	}
 	expireMarketsCache(t, c)
 }

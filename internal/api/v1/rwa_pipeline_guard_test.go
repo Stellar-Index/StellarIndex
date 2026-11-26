@@ -20,6 +20,8 @@ var listingOnlyPipelineCalls = map[string]string{
 	// Cursor validation and the store read belong to a paged listing;
 	// the RWA set is unpaged and reads per member issuer.
 	"listAssetsExtAt": "the RWA path reads per member issuer, not one keyset page",
+	// The page's last-good verdict on that one keyset read; RWA judges its per-issuer reads with catalogueListingsFailed.
+	"catalogueListingLastGood": "judges the listing's one keyset read; RWA judges its per-issuer reads via catalogueListingsFailed",
 	// The sparkline is an opt-in query parameter on /v1/assets. The RWA
 	// surface takes no query parameters and serves no series.
 	"attachSparklinesIfRequested": "no include= parameter on this surface, and no price series is served",
