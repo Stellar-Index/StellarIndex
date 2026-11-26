@@ -526,7 +526,26 @@ Open before the table is served:
 3. Check the attribution of both V1 residuals against their real
    `fill_auction` events with the prove pass (the 53013801 test uses a
    synthetic event at the golden version's transaction).
-4. Unexplained by design until their amount relation is reproduced:
-   `defaulted_debt` (V2 cuts b_rate by `fixed_div_ceil(to_asset_from_d_token
-   (d_tokens_burnt), b_supply)`; the fold's supply_residual is not that
-   amount), `bad_debt`, and V1 `update_pool`'s retroactive bstop_rate.
+4. V2 `defaulted_debt` (topics `[Symbol, asset]`, body `d_tokens_burnt`
+   i128). `User::default_liabilities` runs on a reserve `load_reserve` has
+   already accrued, burns the d-tokens from `d_supply` with nothing repaid,
+   and sets `b_rate = max(0, b_rate − fixed_div_ceil(fixed_mul_ceil(
+   d_tokens_burnt, d_rate, S), b_supply, S))`, `S` = 1e12; `b_supply` and
+   `d_rate` do not move, so a transaction's defaults compose by applying each
+   in event order, and the per-event ceilings do not sum to one cut over the
+   summed d-tokens. `blend.DefaultedBRate` (`internal/sources/blend/default.go`,
+   `default_test.go`) implements it as transcribed from v2.0.0
+   `pool/src/pool/user.rs` and `bad_debt.rs`; no contract source is in this
+   repo and no real version checks it, so the rounding, the clamp and the
+   accrual-first order stay unconfirmed until the versions below are
+   fixtures. On the production lake
+   (2026-11-26) all 8 versions the full-history proof left unexplained are
+   b_rate mismatches in the transactions of 8 such events: pool `CCCCIQSD…`
+   ledgers 61,341,315 (2 events) and 61,342,113 (3), pool `CBYOBT7Z…` ledger
+   64,534,597 (3). The fold still counts them unexplained: the table has no
+   column for a supplier-side loss an event explains (`residual_explained`
+   is backstop credit), and the fold's `supply_residual` is the loss
+   measured on `total_supply`, not the b_rate cut.
+5. Unexplained by design until their amount relation is reproduced:
+   `bad_debt` (liabilities moved to the backstop, documented above) and V1
+   `update_pool`'s retroactive bstop_rate.
