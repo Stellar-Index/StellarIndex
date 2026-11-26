@@ -18,6 +18,8 @@ const (
 	// Its `burn` body at mainnet ledger 65660039.
 	secondJudgedPoolBurnBody = "AAAAEQAAAAEAAAAGAAAADwAAAAZhbW91bnQAAAAAAAkAAAAAAAAAAAAAAhu6WyJ1AAAADwAAAAdhbW91bnQwAAAAAAkAAAAAAAAAAAAAAFIMHjt5AAAADwAAAAdhbW91bnQxAAAAAAkAAAAAAAAAAAAAAAAAAAAAAAAADwAAAAVvd25lcgAAAAAAABIAAAABXU1ExcP57syWoe2HRKg3Ug6rh87TcybzwVhIsVhLprsAAAAPAAAACnRpY2tfbG93ZXIAAAAAAAT//3UEAAAADwAAAAp0aWNrX3VwcGVyAAAAAAAE//93DA=="
 	unjudgedContract         = "CCKCKCPHYVXQD4NECBFJTFSCU2AMSJGCNG4O6K4JVRE2BLPR7WNDBQIQ"
+	// burnTopic0 is ScSymbol("burn"), the only topic the two pools' burns carry.
+	burnTopic0 = "AAAADwAAAARidXJu"
 )
 
 func i128Body(t *testing.T, lo uint64) string {
@@ -35,14 +37,27 @@ func tokenBurnTopics(t *testing.T) []string {
 	return b64All(t, symScVal("burn"), accountAddrScVal(4))
 }
 
+// withJudgement installs a judgement for the test's duration, so the mechanism is tested without a real entry. Not for t.Parallel tests.
+func withJudgement(t *testing.T, contractID, reason string) {
+	t.Helper()
+	prev, had := judgedNonToken[contractID]
+	judgedNonToken[contractID] = Judgement{Reason: reason, Verdict: "test", Evidence: "test", Judged: "2026-11-26"}
+	t.Cleanup(func() {
+		if had {
+			judgedNonToken[contractID] = prev
+		} else {
+			delete(judgedNonToken, contractID)
+		}
+	})
+}
+
 func TestClassifySupplyEventXDR_Judged(t *testing.T) {
+	withJudgement(t, judgedPool, SupplySkipAmountNotI128)
 	for _, tc := range []struct {
 		name, contract, body, want string
 	}{
 		{"listed contract, judged reason", judgedPool, judgedPoolBurnBody, SupplySkipJudgedNonToken},
 		{"unlisted contract, same body", unjudgedContract, judgedPoolBurnBody, SupplySkipAmountNotI128},
-		{"second listed pool, its own burn body", secondJudgedPool, secondJudgedPoolBurnBody, SupplySkipJudgedNonToken},
-		{"unlisted contract, second pool's body", unjudgedContract, secondJudgedPoolBurnBody, SupplySkipAmountNotI128},
 		{"listed contract, other failure", judgedPool, "not-base64-xdr!", SupplySkipBodyUnparseable},
 	} {
 		if amt, skip := ClassifySupplyEventXDR(tc.contract, tokenBurnTopics(t), tc.body); skip != tc.want || amt != nil {
@@ -55,10 +70,29 @@ func TestClassifySupplyEventXDR_Judged(t *testing.T) {
 	}
 }
 
-func TestJudgedNonToken_WellFormed(t *testing.T) {
-	if len(judgedNonToken) == 0 {
-		t.Fatal("judgedNonToken is empty")
+// The two pools' recorded burns carry one topic, so the topic rule skips them before any judgement of their body can apply.
+func TestClassifySupplyEventXDR_PoolBurnsNeedNoJudgement(t *testing.T) {
+	burns := map[string]string{judgedPool: judgedPoolBurnBody, secondJudgedPool: secondJudgedPoolBurnBody}
+	classify := func() map[string]string {
+		got := map[string]string{}
+		for id, body := range burns {
+			_, got[id] = ClassifySupplyEventXDR(id, []string{burnTopic0}, body)
+		}
+		return got
 	}
+	unjudged := classify()
+	for id := range burns {
+		withJudgement(t, id, SupplySkipAmountNotI128)
+	}
+	judged := classify()
+	for id := range burns {
+		if unjudged[id] != SupplySkipTopicNotTokenShaped || judged[id] != unjudged[id] {
+			t.Errorf("%s one-topic burn: unjudged=%q judged=%q, want both %q", id, unjudged[id], judged[id], SupplySkipTopicNotTokenShaped)
+		}
+	}
+}
+
+func TestJudgedNonToken_WellFormed(t *testing.T) {
 	for id, j := range judgedNonToken {
 		if _, err := strkey.Decode(strkey.VersionByteContract, id); err != nil {
 			t.Errorf("%s: not a contract strkey: %v", id, err)
@@ -77,6 +111,7 @@ func TestJudgedNonToken_WellFormed(t *testing.T) {
 
 // An alerting skip names its contract (bounded per ledger); a non-alerting one does not.
 func TestRecordSupplyFlow_SamplesAlertingSkipContracts(t *testing.T) {
+	withJudgement(t, judgedPool, SupplySkipAmountNotI128)
 	ext := &LedgerExtract{}
 	at := time.Unix(0, 0)
 	rec := func(contract, body string) {

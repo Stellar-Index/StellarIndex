@@ -40,7 +40,7 @@ evaluation_interval: 1m
 
 tests:
   # A -follow daemon that skips undecodable events keeps running and exits clean; only the skip gauge rising shows it.
-  # Only a reason other than not_token_shaped alerts.
+  # Only a reason other than topic_not_token_shaped, not_token_shaped or judged_non_token alerts.
   - interval: 1m
     name: a running job whose actionable skip count rises tickets records_skipped
     input_series:
@@ -63,13 +63,16 @@ tests:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#records-skipped
               summary: "ops job ch-cap67-movements skipped undecodable records"
               description: |
-                The job dropped records of a token-shaped body it could not
-                decode (reason amount_not_i128, body_unparseable or
-                decode_failed) and moved its watermark past them, so its
-                target table is missing those rows. not_token_shaped skips
-                (an NFT's transfer with a u32 id) are foreign traffic and
-                never alert. The raw events are still in the lake; the job's
-                log names each window with its skip counts by reason.
+                The job dropped records it could not decode (reason
+                topic_unparseable, amount_not_i128, body_unparseable,
+                decode_failed, or token_topic_not_token_shaped for a token
+                emitting an event without its address topics) and moved
+                its watermark past them, so its target table is missing
+                those rows. topic_not_token_shaped and not_token_shaped
+                skips (a pool's one-topic mint, an NFT's u32 transfer) are
+                foreign traffic and never alert. The raw events are still
+                in the lake; the job's log names each window with its skip
+                counts by reason.
 
   # One isolated skip (a single step, then flat) must still ticket.
   - interval: 1m
@@ -91,13 +94,16 @@ tests:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#records-skipped
               summary: "ops job ch-cap67-movements skipped undecodable records"
               description: |
-                The job dropped records of a token-shaped body it could not
-                decode (reason amount_not_i128, body_unparseable or
-                decode_failed) and moved its watermark past them, so its
-                target table is missing those rows. not_token_shaped skips
-                (an NFT's transfer with a u32 id) are foreign traffic and
-                never alert. The raw events are still in the lake; the job's
-                log names each window with its skip counts by reason.
+                The job dropped records it could not decode (reason
+                topic_unparseable, amount_not_i128, body_unparseable,
+                decode_failed, or token_topic_not_token_shaped for a token
+                emitting an event without its address topics) and moved
+                its watermark past them, so its target table is missing
+                those rows. topic_not_token_shaped and not_token_shaped
+                skips (a pool's one-topic mint, an NFT's u32 transfer) are
+                foreign traffic and never alert. The raw events are still
+                in the lake; the job's log names each window with its skip
+                counts by reason.
 
   # Foreign-contract traffic (an NFT's transfer with a u32 token id) climbs forever without alerting.
   - interval: 1m
@@ -111,6 +117,50 @@ tests:
       - eval_time: 200m
         alertname: stellarindex_ops_job_records_skipped
         exp_alerts: []
+
+  # A pool's one-topic mint is no token's event and climbs without alerting.
+  - interval: 1m
+    name: topic_not_token_shaped skips alone never ticket records_skipped
+    input_series:
+      - series: 'stellarindex_ops_job_skipped_total{job="node_exporter",instance="r1:9100",ops_job="ch-cap67-movements",reason="topic_not_token_shaped"}'
+        values: '0+5x300'
+      - series: 'stellarindex_ops_job_skipped_total{job="node_exporter",instance="r1:9100",ops_job="ch-cap67-movements",reason="amount_not_i128"}'
+        values: '0+0x300'
+    alert_rule_test:
+      - eval_time: 200m
+        alertname: stellarindex_ops_job_records_skipped
+        exp_alerts: []
+
+  # The same topic shape from a contract whose token events decoded in the window may be a token's hidden supply.
+  - interval: 1m
+    name: a token's topic-shape skip tickets records_skipped
+    input_series:
+      - series: 'stellarindex_ops_job_skipped_total{job="node_exporter",instance="r1:9100",ops_job="ch-cap67-movements",reason="token_topic_not_token_shaped"}'
+        values: '0 0 0 1+0x300'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_ops_job_records_skipped
+        exp_alerts:
+          - exp_labels:
+              ops_job: ch-cap67-movements
+              reason: token_topic_not_token_shaped
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#records-skipped
+              summary: "ops job ch-cap67-movements skipped undecodable records"
+              description: |
+                The job dropped records it could not decode (reason
+                topic_unparseable, amount_not_i128, body_unparseable,
+                decode_failed, or token_topic_not_token_shaped for a token
+                emitting an event without its address topics) and moved
+                its watermark past them, so its target table is missing
+                those rows. topic_not_token_shaped and not_token_shaped
+                skips (a pool's one-topic mint, an NFT's u32 transfer) are
+                foreign traffic and never alert. The raw events are still
+                in the lake; the job's log names each window with its skip
+                counts by reason.
 
   # A contract recorded in clickhouse.judgedNonToken is relabelled; its skips climb without alerting.
   - interval: 1m

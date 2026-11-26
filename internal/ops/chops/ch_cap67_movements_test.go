@@ -742,32 +742,25 @@ func TestDeriveCap67MovementsWindow_OneTopicPoolMintIsNotTokenShaped(t *testing.
 	if err != nil || rows != 0 {
 		t.Fatalf("derive: rows=%d err=%v, want 0 rows and nil", rows, err)
 	}
-	if skips[clickhouse.SupplySkipNotTokenShaped] != 1 || skips[clickhouse.SupplySkipAmountNotI128] != 1 || skips.actionable() != 1 {
-		t.Fatalf("skips = %v actionable=%d, want not_token_shaped=1, amount_not_i128=1, actionable 1", map[string]uint64(skips), skips.actionable())
+	if skips[clickhouse.SupplySkipTopicNotTokenShaped] != 1 || skips[clickhouse.SupplySkipAmountNotI128] != 1 || skips.actionable() != 1 {
+		t.Fatalf("skips = %v actionable=%d, want topic_not_token_shaped=1, amount_not_i128=1, actionable 1", map[string]uint64(skips), skips.actionable())
 	}
 }
 
-// A judged contract's skip is relabelled and not actionable; an unjudged one with the same body alerts, and the window's line names
-// it so the ticket needs no lake search.
-func TestDeriveCap67MovementsWindow_JudgedAndNamedSkips(t *testing.T) {
+// deriveWindowStderr runs one stubbed window and returns its skips and its stderr line.
+func deriveWindowStderr(t *testing.T, lake []events.Event) (cap67Skips, string) {
+	t.Helper()
 	canonical.InstallNetworkPassphrase("")
 	orig := streamCap67TransferEvents
 	t.Cleanup(func() { streamCap67TransferEvents = orig })
-	const poolBody = "AAAAEQAAAAEAAAAGAAAADwAAAAZhbW91bnQAAAAAAAkAAAAAAAAAAAAAs/+k8uDsAAAADwAAAAdhbW91bnQwAAAAAAkAAAAAAAAAAAAAASUJspE0AAAADwAAAAdhbW91bnQxAAAAAAkAAAAAAAAAAAAAAPnT7H7cAAAADwAAAAVvd25lcgAAAAAAABIAAAABIzovoLDzgMm/PSicyUIChIApn2d5n/jeVHAlcu+O3HoAAAAPAAAACnRpY2tfbG93ZXIAAAAAAAQAAAhwAAAADwAAAAp0aWNrX3VwcGVyAAAAAAAEAAAJYA=="
-	judged := cap67TransferEvent(t, "")
-	judged.ContractID = "CAOAVZOUDGYDI3QJTCDEQ3GJPWFN7QHM632EQZLWAIUWKILEFTKZUPE6"
-	judged.Value = poolBody
-	unjudged := cap67TransferEvent(t, "")
-	unjudged.Value = poolBody
 	streamCap67TransferEvents = func(_ context.Context, _ string, _, _ uint32, _, _, _ []string, _, _, _, _ bool, fn func(events.Event) error) error {
-		for _, ev := range []events.Event{judged, unjudged, unjudged} {
+		for _, ev := range lake {
 			if err := fn(ev); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
-
 	stderr := os.Stderr
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -779,19 +772,46 @@ func TestDeriveCap67MovementsWindow_JudgedAndNamedSkips(t *testing.T) {
 	_ = w.Close()
 	os.Stderr = stderr
 	out, _ := io.ReadAll(r)
-
 	if derr != nil {
 		t.Fatalf("derive: %v", derr)
 	}
-	if skips[clickhouse.SupplySkipJudgedNonToken] != 1 || skips[clickhouse.SupplySkipAmountNotI128] != 2 || skips.actionable() != 2 {
-		t.Fatalf("skips = %v actionable=%d, want judged_non_token=1, amount_not_i128=2, actionable 2", map[string]uint64(skips), skips.actionable())
+	return skips, string(out)
+}
+
+// A contract whose token events decode in the window and that also emits a one-topic `mint` is a token whose supply the
+// topic rule would hide: those skips alert under their own reason and name it; a contract with no token event stays quiet.
+func TestDeriveCap67MovementsWindow_TokenTopicShapeAlerts(t *testing.T) {
+	void := xdr.ScVal{Type: xdr.ScValTypeScvVoid}
+	tokenMint := cap67SupplyEvent(t, sep41supply.SymbolMint, cap67USDCSAC, cap67USDCName, scI128(1))
+	tokenShapeless := cap67SupplyEvent(t, sep41supply.SymbolMint, cap67USDCSAC, "", scI128(5))
+	tokenShapeless.Topic = tokenShapeless.Topic[:1]
+	pool := cap67SupplyEvent(t, sep41supply.SymbolMint, "CBTOQ7X7TLDBRHJW4UYUDR7WR4NAYESZA7FYUZVLAN2JLQG5ZXWJJIG6", "", void)
+	pool.Topic = pool.Topic[:1]
+	// The shapeless mint precedes the token's decoded one: the window settles at its end, not in stream order.
+	skips, line := deriveWindowStderr(t, []events.Event{tokenShapeless, tokenShapeless, pool, tokenMint})
+	if skips[cap67SkipTokenTopicShape] != 2 || skips[clickhouse.SupplySkipTopicNotTokenShaped] != 1 || skips.total() != 3 || skips.actionable() != 2 {
+		t.Fatalf("skips = %v actionable=%d, want %s=2, topic_not_token_shaped=1, actionable 2",
+			map[string]uint64(skips), skips.actionable(), cap67SkipTokenTopicShape)
 	}
-	line := string(out)
+	if want := cap67USDCSAC + ":" + cap67SkipTokenTopicShape; strings.Count(line, want) != 1 || strings.Contains(line, pool.ContractID+":") {
+		t.Errorf("skip line should name %q once and not the pool: %q", want, line)
+	}
+}
+
+// An unjudged token-shaped skip alerts and the window's line names it so the ticket needs no lake search; a judged skip does not count.
+func TestDeriveCap67MovementsWindow_NamedSkips(t *testing.T) {
+	const poolBody = "AAAAEQAAAAEAAAAGAAAADwAAAAZhbW91bnQAAAAAAAkAAAAAAAAAAAAAs/+k8uDsAAAADwAAAAdhbW91bnQwAAAAAAkAAAAAAAAAAAAAASUJspE0AAAADwAAAAdhbW91bnQxAAAAAAkAAAAAAAAAAAAAAPnT7H7cAAAADwAAAAVvd25lcgAAAAAAABIAAAABIzovoLDzgMm/PSicyUIChIApn2d5n/jeVHAlcu+O3HoAAAAPAAAACnRpY2tfbG93ZXIAAAAAAAQAAAhwAAAADwAAAAp0aWNrX3VwcGVyAAAAAAAEAAAJYA=="
+	unjudged := cap67TransferEvent(t, "")
+	unjudged.Value = poolBody
+	skips, line := deriveWindowStderr(t, []events.Event{unjudged, unjudged})
+	if skips[clickhouse.SupplySkipAmountNotI128] != 2 || skips.actionable() != 2 {
+		t.Fatalf("skips = %v actionable=%d, want amount_not_i128=2, actionable 2", map[string]uint64(skips), skips.actionable())
+	}
 	if want := unjudged.ContractID + ":" + clickhouse.SupplySkipAmountNotI128; strings.Count(line, want) != 1 {
 		t.Errorf("skip line should name %q once: %q", want, line)
 	}
-	if strings.Contains(line, judged.ContractID+":") {
-		t.Errorf("skip line names the judged contract: %q", line)
+	if got := (cap67Skips{clickhouse.SupplySkipJudgedNonToken: 1}).actionable(); got != 0 {
+		t.Errorf("judged_non_token actionable = %d, want 0", got)
 	}
 }
 

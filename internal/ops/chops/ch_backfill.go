@@ -381,7 +381,8 @@ func (l *extractLoss) supplySkipSummary() string {
 	}
 	sort.Strings(parts)
 	return "supply events with no supply_flows row (raw events kept in contract_events; only reasons other than " +
-		clickhouse.SupplySkipNotTokenShaped + " and " + clickhouse.SupplySkipJudgedNonToken + " short a token's supply): " + strings.Join(parts, " ")
+		clickhouse.SupplySkipTopicNotTokenShaped + ", " + clickhouse.SupplySkipNotTokenShaped + " and " + clickhouse.SupplySkipJudgedNonToken +
+		" short a token's supply): " + strings.Join(parts, " ")
 }
 
 // record adds one ledger's undercounts and reports whether it had any. Changes-only writes no txs or events, so it
