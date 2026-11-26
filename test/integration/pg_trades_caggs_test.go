@@ -58,6 +58,10 @@ func TestCAGGHistoryStarts(t *testing.T) {
 			t.Fatalf("%s: %v", q, err)
 		}
 	}
+	// asset_supply_history's time dimension is `time`, not `ts`: the source read must follow the catalog.
+	supplySrc := now.AddDate(0, 0, -5)
+	exec(`INSERT INTO asset_supply_history (time, asset_key, total_supply, circulating_supply, basis, ledger_sequence)
+		VALUES ($1, 'XLM', 1000::numeric, 900::numeric, 'classic', 50000000)`, supplySrc)
 	refresh := func(view string, from, to any) {
 		t.Helper()
 		exec(fmt.Sprintf(`CALL refresh_continuous_aggregate('%s', $1::timestamptz, $2::timestamptz)`, view), from, to)
@@ -96,10 +100,12 @@ func TestCAGGHistoryStarts(t *testing.T) {
 		if r := got["prices_1m"]; r.MaterialisedStart.IsZero() || r.Gap < wholeHistory-3*time.Hour {
 			t.Errorf("prices_1m holding a 2 h sliver: %+v, want a gap of ~9 days", r)
 		}
-		for _, view := range []string{"oracle_prices_1h", "supply_1d"} {
-			if r := got[view]; !r.SourceStart.IsZero() || r.Gap != 0 {
-				t.Errorf("%s over an empty source: %+v, want no expected start and gap 0", view, r)
-			}
+		if r := got["oracle_prices_1h"]; !r.SourceStart.IsZero() || r.Gap != 0 {
+			t.Errorf("oracle_prices_1h over an empty source: %+v, want no expected start and gap 0", r)
+		}
+		if r := got["supply_1d"]; !near(r.SourceStart, supplySrc, time.Second) || !r.MaterialisedStart.IsZero() ||
+			r.Gap < 5*24*time.Hour-time.Minute {
+			t.Errorf("supply_1d over 5 days of asset_supply_history: %+v, want source start %s and a ~5 day gap", r, supplySrc)
 		}
 		if got["prices_1h"].TradesRetentionPresent {
 			t.Error("TradesRetentionPresent with no policy on trades")
@@ -150,7 +156,7 @@ func TestCAGGHistoryStarts(t *testing.T) {
 	})
 
 	t.Run("a fully refreshed view reads gap 0, coarse buckets included", func(t *testing.T) {
-		for _, spec := range timescale.TradesCAGGs {
+		for _, spec := range append(slices.Clone(timescale.TradesCAGGs), timescale.SupplyCAGG) {
 			refresh(spec.Name, nil, nil)
 		}
 		got := measure()
