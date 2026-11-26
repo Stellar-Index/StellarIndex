@@ -239,10 +239,10 @@ func assetListCacheKey(r *http.Request) string {
 	}.Encode()
 }
 
-// assetListPageCacheable reports whether a built page may be replayed: a stale-flagged page or one with a transient read
-// failure would outlive the outage that shaped it.
+// assetListPageCacheable reports whether a built page may be replayed: a stale- or degraded-flagged page or one with a
+// transient read failure would outlive the outage that shaped it.
 func assetListPageCacheable(env Envelope, rows []AssetDetail) bool {
-	if env.Flags.Stale {
+	if env.Flags.Stale || env.Flags.Degraded {
 		return false
 	}
 	for i := range rows {

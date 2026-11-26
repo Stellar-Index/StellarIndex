@@ -75,6 +75,8 @@ type assetsCacheEntry struct {
 	err error
 	// refreshFailed: the last refresh of a filled entry failed or panicked; only a successful fill clears it.
 	refreshFailed bool
+	// flightAt is when the refresh in flight started; it, not the rows' age, says whether that refresh has overrun.
+	flightAt time.Time
 }
 
 // NewCachedAssetsReader wraps upstream with a TTL cache (ttl=0 disables); production passes [AssetCatalogueTTL].
@@ -314,7 +316,7 @@ func (c *CachedAssetsReader) fetchRowsAt(
 		lastGood := swrverdict.Stale(time.Since(e.at), c.ttl, assetsRefreshBudget, e.refreshFailed)
 		if e.flight == nil {
 			done := make(chan struct{})
-			e.flight = done
+			e.flight, e.flightAt = done, time.Now()
 			entry := e
 			c.mu.Unlock()
 			obs.APICacheOpsTotal.WithLabelValues("coins", op, "stale").Inc()
