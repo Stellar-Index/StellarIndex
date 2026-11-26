@@ -136,6 +136,22 @@ gh workflow run deploy.yml -f region=futurenet -f version=vX.Y.Z -f binaries=ste
 
 Verify: `curl -sf https://api.testnet.stellarindex.io/v1/version | jq -r .data.version` equals r1's.
 
+## Enabling pricing on a test net
+
+The role's peg defaults are pubnet issuers. Set these in the host inventory together:
+
+```yaml
+run_aggregator: true
+stellarindex_usd_pegged_classic_assets: ["USDC-<this network's USDC issuer>"]
+stellarindex_fiat_pegged_classic_assets: {}
+stellarindex_watched_classic_assets: [<this network's classic assets>]
+```
+
+- The USD peg must be **this network's own** USDC issuer. The preflight fails the play if any of the three variables carries a pubnet issuer from the role defaults (`CODE-ISSUER` or `CODE:ISSUER`).
+- The CEX/FX connectors (`[external]`) and the oracle contracts stay off on a test net whatever `run_aggregator` says: a CEX XLM price is the mainnet price. Prices come from on-chain trades against the USD peg only.
+- Add `stellarindex-aggregator` to the region's binary set in `scripts/dev/region-binaries.tsv` (dropping its `stellarindex-aggregator:` exception) and to the deploy dispatch.
+- Price history starts when the aggregator is enabled; earlier buckets stay unpriced.
+
 ## Known gaps
 
 - `/v1/markets` on test nets is empty (empty `prices_1d` CAGG); use `/v1/pools`.

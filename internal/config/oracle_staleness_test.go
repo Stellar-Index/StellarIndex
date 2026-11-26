@@ -61,8 +61,7 @@ func TestAnsibleOracleStalenessOverrides_ValidAndComplete(t *testing.T) {
 		t.Skipf("ansible template not at %s: %v", path, err)
 	}
 
-	// Same extraction shape as TestAnsibleFiatPegStanza_ValidAndComplete:
-	// keep the stanza body, drop jinja control lines and {# … #} comments
+	// Keep the stanza body, drop jinja control lines and {# … #} comments
 	// so the rendered TOML round-trips through the decoder.
 	var out []string
 	inStanza := false

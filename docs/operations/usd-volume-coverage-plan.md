@@ -223,8 +223,8 @@ needs `usd_pegged_classic_assets`: `InstallUSDVolumeResolution` refuses fiat
 pegs on their own.
 
 AUDD and AUDR sit in the same map; the substance gate withholds their on-chain
-prices, so the tier declines them. Adding an asset is one line in the
-`[pricing_guard.fiat_pegged_classic_assets]` stanza. The tier is forward-only:
+prices, so the tier declines them. Adding an asset is one entry in the
+archival-node role default `stellarindex_fiat_pegged_classic_assets`. The tier is forward-only:
 no restamp lane reaches it, so stored rows keep their FX-tier value (within the
 2% band where the declared leg was the quote; the old quote-priced value where
 it was the base), and rows the FX tier left NULL stay NULL.
