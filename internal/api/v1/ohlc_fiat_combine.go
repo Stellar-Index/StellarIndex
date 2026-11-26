@@ -356,9 +356,7 @@ func amountScaleDecimalsFor(source string) int {
 // sortTradesChronological orders merged trades by close time ascending, as [aggregate.ComputeOHLC] and [aggregate.TWAP] require;
 // ties break by [aggregate.TradeOrderLess], not slice position, so served open/close never depends on merge order (ADR-0015).
 func sortTradesChronological(trades []canonical.Trade) {
-	sort.Slice(trades, func(i, j int) bool {
-		return aggregate.TradeOrderLess(&trades[i], &trades[j])
-	})
+	aggregate.SortTradeOrder(trades)
 }
 
 // ohlcBarScaleUnknown is the scale of a bar whose reader reported no sources: distinct from 8 (the registry fallback), which

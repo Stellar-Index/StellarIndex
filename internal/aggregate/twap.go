@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"regexp"
+	"slices"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -103,6 +105,105 @@ func instantVolumes(group []canonical.Trade) (base, quote *big.Int, priced int) 
 		priced++
 	}
 	return base, quote, priced
+}
+
+// ClosedBucket is one closed bucket for [TWAPFromBuckets]: Start is the stored `bucket` value (prices_1m.bucket), so the bucket
+// covers [Start, Start+interval); VWAP is its exact plain-decimal NUMERIC text.
+type ClosedBucket struct {
+	Start time.Time
+	VWAP  string
+}
+
+// BucketTWAP is a [TWAPFromBuckets] result: the exact price, how many buckets carried weight, and the newest of them.
+type BucketTWAP struct {
+	Price   *big.Rat
+	Buckets int
+	Newest  time.Time
+}
+
+var (
+	// ErrDuplicateBucketStart is returned from [TWAPFromBuckets] when two buckets share a start: one minute with two prices is ambiguous.
+	ErrDuplicateBucketStart = errors.New("aggregate: two buckets share a start time")
+	// ErrInvalidBucketVWAP is returned from [TWAPFromBuckets] for a VWAP that is not a strictly positive plain decimal.
+	ErrInvalidBucketVWAP = errors.New("aggregate: bucket VWAP is not a positive plain decimal")
+	// ErrInvalidTWAPWindow is returned from [TWAPFromBuckets] when end is not after start.
+	ErrInvalidTWAPWindow = errors.New("aggregate: TWAP window end is not after its start")
+)
+
+// plainDecimal is NUMERIC's text form; big.Rat.SetString alone would also take fractions, exponents, base prefixes and underscores.
+var plainDecimal = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
+
+// TWAPFromBuckets time-weights closed buckets over [start, end] with exact nanosecond weights: each price holds from its Start to the
+// next bucket's Start or end. The newest bucket starting before start carries in from start only if it starts no earlier than
+// start-maxCarry; maxCarry <= 0 disables carry-in. Input order is irrelevant (sorted internally). ok=false with a nil error means no
+// bucket covers any of the window: there is no value, not a zero price.
+func TWAPFromBuckets(buckets []ClosedBucket, start, end time.Time, maxCarry time.Duration) (res BucketTWAP, ok bool, err error) {
+	if !end.After(start) {
+		return BucketTWAP{}, false, ErrInvalidTWAPWindow
+	}
+	sorted, prices, err := sortedBucketPrices(buckets)
+	if err != nil {
+		return BucketTWAP{}, false, err
+	}
+	weighted, total := new(big.Rat), new(big.Int)
+	for i := range sorted {
+		if !sorted[i].Start.Before(end) {
+			break
+		}
+		holdUntil := end
+		if i+1 < len(sorted) && sorted[i+1].Start.Before(end) {
+			holdUntil = sorted[i+1].Start
+		}
+		from := sorted[i].Start
+		if from.Before(start) {
+			if maxCarry <= 0 || from.Before(start.Add(-maxCarry)) {
+				continue
+			}
+			from = start
+		}
+		w := new(big.Int).Sub(unixNanos(holdUntil), unixNanos(from))
+		if w.Sign() <= 0 {
+			continue
+		}
+		weighted.Add(weighted, new(big.Rat).Mul(prices[i], new(big.Rat).SetInt(w)))
+		total.Add(total, w)
+		res.Buckets++
+		res.Newest = sorted[i].Start
+	}
+	if total.Sign() == 0 {
+		return BucketTWAP{}, false, nil
+	}
+	res.Price = weighted.Quo(weighted, new(big.Rat).SetInt(total))
+	return res, true, nil
+}
+
+// unixNanos is t as nanoseconds since the epoch, in a big.Int: time.Time.Sub saturates at ~292 years.
+func unixNanos(t time.Time) *big.Int {
+	n := new(big.Int).Mul(big.NewInt(t.Unix()), big.NewInt(int64(time.Second)))
+	return n.Add(n, big.NewInt(int64(t.Nanosecond())))
+}
+
+// sortedBucketPrices returns a start-ascending copy of buckets with each VWAP parsed, rejecting duplicate starts and anything but a
+// strictly positive plain decimal.
+func sortedBucketPrices(buckets []ClosedBucket) ([]ClosedBucket, []*big.Rat, error) {
+	sorted := slices.Clone(buckets)
+	slices.SortFunc(sorted, func(a, b ClosedBucket) int { return a.Start.Compare(b.Start) })
+	prices := make([]*big.Rat, len(sorted))
+	for i := range sorted {
+		at := sorted[i].Start.Format(time.RFC3339Nano)
+		if i > 0 && sorted[i].Start.Equal(sorted[i-1].Start) {
+			return nil, nil, fmt.Errorf("%w: %s", ErrDuplicateBucketStart, at)
+		}
+		if !plainDecimal.MatchString(sorted[i].VWAP) {
+			return nil, nil, fmt.Errorf("%w: %q at %s", ErrInvalidBucketVWAP, sorted[i].VWAP, at)
+		}
+		p, ok := new(big.Rat).SetString(sorted[i].VWAP)
+		if !ok || p.Sign() <= 0 {
+			return nil, nil, fmt.Errorf("%w: %q at %s", ErrInvalidBucketVWAP, sorted[i].VWAP, at)
+		}
+		prices[i] = p
+	}
+	return sorted, prices, nil
 }
 
 // accrueTWAPSlot adds one priced instant's slot: floor(quote × SCALE × Δt / base) to weightedSum and Δt ns to totalNanos; base/quote are the instant's
