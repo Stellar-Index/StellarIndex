@@ -67,7 +67,8 @@ var CauseRules = []CauseRule{
 	{
 		Cause: CauseDefaultedDebt, Protocols: []Protocol{BlendV2}, Event: "defaulted_debt", DTokens: true,
 		Rule: "b_rate −= ceil(ceil(d_tokens_burnt·d_rate/S)·S/b_supply), floored at 0, after the accrual, per event " +
-			"(blend.DefaultedBRate); only with b_supply unmoved by the transaction",
+			"(blend.DefaultedBRate), divided by the pre-transaction b_supply: a supply or withdraw before the cut breaks " +
+			"the equality and the version stays unexplained",
 		Evidence: "blend-contracts-v2 v2.0.0 pool/src/pool/user.rs default_liabilities; reproduces all 8 mainnet versions " +
 			"in internal/sources/blend/testdata/defaulted_debt (TestDefaultedBRate_ReproducesMainnet)",
 	},
@@ -262,10 +263,10 @@ func (st *state) explain(row *HourRow, nexts []Version, residual *big.Int, onlyB
 // defaulted reports whether the version's b_rate is exactly the accrual's expected b_rate cut by each defaulted_debt
 // its own transaction emits for the asset, dividing by prev's b_supply. Cuts read neither b_rate nor each other, so
 // their order cannot matter. A supply or withdraw after the cut moves b_supply but not b_rate; one before it changes
-// the divisor, and then the exact b_rate does not match.
-func (st *state) defaulted(proto Protocol, prev blend.ReserveData, nexts []Version, expected *big.Int) bool {
+// the divisor, and then the exact b_rate does not match. Only a V2 pool can hold the event (checkEvent).
+func (st *state) defaulted(prev blend.ReserveData, nexts []Version, expected *big.Int) bool {
 	v := nexts[0]
-	if proto != BlendV2 || len(nexts) != 1 {
+	if len(nexts) != 1 {
 		return false
 	}
 	rd := blend.ReserveData{DRate: v.Reserve.DRate, BRate: expected, BSupply: prev.BSupply, Version: prev.Version}

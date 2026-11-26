@@ -434,7 +434,9 @@ func (pr *interestProof) window(ctx context.Context, p *interestPass, w foldedWi
 	for _, s := range stored {
 		k := interestKeyOf(s.Row)
 		seen[k] = true
-		pr.unexplained += storedUnexplained(s)
+		if s.DeriveRev == lendingInterestRev {
+			pr.unexplained += storedUnexplained(s) // another revision's row is INCOMPLETE, not unexplained
+		}
 		f, ok := fresh[k]
 		switch {
 		case !ok:

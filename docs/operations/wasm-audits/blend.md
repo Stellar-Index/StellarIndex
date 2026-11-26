@@ -547,13 +547,20 @@ Open before the table is served:
    61,341,315 USDC reserve's `b_supply` grew in the same transaction yet
    the cut divides by the pre-transaction `b_supply` (the supply ran after
    it; with the final `b_supply` it does not reproduce). A floor in the
-   second step fails 7 of the 8, in the first 2. The pools'
-   bstop_rate (0.2 and 0.5) is the one rate at which every reserve's
-   `backstop_credit` delta is exactly accrual's share; it is read from
-   that, not from the pool's Config. The fold explains such a version and
+   second step fails 7 of the 8, in the first 2. In production the fold
+   reads each pool's bstop_rate from its stored Config versions, as for
+   every pair. Only the fixture test, which has no Config, pins the two
+   pools' rates (0.2 and 0.5): each is the one rate at which every
+   reserve's `backstop_credit` delta is exactly accrual's share, and one
+   unit either side leaves a residual. The fold explains such a version and
    records its `supply_residual` in `default_loss` (`default_versions`
    counts them) when the version is otherwise classified.
 5. Unexplained by design until their amount relation is reproduced:
    `bad_debt` (liabilities moved to the backstop, documented above; it moves
    no reserve rate), V1 `defaulted_debt`, and V1 `update_pool`'s retroactive
    bstop_rate.
+6. Open: BLNT pools' `defaulted_debt` events are read into the event census
+   but explain nothing (the cause is V2-only). If a BLNT default cuts b_rate,
+   that version stays unexplained and fires
+   `stellarindex_lending_interest_unexplained_versions`, which fails safe;
+   reproducing BLNT's relation against a real version would close it.

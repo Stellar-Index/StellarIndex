@@ -565,7 +565,7 @@ func (st *state) add(row *HourRow, a blend.Accrual, fee *blnt.Accrual, prev blen
 		row.BRateMismatches++
 		sr := supplyResidual(prev, next, a.ExpectedBRate)
 		row.SupplyResidual.Add(row.SupplyResidual, sr)
-		if st.defaulted(row.Protocol, prev, nexts, a.ExpectedBRate) {
+		if st.defaulted(prev, nexts, a.ExpectedBRate) {
 			defaultLoss = sr
 		} else {
 			onlyBackstop = false
