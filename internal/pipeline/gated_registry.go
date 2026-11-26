@@ -230,17 +230,9 @@ func gatedRegistryOptions(
 ) (map[string][]contractid.Option, error) {
 	out := make(map[string][]contractid.Option, len(gatedSources))
 	admissions := newGateAdmissions(hookCtx, logger)
-	sushiOpts, err := sushiswapPoolOptions(ctx, store, logger, admissions, withHook)
+	extra, err := gatedAttrOptions(ctx, store, logger, admissions, withHook)
 	if err != nil {
 		return nil, err
-	}
-	spectraOpts, err := spectraMarketOptions(ctx, store, logger)
-	if err != nil {
-		return nil, err
-	}
-	extra := map[string][]contractid.Option{
-		sushiswap_v3.SourceName: sushiOpts,
-		spectra.SourceName:      spectraOpts,
 	}
 	for source, meta := range gatedSources {
 		ids, err := store.LoadProtocolContracts(ctx, source)
@@ -314,6 +306,33 @@ func gatedRegistryOptions(
 	return out, nil
 }
 
+// gatedAttrOptions builds the per-source options that restore child attributes from their own tables.
+func gatedAttrOptions(
+	ctx context.Context,
+	store protocolContractStore,
+	logger *slog.Logger,
+	admissions *gateAdmissions,
+	withHook bool,
+) (map[string][]contractid.Option, error) {
+	sushiOpts, err := sushiswapPoolOptions(ctx, store, logger, admissions, withHook)
+	if err != nil {
+		return nil, err
+	}
+	spectraOpts, err := spectraMarketOptions(ctx, store, logger)
+	if err != nil {
+		return nil, err
+	}
+	aquariusOpts, err := aquariusLayoutOptions(ctx, store)
+	if err != nil {
+		return nil, err
+	}
+	return map[string][]contractid.Option{
+		sushiswap_v3.SourceName: sushiOpts,
+		spectra.SourceName:      spectraOpts,
+		aquarius.SourceName:     aquariusOpts,
+	}, nil
+}
+
 // withoutContracts returns ids minus drop, in order.
 func withoutContracts(ids, drop []string) []string {
 	if len(drop) == 0 {
@@ -361,6 +380,35 @@ func spectraMarketOptions(ctx context.Context, store protocolContractStore, logg
 		}
 	}
 	logger.Info("spectra market table loaded", "markets", len(rows))
+	return []contractid.Option{contractid.WithAttrSeed(seed)}, nil
+}
+
+// aquariusPoolStore is the protocol_contracts row read carrying first_ledger; *timescale.Store implements it. Optional, as
+// sushiswapPoolStore is.
+type aquariusPoolStore interface {
+	ListProtocolContracts(ctx context.Context, source string) ([]timescale.ProtocolContract, error)
+}
+
+// aquariusLayoutOptions restores the liquidity layout of router-announced pools whose first_ledger dates them before
+// concentrated pools. A later pool not in the in-code list stays unknown, and its liquidity events fail loud.
+func aquariusLayoutOptions(ctx context.Context, store protocolContractStore) ([]contractid.Option, error) {
+	ps, ok := store.(aquariusPoolStore)
+	if !ok {
+		return nil, nil
+	}
+	rows, err := ps.ListProtocolContracts(ctx, aquarius.SourceName)
+	if err != nil {
+		return nil, fmt.Errorf("gated registry warm %s pool layouts: %w", aquarius.SourceName, err)
+	}
+	seed := make(map[string]contractid.Attrs, len(rows))
+	for _, r := range rows {
+		if r.FactoryID != aquarius.MainnetRouter {
+			continue
+		}
+		if layout := aquarius.LayoutForAnnouncement(r.FirstLedger, ""); layout != "" {
+			seed[r.ContractID] = contractid.Attrs{aquarius.AttrLiquidityLayout: layout}
+		}
+	}
 	return []contractid.Option{contractid.WithAttrSeed(seed)}, nil
 }
 

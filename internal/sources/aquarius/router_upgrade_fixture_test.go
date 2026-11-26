@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
@@ -83,15 +85,20 @@ func TestRouterUpgradeFixtures_addPool(t *testing.T) {
 			if !isAddPool(&e) {
 				t.Fatal("topic[0] is not the add_pool symbol")
 			}
-			got, err := decodeAnnouncedPool(&e)
+			got, poolType, err := decodeAnnouncedPool(&e)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if got != c.pool {
 				t.Errorf("announced pool = %s, want %s", got, c.pool)
 			}
+			// body[1] is Symbol("concentrated"): type 0x0f, length 12, at offsets 52-71 (audit doc byte table).
+			if poolType != "concentrated" {
+				t.Errorf("announced pool type = %q, want concentrated", poolType)
+			}
 
-			d := NewDecoder()
+			// Router trust root only: NewDecoder's in-code list already holds these pools.
+			d := &Decoder{reg: contractid.New(contractid.WithFactories([]string{MainnetRouter}))}
 			trade := events.Event{ContractID: c.pool, Topic: []string{TopicSymbolTrade, "x", "y", "z"}}
 			if d.Matches(trade) {
 				t.Fatal("pool matched before its add_pool")
@@ -104,6 +111,12 @@ func TestRouterUpgradeFixtures_addPool(t *testing.T) {
 			}
 			if !d.Matches(trade) {
 				t.Error("announced pool not admitted by the gate")
+			}
+			if got := d.reg.AttrsOf(c.pool)[AttrLiquidityLayout]; got != LayoutConcentrated {
+				t.Errorf("announced pool layout = %q, want %q", got, LayoutConcentrated)
+			}
+			if !slices.Contains(MainnetConcentratedPools, c.pool) {
+				t.Errorf("%s is not in MainnetConcentratedPools; its layout would be lost on restart", c.pool)
 			}
 		})
 	}

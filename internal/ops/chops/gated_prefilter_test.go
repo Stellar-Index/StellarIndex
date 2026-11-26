@@ -255,13 +255,13 @@ func TestGatedContractSet_realDecoders(t *testing.T) {
 	if !aqHave[aquarius.MainnetRouter] {
 		t.Errorf("aquarius GatedContractSet omits the router (factory) %q", aquarius.MainnetRouter)
 	}
-	for _, p := range aquarius.MainnetPools {
+	for _, p := range append(append([]string(nil), aquarius.MainnetPools...), aquarius.MainnetConcentratedPools...) {
 		if !aqHave[p] {
 			t.Errorf("aquarius GatedContractSet omits curated pool %q", p)
 		}
 	}
-	if want := len(aquarius.MainnetPools) + 1; len(aqSet) != want {
-		t.Errorf("aquarius GatedContractSet size = %d, want %d (pools + router)", len(aqSet), want)
+	if want := len(aquarius.MainnetPools) + len(aquarius.MainnetConcentratedPools) + 1; len(aqSet) != want {
+		t.Errorf("aquarius GatedContractSet size = %d, want %d (pools + concentrated pools + router)", len(aqSet), want)
 	}
 
 	phSet := phoenix.NewDecoder().GatedContractSet()

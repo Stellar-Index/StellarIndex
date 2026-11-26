@@ -111,6 +111,40 @@ func (p PoolType) String() string {
 	}
 }
 
+// AttrLiquidityLayout is the pool-registry attribute naming the element order of a pool's liquidity-event body.
+const AttrLiquidityLayout = "liquidity_layout"
+
+// Liquidity body layouts. Both have three i128s for a two-token pool, so the body alone cannot tell them apart.
+const (
+	// LayoutSharesLast is the volatile / stableswap body [amount_0..amount_{n-1}, shares].
+	LayoutSharesLast = "shares_last"
+	// LayoutConcentrated is a concentrated pool's deposit_liquidity body [liquidity, amount0, amount1].
+	LayoutConcentrated = "concentrated"
+)
+
+// SharesLastThroughLedger is the last ledger before the router's first concentrated add_pool (lake census): a pool
+// announced at or before it has the shares-last body.
+const SharesLastThroughLedger uint32 = 65_663_788
+
+// MainnetConcentratedPools are router-announced concentrated pools. protocol_contracts has no pool-type column, so after
+// a restart this list is how a pool announced past SharesLastThroughLedger keeps its layout.
+var MainnetConcentratedPools = []string{
+	"CBQ6AGQYE5HCDK7VIDUH6756IFPBTLF2HNQH57DAFMOHK3CVDH4CAMXO",
+	"CABOSWXYBLE2UJKYWITFRICR37D4UOB75CNXIH7VI5ZKKL526GFHXAUI",
+}
+
+// LayoutForAnnouncement is the liquidity layout implied by a router add_pool at ledger announcing poolType, or "" when it
+// is unknown. Only "concentrated" is a verified type name; any other pool announced after the census ledger is unknown.
+func LayoutForAnnouncement(ledger uint32, poolType string) string {
+	if poolType == PoolConcentrated.String() {
+		return LayoutConcentrated
+	}
+	if ledger != 0 && ledger <= SharesLastThroughLedger {
+		return LayoutSharesLast
+	}
+	return ""
+}
+
 // Pre-encoded base64 SCVal::Symbol blobs for byte-equality classification and the EventFilter.Topics subscription;
 // each derives from a distinct Event* constant.
 var (
@@ -169,6 +203,11 @@ var (
 	// only blind the ADR-0033 projection reconcile (undecodable-but-matched). Exposed so tests can
 	// assert the classification.
 	ErrZeroAmountTrade = errors.New("aquarius: zero-amount trade (recognized no-op)")
+	// ErrUnknownLiquidityLayout: a liquidity event from a pool whose body layout is unknown, refused rather than
+	// decoded in a guessed order.
+	ErrUnknownLiquidityLayout = errors.New("aquarius: pool liquidity layout unknown")
+	// ErrUnverifiedLiquidityLayout: a concentrated-pool liquidity event whose body order has not been observed.
+	ErrUnverifiedLiquidityLayout = errors.New("aquarius: concentrated pool liquidity body order unverified")
 )
 
 // EventAddPool is the ROUTER's pool-registration event (emitted by MainnetRouter, not by pools); its Vec body's first element is the new pool's Address, the seam the contract-identity gate anchors on (ADR-0035, ADR-0040).

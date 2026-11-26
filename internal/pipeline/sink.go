@@ -1141,9 +1141,8 @@ func persistAquariusKill(ctx context.Context, logger *slog.Logger, store *timesc
 	return nil
 }
 
-// persistAquariusLiquidity lands one deposit_liquidity /
-// withdraw_liquidity observation into aquarius_liquidity — one row per
-// token position, shares on the token_index=0 row (migration 0089).
+// persistAquariusLiquidity lands one deposit/withdraw_liquidity into aquarius_liquidity, one row per token position,
+// shares on the token_index=0 row (migration 0089) and NULL for a concentrated pool.
 func persistAquariusLiquidity(ctx context.Context, logger *slog.Logger, store *timescale.Store, e aquarius.LiquidityEvent) error {
 	if err := store.InsertAquariusLiquidity(ctx, timescale.AquariusLiquidityEvent{
 		ContractID:      e.ContractID,
@@ -1156,6 +1155,7 @@ func persistAquariusLiquidity(ctx context.Context, logger *slog.Logger, store *t
 		Tokens:          e.Tokens,
 		Amounts:         e.Amounts,
 		Shares:          e.Shares,
+		SharesAbsent:    e.Concentrated,
 	}); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(aquarius.SourceName, "aquarius_liquidity").Inc()
 		logger.Error("insert Aquarius liquidity failed",

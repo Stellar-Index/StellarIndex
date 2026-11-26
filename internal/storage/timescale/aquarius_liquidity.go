@@ -56,6 +56,8 @@ type AquariusLiquidityEvent struct {
 	// Shares is the LP-share amount minted (deposit) / burned
 	// (withdraw) — a single per-event value.
 	Shares canonical.Amount
+	// SharesAbsent stores shares NULL on every row: a concentrated pool mints no LP shares.
+	SharesAbsent bool
 }
 
 // InsertAquariusReserves appends one update_reserves observation, one row per token position, via a generation-guarded DO UPDATE (not DO NOTHING) so a higher-generation re-derive corrects in place and a lower one never reverts it.
@@ -169,7 +171,7 @@ func (s *Store) InsertAquariusLiquidity(ctx context.Context, e AquariusLiquidity
 		// Shares is a per-event value — write it on the canonical
 		// token_index = 0 row only so SUM(shares) never N-counts.
 		var shares sql.NullString
-		if i == 0 {
+		if i == 0 && !e.SharesAbsent {
 			shares = sql.NullString{String: e.Shares.String(), Valid: true}
 		}
 		if _, err := tx.ExecContext(ctx, q,

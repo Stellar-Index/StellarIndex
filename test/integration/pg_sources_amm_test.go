@@ -174,6 +174,34 @@ func TestAquariusLiquidityRoundTrip(t *testing.T) {
 	if sumShares.BigInt().Cmp(wantSum) != 0 {
 		t.Errorf("SUM(shares) = %s, want %s", sumShares, wantSum)
 	}
+
+	// A concentrated pool mints no LP shares: both rows store shares NULL, the amounts as given.
+	const clPool = "CABOSWXYBLE2UJKYWITFRICR37D4UOB75CNXIH7VI5ZKKL526GFHXAUI"
+	if err := store.InsertAquariusLiquidity(ctx, timescale.AquariusLiquidityEvent{
+		ContractID:      clPool,
+		Ledger:          65_675_307,
+		LedgerCloseTime: t0.Add(2 * time.Hour),
+		TxHash:          "a43b2fa30ab80cd320884788e82fac53e9478aa190927d56ca0e050cffc96043",
+		EventIndex:      5,
+		Action:          timescale.AquariusLiquidityDeposit,
+		Tokens:          []string{tokenA, tokenB},
+		Amounts: []canonical.Amount{
+			canonical.NewAmount(big.NewInt(37_766_771)),
+			canonical.NewAmount(big.NewInt(8_000)),
+		},
+		SharesAbsent: true,
+	}); err != nil {
+		t.Fatalf("InsertAquariusLiquidity (concentrated): %v", err)
+	}
+	var withShares, amount0 int
+	if err := store.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FILTER (WHERE shares IS NOT NULL), COALESCE(MAX(amount) FILTER (WHERE token_index = 0), 0)
+		   FROM aquarius_liquidity WHERE contract_id = $1`, clPool).Scan(&withShares, &amount0); err != nil {
+		t.Fatalf("concentrated shares check: %v", err)
+	}
+	if withShares != 0 || amount0 != 37_766_771 {
+		t.Errorf("concentrated rows: %d with shares, amount0 %d; want 0 and 37766771", withShares, amount0)
+	}
 }
 
 // TestLatestAquariusReserves: empty-safe (nil, nil); latest snapshot per pool wins; per-token fan-out, i128 and a zero leg
