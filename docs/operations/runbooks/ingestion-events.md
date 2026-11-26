@@ -104,7 +104,11 @@ Check:
    `include_unmapped=true` is literal (`=1` does not opt in).
 3. Is it a symbol we want, and as what? Reflector/Band symbols are `ScSymbol` tickers; RedStone feed_ids are `ScString` and may carry suffixes (`_FUNDAMENTAL`, `/USD`) kept verbatim. Pick the variant: fiat (ADR-0010), crypto (ADR-0014), RWA (ADR-0028). Many different symbols on one event means a schema change: a decoder regression.
 
-Fix (nothing degrades while open; no runtime mitigation):
+Fix (nothing degrades while open; no runtime mitigation). There are three outcomes: map it (steps below), recognise and keep raw, or leave it open.
+
+Recognise and keep raw (RedStone only): when the feed is known but no mapping is honest, e.g. it would share a `(base, quote)` pair with another feed because `oracle_updates` has no feed dimension, add its exact feed_id with a one-line reason to `keptRawFeeds` in `internal/sources/redstone/feeds.go`. It keeps writing the same `raw:<feed_id>` row but no longer counts here. No re-derive is needed. See [redstone.md](../../protocols/redstone.md#earnusdc_pps_fundamentalusd-kept-raw).
+
+To map it:
 
 1. Add the symbol to `internal/canonical/asset_fiat.go` / `asset_crypto.go` / `asset_rwa.go` with a one-line ADR amendment, or to the feed_id map in `internal/sources/redstone/feeds.go`.
 2. Ship the indexer. The alert is `increase[25h]`, so it stays open up to a day after the fix.
