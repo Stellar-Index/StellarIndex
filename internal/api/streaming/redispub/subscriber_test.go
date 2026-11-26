@@ -553,6 +553,11 @@ func TestSubscriber_CountsRejectionsByCause(t *testing.T) {
 	if !hasValue(t, hub.Calls(), sentinel) {
 		t.Fatalf("valid sentinel never fanned out")
 	}
+	// The subscriber counts "ok" after Hub.Publish returns, so the fan-out can be visible first.
+	okCount := func() float64 { return testutil.ToFloat64(obs.APIStreamSubscribeTotal.WithLabelValues("ok")) }
+	for time.Now().Before(deadline) && okCount() == before["ok"] {
+		time.Sleep(time.Millisecond)
+	}
 
 	want := map[string]float64{"ok": 1, "decode_error": 0, "malformed": 1, "future_observed_at": 1, "stale_observed_at": 1}
 	for _, o := range subscribeOutcomes {
