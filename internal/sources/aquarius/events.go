@@ -131,10 +131,14 @@ var MainnetConcentratedPools = []string{
 	"CCKMZ2K3ZKDETW54TFENFB34IJ67UFBI4R4RXUEY5PXKCDLBOXNIJH2B",
 }
 
-// LayoutForAnnouncement is the liquidity layout an add_pool's pool-type Symbol implies, or "" when unknown. "concentrated"
-// is the only type name seen in add_pool bytes, so every other name is unknown rather than assumed classic.
+// LayoutForAnnouncement is the liquidity layout an add_pool's pool-type Symbol implies, or "" when unknown. The census of
+// every router add_pool has exactly three names: "constant" and "stable" (shares-last) and "concentrated"; any other name
+// is unknown rather than assumed classic.
 func LayoutForAnnouncement(poolType string) string {
-	if poolType == PoolConcentrated.String() {
+	switch poolType {
+	case "constant", "stable":
+		return LayoutSharesLast
+	case PoolConcentrated.String():
 		return LayoutConcentrated
 	}
 	return ""

@@ -195,7 +195,10 @@ func TestLiquidity_curatedPoolIsSharesLast(t *testing.T) {
 }
 
 func TestLayoutForAnnouncement(t *testing.T) {
-	for typ, want := range map[string]string{"concentrated": LayoutConcentrated, "": "", "constant_product": "", "stable": ""} {
+	for typ, want := range map[string]string{
+		"concentrated": LayoutConcentrated, "constant": LayoutSharesLast, "stable": LayoutSharesLast,
+		"": "", "constant_product": "", "Stable": "",
+	} {
 		if got := LayoutForAnnouncement(typ); got != want {
 			t.Errorf("LayoutForAnnouncement(%q) = %q, want %q", typ, got, want)
 		}
