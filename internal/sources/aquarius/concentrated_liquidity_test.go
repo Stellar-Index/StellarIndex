@@ -332,6 +332,48 @@ func TestLiquidity_curatedPoolIsSharesLast(t *testing.T) {
 	}
 }
 
+// The attribute hook (aquarius_pools' writer) gets every announcement's raw type, a type with no known layout included.
+func TestAddPool_attrHookGetsRawType(t *testing.T) {
+	_, concentrated, _ := loadRouterFixture(t, "add_pool_65675307_a43b2fa30ab8.json")
+	pool := makeContractStrkey(t, 0x78)
+	unknown := events.Event{
+		ContractID: MainnetRouter, Ledger: 65_700_001, Topic: []string{TopicSymbolAddPool},
+		Value: marshalB64(t, vecVal(decodeB64ScVal(t, encodeContractAddrFromStrkey(t, pool)), symVal("constant_product"))),
+	}
+	got := map[string]contractid.Attrs{}
+	d := NewDecoder(contractid.WithAttrHook(func(id, _ string, _ uint32, a contractid.Attrs) { got[id] = a }))
+	for _, ev := range []events.Event{concentrated, unknown} {
+		if _, err := d.Decode(ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := map[string]contractid.Attrs{
+		clPool: {AttrPoolType: "concentrated", AttrLiquidityLayout: LayoutConcentrated},
+		pool:   {AttrPoolType: "constant_product"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("hook got %v, want %v", got, want)
+	}
+	for id, w := range want {
+		if g := got[id]; len(g) != len(w) || g[AttrPoolType] != w[AttrPoolType] || g[AttrLiquidityLayout] != w[AttrLiquidityLayout] {
+			t.Errorf("%s: hook attrs %v, want %v", id, g, w)
+		}
+	}
+}
+
+func TestLayoutConflicts(t *testing.T) {
+	classic, cl, unlisted := MainnetPools[0], MainnetConcentratedPools[0], makeContractStrkey(t, 0x79)
+	got := LayoutConflicts(map[string]string{
+		classic: "concentrated", cl: "concentrated", MainnetPools[1]: "stable", MainnetPools[2]: "constant_product",
+		MainnetConcentratedPools[1]: "constant", unlisted: "concentrated",
+	})
+	want := []string{classic, MainnetPools[2], MainnetConcentratedPools[1]}
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("LayoutConflicts = %v, want %v", got, want)
+	}
+}
+
 func TestLayoutForAnnouncement(t *testing.T) {
 	for typ, want := range map[string]string{
 		"concentrated": LayoutConcentrated, "constant": LayoutSharesLast, "stable": LayoutSharesLast,

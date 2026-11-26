@@ -96,11 +96,7 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		}
 		// Matches() guaranteed the emitter is the canonical router, so the announced address
 		// is a genuine pool; ev.ContractID is the provenance.
-		if layout := LayoutForAnnouncement(poolType); layout != "" {
-			d.reg.SeedWithAttrs(pool, ev.ContractID, ev.Ledger, contractid.Attrs{AttrLiquidityLayout: layout})
-		} else {
-			d.reg.Seed(pool, ev.ContractID, ev.Ledger)
-		}
+		d.reg.SeedWithAttrs(pool, ev.ContractID, ev.Ledger, PoolAttrs(poolType))
 		return nil, nil
 	}
 	closedAt, err := ev.EventClosedAt()
