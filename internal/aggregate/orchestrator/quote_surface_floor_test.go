@@ -4,6 +4,8 @@ import (
 	"math/big"
 	"testing"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // alignedEqual reports whether two readings are the same aligned reading: decided alone, same slots, coverage and gap.
@@ -148,5 +150,106 @@ func TestQuoteSurface_NonXLMBaseIsTheWholeWindowCompare(t *testing.T) {
 	lr := o.newLegRef(mkPair(t, "crypto", "BTC", "fiat", "USD"), window, big.NewRat(12, 100), trades, proxied)
 	if want := surfaceOracleOf(trades, proxied).whole; lr.surfaceOverlap != 0 || lr.surfaceAligned || lr.surfaceGap.Cmp(want) != 0 {
 		t.Errorf("BTC base: %s, want the whole-window gap %.1f bps with no eligible slot", lr.surfaceString(), ratBps(want))
+	}
+}
+
+// hourlyOverlap prints, every hour of a 24 h window at one price, proxyXLM on the proxy venue, ownXLM split across the two own
+// venues and extraXLM (0 = none) on extraVenue, and returns how many slots are eligible.
+func hourlyOverlap(t *testing.T, price *big.Rat, proxyXLM, ownXLM, extraXLM int64) int {
+	t.Helper()
+	whole := func(n int64) *big.Int {
+		if n == 0 {
+			return nil
+		}
+		return new(big.Int).Mul(big.NewInt(n), big.NewInt(100_000_000))
+	}
+	trades, proxied := buildSurface(t, 24*time.Hour, time.Hour, func(time.Duration) surfaceTick {
+		return surfaceTick{
+			proxyPrice: price, ownPrice: price, extraPrice: price,
+			proxyBase: whole(proxyXLM), ownBase: whole(ownXLM), extraBase: whole(extraXLM),
+		}
+	})
+	return readSurface(t, 24*time.Hour, trades, proxied).surfaceOverlap
+}
+
+// Each per-slot floor binds on its own side with the other side far above it, and a slot exactly at a floor clears it.
+func TestQuoteSurface_SlotFloorsBindPerSideAtTheirExactValue(t *testing.T) {
+	eighth, dollar := big.NewRat(1, 8), big.NewRat(1, 1)
+	cases := []struct {
+		name                string
+		price               *big.Rat
+		proxy, own, overlap int64
+	}{
+		{"stablecoin quote 24,999/h", eighth, 199_992, 1_000_000, 0},
+		{"stablecoin quote 25,000/h", eighth, 200_000, 1_000_000, 24},
+		{"USD quote 24,999/h", eighth, 500_000, 199_992, 0},
+		{"USD quote 25,000/h", eighth, 500_000, 200_000, 24},
+		{"stablecoin base 149,999 XLM/h", dollar, 149_999, 1_000_000, 0},
+		{"stablecoin base 150,000 XLM/h", dollar, 150_000, 1_000_000, 24},
+		{"USD base 149,999 XLM/h", dollar, 300_000, 149_999, 0},
+		{"USD base 150,000 XLM/h", dollar, 300_000, 150_000, 24},
+	}
+	for _, tc := range cases {
+		if got := hourlyOverlap(t, tc.price, tc.proxy, tc.own, 0); int64(got) != tc.overlap {
+			t.Errorf("%s: %d eligible slots, want %d", tc.name, got, tc.overlap)
+		}
+	}
+}
+
+// The 1/3 share is of the reference, not of all own-quote volume: a third venue under the venue quote floor (80k XLM = 9.6k USD an
+// hour) lifting own base to 38 % of proxy does not make a 30 % reference eligible; a 33.4 % reference is.
+func TestQuoteSurface_OwnShareCountsOnlyTheReference(t *testing.T) {
+	price := big.NewRat(12, 100)
+	if got := hourlyOverlap(t, price, 1_000_000, 300_000, 80_000); got != 0 {
+		t.Errorf("30 %% reference plus a filtered venue: %d eligible slots, want 0", got)
+	}
+	if got := hourlyOverlap(t, price, 1_000_000, 334_000, 80_000); got != 24 {
+		t.Errorf("33.4 %% reference: %d eligible slots, want 24", got)
+	}
+}
+
+// A venue with exactly 1/10 of own base is part of the reference, so pricing it 5 % away spoils agreement; just under 1/10 it is
+// ignored.
+func TestQuoteSurface_VenueAtExactlyOneTenthCounts(t *testing.T) {
+	read := func(extraXLM int64) int {
+		trades, proxied := buildSurface(t, 24*time.Hour, time.Hour, func(time.Duration) surfaceTick {
+			return surfaceTick{
+				proxyPrice: flat(0), ownPrice: flat(0), extraPrice: basis(flat(0), 500),
+				proxyBase: xlm(1000), ownBase: xlm(900), extraBase: new(big.Int).Mul(big.NewInt(extraXLM), big.NewInt(100_000_000)),
+			}
+		})
+		return readSurface(t, 24*time.Hour, trades, proxied).surfaceOverlap
+	}
+	if got := read(100_000); got != 0 {
+		t.Errorf("disagreeing venue at exactly 1/10: %d eligible slots, want 0", got)
+	}
+	if got := read(99_999); got != 24 {
+		t.Errorf("disagreeing venue just under 1/10: %d eligible slots, want 24", got)
+	}
+}
+
+// Volume is compared at the window's common scale: a 7-decimal venue's 300k XLM counts as much as an 8-decimal venue's, so the two
+// form a two-venue reference.
+func TestQuoteSurface_MixedDecimalVenuesCountAtTheCommonScale(t *testing.T) {
+	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
+	start, price := surfaceEnd.Add(-24*time.Hour), big.NewRat(12, 100)
+	at := func(n int64, decimals int64) *big.Int {
+		return new(big.Int).Mul(big.NewInt(n), new(big.Int).Exp(big.NewInt(10), big.NewInt(decimals), nil))
+	}
+	var trades []canonical.Trade
+	proxied := map[string]struct{}{}
+	for h := range 24 {
+		ts := start.Add(time.Duration(h) * time.Hour)
+		p := surfacePrint(xlmUSD, proxyVenue, ts, at(1_000_000, 8), price)
+		proxied[p.ID()] = struct{}{}
+		trades = append(trades, p,
+			surfacePrint(xlmUSD, ownVenues[0], ts.Add(time.Minute), at(300_000, 8), price),
+			surfacePrint(xlmUSD, "sdex", ts.Add(2*time.Minute), at(300_000, 7), price))
+	}
+	if amountScaleDecimalsFor("sdex") != 7 {
+		t.Fatalf("sdex amount scale %d, want 7", amountScaleDecimalsFor("sdex"))
+	}
+	if lr := readSurface(t, 24*time.Hour, trades, proxied); lr.surfaceOverlap != 24 {
+		t.Errorf("%s, want 24 eligible slots", lr.surfaceString())
 	}
 }

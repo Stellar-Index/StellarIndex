@@ -73,7 +73,7 @@ func orZero(v *big.Int) *big.Int {
 	return v
 }
 
-// eligible: >= 2 reference venues, reference base >= proxy base / 4, both surfaces >= 150k XLM and >= 25k USD per hour of slot
+// eligible: >= 2 reference venues, reference base >= proxy base / 3, both surfaces >= 150k XLM and >= 25k USD per hour of slot
 // (8-decimal scale), reference venue VWAPs within surfaceTol of the lowest.
 func (s oracleSlot) eligible(slot time.Duration) bool {
 	qual, ref := s.reference(slot)
