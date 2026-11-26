@@ -20,6 +20,35 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.139.0] - 2026-11-26
+
+Tested against Stellar protocol 27. No migrations (schema version stays 236). No `pkg/*` break (no change under `pkg/`). No ClickHouse DDL change. Operators: the role now takes the USD and fiat peg lists from `stellarindex_usd_pegged_classic_assets` and `stellarindex_fiat_pegged_classic_assets` and enables oracle, external and price sources only on pubnet; a host that relied on the pubnet lists being rendered on another network must set them explicitly.
+
+### Added
+
+- **api:** `/v1/pools`, `/v1/markets` and the asset routes record why a response was degraded (`refresh_failed`, `refresh_overrun`, `refresh_refused`, `partial_read`, `check_unread`, `section_dropped`, `source_stale`, `provisional`, `request_cancelled`) in `stellarindex_api_degraded_responses_total{route,reason}` (#4403).
+- **ops:** `stellarindex-ops cagg-history` measures, for every continuous aggregate, the start of its materialised history against the start it should have, and writes `stellarindex_cagg_history_start_seconds`, `_expected_start_seconds` and `_gap_seconds`; `data-freshness.sh` calls it in place of its SQL block (#4404).
+- **ops:** `stellarindex_api_cache_fill_duration_seconds{cache,result}` times detached cache fills (#4402).
+- **ansible:** a test net's local Prometheus can load alert rules (`local_prometheus_rules_enabled`, off by default); the five served-value rules moved to `served-values.yml` (#4399).
+- **ansible:** per-network USD and fiat peg variables, with a preflight assert (#4400).
+- **aggregate:** `aggregate.TWAPFromBuckets`, an exact time-weighted mean over closed buckets; no caller yet (#4401).
+- **ci:** a weekly reminder when the `directory-sync` pin falls behind the public directory; the release procedure names the docs publish step (#4395).
+
+### Changed
+
+- **api:** a degraded asset-detail body lives 3 s in the detail cache, not 120 s (#4397).
+- **aggregator:** source contributions are written in a fixed order and stamped from the orchestrator clock, so the same trades give the same rows (#4401).
+- **config:** a pair listed twice in `aggregate.pairs` is rejected at load (#4402).
+- **explorer:** the static build re-asks a partial answer once, inside a five-minute budget shared by the whole build, and warms asset keys first (#4394, #4396).
+- **ops:** `directory-sync` is pinned to the 2026-11-25 public directory (#4393).
+
+### Fixed
+
+- **api:** an asset list, asset detail, `/v1/markets` or `/v1/pools` response built over a cached value that is merely past its bound is flagged `stale` only. `degraded` is set for a failed, overrunning or refused refresh, an unmeasured read or an unchecked directory. A cached asset-list replay whose rows refresh failed is now flagged degraded (#4405).
+- **api:** `/v1/price/batch` rows walk the quote asset's aliases as `/v1/price` does, so an XLM-quoted batch matches the single-price answer (#4398).
+- **supply:** a `mint`, `burn`, `clawback` or `transfer` event without the address topics a token event carries is classified `not_token_shaped` before its amount is read, in the live sink, `ch-cap67-movements` and `ch-supply -seed-flows`. A pool's one-topic `mint` no longer raises the supply-skipped alerts, and no `supply_flows` row is written for such an event (#4406).
+- **ci:** test-net explorer builds use their own network's API key (#4392).
+
 ## [v0.138.0] - 2026-11-25
 
 Tested against Stellar protocol 27. No migrations (schema version stays 236). No `pkg/*` break (no change under `pkg/`). No ClickHouse DDL change; an existing host needs `stellar.lending_interest_hourly` from `deploy/clickhouse/lending_interest.sql` (`si-apply-scope: operator`) if it has not been applied since v0.136.0. New metric: `stellarindex_api_degraded_responses_total`. `stellarindex_lending_interest_unexplained_versions` changes meaning (see Fixed).
@@ -97,20 +126,3 @@ Tested against Stellar protocol 27. No migrations (schema version stays 236). No
 ### Fixed
 
 - **api:** a prewarm render waits for the refresh it starts or joins and is judged on the entry as it then stands. An asset detail value read only by the prewarm expired at about 180 s, past the 150 s stale bound, so the page took the old value with its stale flag while a healthy refresh had only just started; the flagged body was cached and `/v1/assets/native` cycled between clean and stale/degraded responses with no refresh failure behind it. Client requests are unchanged: served at once, flagged when past the bound (#4360).
-
-## [v0.134.0] - 2026-11-25
-
-Tested against Stellar protocol 27. No migrations (schema version stays 236). No `pkg/*` break. Behaviour change for API clients: an uncached (cold) read now costs extra rate-limit tokens, and a request that cannot pay is refused with 429 (#4357).
-
-### Added
-
-- **api:** a request that owns a new cold fill pays 5 extra rate-limit tokens before it claims a refresh slot: contract detail, asset holders and account state, including the issuer lookups behind asset pages. An uncached `GET /v1/contracts/{contract_id}` makes three such reads and costs 16. A request that cannot pay gets the existing 429 and no read starts; an asset page whose issuer lookup is refused is served with its stale flag. Cached reads, stale serves and requests joining another fill still cost one (#4357).
-- **ops:** `stellarindex_ratelimit_cold_fill_refused_total` counts the refusals, and the ticket `stellarindex_ratelimit_cold_fill_refusals_sustained` fires when they exceed 1 a second for 30 minutes, with a runbook section; the ticket alert count is 334 (#4357).
-
-### Changed
-
-- **api:** a contract page whose activity panel failed or was refused is flagged degraded and not cached; a request that joined a refused owner's fill retries once on its own budget (#4357).
-
-### Fixed
-
-- **api:** a cold asset holders or account state read waits for a refresh slot until its request deadline or 4 seconds, with a bounded queue, before answering 503; it answered 503 at once when its class was full. A stale read still skips rather than waits, and concurrency against ClickHouse is unchanged (#4356).
