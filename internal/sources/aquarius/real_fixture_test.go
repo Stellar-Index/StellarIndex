@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,7 +46,7 @@ func TestRealMainnetFixtures_aquarius(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, f := range files {
-			if filepath.Ext(f.Name()) != ".json" {
+			if filepath.Ext(f.Name()) != ".json" || !strings.HasPrefix(f.Name(), "trade_") {
 				continue
 			}
 			total++
