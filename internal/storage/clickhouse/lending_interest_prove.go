@@ -23,8 +23,8 @@ type LendingInterestStoredRow struct {
 
 const lendingInterestStoredQuery = `SELECT contract_id, protocol, asset, hour, first_ledger, last_ledger, versions,
 		accrued_versions, gross, protocol_fee, backstop, supplier_intended, supplier_realised, backstop_credit_delta,
-		unreconciled_versions, brate_mismatches, backstop_residual, supply_residual, fee_mismatches, fee_credit_residual,
-		residual_explained, residual_attributed, explained_versions, attributed_versions, unordered_versions,
+		unreconciled_versions, brate_mismatches, backstop_residual, supply_residual, default_loss, default_versions,
+		fee_mismatches, fee_credit_residual, residual_explained, residual_attributed, explained_versions, attributed_versions, unordered_versions,
 		accrual_errors, error_samples, derive_rev
 	FROM stellar.lending_interest_hourly FINAL
 	WHERE contract_id IN ? AND hour >= ? AND hour < ?
@@ -64,18 +64,18 @@ func LendingInterestStoredRows(ctx context.Context, addr string, pools []string,
 func scanLendingInterestStored(rows stateRows) (LendingInterestStoredRow, error) {
 	var s LendingInterestStoredRow
 	var proto string
-	var n [11]big.Int
+	var n [12]big.Int
 	r := &s.Row
 	if err := rows.Scan(&r.Pool, &proto, &r.Asset, &r.Hour, &r.FirstLedger, &r.LastLedger, &r.Versions, &r.AccruedVersions,
-		&n[0], &n[1], &n[2], &n[3], &n[4], &n[5], &r.UnreconciledVersions, &r.BRateMismatches, &n[6], &n[7],
-		&r.FeeMismatches, &n[8], &n[9], &n[10], &s.ExplainedVersions, &s.AttributedVersions, &r.UnorderedVersions,
+		&n[0], &n[1], &n[2], &n[3], &n[4], &n[5], &r.UnreconciledVersions, &r.BRateMismatches, &n[6], &n[7], &n[11],
+		&r.DefaultVersions, &r.FeeMismatches, &n[8], &n[9], &n[10], &s.ExplainedVersions, &s.AttributedVersions, &r.UnorderedVersions,
 		&r.AccrualErrors, &r.ErrorSamples, &s.DeriveRev); err != nil {
 		return s, err
 	}
 	r.Protocol, r.Hour = lendinginterest.Protocol(proto), r.Hour.UTC()
 	r.Gross, r.ProtocolFee, r.Backstop, r.SupplierIntended, r.SupplierRealised = &n[0], &n[1], &n[2], &n[3], &n[4]
 	r.BackstopCreditDelta, r.BackstopResidual, r.SupplyResidual, r.FeeCreditResidual = &n[5], &n[6], &n[7], &n[8]
-	s.ResidualExplained, s.ResidualAttributed = &n[9], &n[10]
+	s.ResidualExplained, s.ResidualAttributed, r.DefaultLoss = &n[9], &n[10], &n[11]
 	return s, nil
 }
 

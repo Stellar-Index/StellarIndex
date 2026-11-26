@@ -1997,6 +1997,9 @@ var marshalLedgerCloseMeta = func(lcm sdkxdr.LedgerCloseMeta) ([]byte, error) {
 	return lcm.MarshalBinary()
 }
 
+// hashdbNow is indirected so TestRecordHashdb_DurationExcludesMarshal can assert exact durations from a fake clock.
+var hashdbNow = time.Now
+
 // recordHashdb appends sha256(LCM) into hdb once per ledger, synchronously (Append is one 32-byte WriteAt; a channel and drop
 // policy would be risk for no gain). Errors log a WARN and bump HashdbAppendTotal{"error"} but never propagate: a diagnostics
 // side channel must not stall customer-data ingest.
@@ -2006,7 +2009,7 @@ func recordHashdb(hdb *hashdb.DB, lcm sdkxdr.LedgerCloseMeta, logger *slog.Logge
 	raw, err := marshalLedgerCloseMeta(lcm)
 	// Timed region starts AFTER the multi-megabyte LedgerCloseMeta marshal — HashdbAppendDurationSeconds documents itself as
 	// the latency of the O(1) positional WriteAt, not of serializing the whole ledger.
-	start := time.Now()
+	start := hashdbNow()
 	if err == nil {
 		h := hashdb.Hash(raw)
 		// Verify-then-Append-on-ErrMissing: a re-ingested ledger (restart, cursor rewind) must not
@@ -2028,12 +2031,12 @@ func recordHashdb(hdb *hashdb.DB, lcm sdkxdr.LedgerCloseMeta, logger *slog.Logge
 	}
 	if err != nil {
 		obs.HashdbAppendTotal.WithLabelValues("error").Inc()
-		obs.HashdbAppendDurationSeconds.WithLabelValues("error").Observe(time.Since(start).Seconds())
+		obs.HashdbAppendDurationSeconds.WithLabelValues("error").Observe(hashdbNow().Sub(start).Seconds())
 		logger.Warn("hashdb append failed — drift detector not recording this ledger", "ledger", seq, "err", err)
 		return
 	}
 	obs.HashdbAppendTotal.WithLabelValues("ok").Inc()
-	obs.HashdbAppendDurationSeconds.WithLabelValues("ok").Observe(time.Since(start).Seconds())
+	obs.HashdbAppendDurationSeconds.WithLabelValues("ok").Observe(hashdbNow().Sub(start).Seconds())
 	// Store AFTER Append succeeds — the periodic verifier's window
 	// must never include a ledger that isn't durably recorded yet.
 	lastAppended.Store(seq)

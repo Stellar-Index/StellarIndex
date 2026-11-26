@@ -96,7 +96,7 @@ Fix:
 
 ## stellarindex_counts_rollup_stale_partitions
 
-Ticket. `stellarindex_counts_rollup_stale_partitions{rollup} > 0` for 2h. Partitions whose rollup row count no longer matches the source are read from source. `optype-rollup.timer` rebuilds 4 per run; check it is enabled and `journalctl -u optype-rollup` shows runs. After a backfill into many closed partitions, run `ch-optype-rollup -max-closed 0 -write` under `run-heavy-job.sh`. `ErrCountsShrink` in the log means a recompute counted fewer rows than the live partition: find out why before passing `-shrink-ok`.
+Ticket. `stellarindex_counts_rollup_stale_partitions{rollup} > 0` for 2h. Partitions whose rollup row count no longer matches the source are read from source. `optype-rollup.timer` rebuilds 4 per run; check it is enabled and `journalctl -u optype-rollup` shows runs. After a backfill into many closed partitions, run `ch-optype-rollup -max-closed 0 -write` under `run-heavy-job.sh`. `ErrCountsShrink` in the log means a recompute counted fewer rows than the live build: find out why before passing `-shrink-ok`. A partition a ClickHouse restart left holding two builds is also counted stale; the run replaces it without `-shrink-ok` and logs `live partition holds N builds` ([restart check](ops-job-stalled.md#before-restarting-clickhouse-or-rebooting-no-recent-partition-swap)).
 
 ## ch-live-sink
 

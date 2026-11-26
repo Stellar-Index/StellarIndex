@@ -5,7 +5,7 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `stellarindex_ops_job_heartbeat_stale` / `stellarindex_ops_job_no_progress` / `stellarindex_ops_job_run_failed` / `stellarindex_entry_index_lagging` / `stellarindex_lending_state_lagging` / `stellarindex_lending_interest_lagging` / `stellarindex_lending_interest_redo_pending` / `stellarindex_lending_interest_proof_failed` / `stellarindex_lending_interest_proof_stale`
+# Runbook — `stellarindex_ops_job_heartbeat_stale` / `stellarindex_ops_job_no_progress` / `stellarindex_ops_job_run_failed` / `stellarindex_entry_index_lagging` / `stellarindex_lending_state_lagging` / `stellarindex_lending_interest_lagging` / `stellarindex_lending_interest_redo_pending` / `stellarindex_lending_interest_proof_failed` / `stellarindex_lending_interest_proof_stale` / `stellarindex_lending_interest_unexplained_versions`
 
 ## At a glance
 
@@ -137,6 +137,34 @@ systemctl restart <unit> ...                    # the listed units; or `needrest
 
 A pending kernel (`NEEDRESTART-KSTA` 2 or 3) needs a reboot in the same window; `Automatic-Reboot` is off.
 
+### Before restarting ClickHouse or rebooting: no recent partition swap
+
+`ALTER TABLE … REPLACE PARTITION` leaves the replaced parts on disk, outdated but not covered by the new ones, for `old_parts_lifetime` (480 s). If ClickHouse restarts inside that window they load back as active beside the new build and the partition holds two builds (a production reboot once served account op-type counts doubled this way). `TRUNCATE` and `DROP PARTITION` leave a covering part and are not affected. The rollups that swap this way: `account_op_type_counts` and `account_movement_counts` (`optype-rollup.timer`), `contracts_census_daily` (`census-rollup.timer`), `asset_stats_daily` (`holders-rollup.timer`).
+
+Before the restart, stop the three timers, let a running job finish, then wait until this returns no rows:
+
+```sql
+SELECT event_time, substring(query, 1, 100) FROM system.query_log
+ WHERE type = 'QueryFinish' AND query_kind = 'Alter' AND query ILIKE '%REPLACE PARTITION%'
+   AND event_time > now() - INTERVAL 10 MINUTE;
+-- without query_log, the parts that would come back (a merge's outdated parts also list here; they are harmless but wait anyway):
+SELECT table, partition_id, count(), max(remove_time) FROM system.parts
+ WHERE database = 'stellar' AND NOT active AND remove_time > now() - INTERVAL 10 MINUTE
+   AND table IN ('account_op_type_counts', 'account_movement_counts', 'contracts_census_daily', 'asset_stats_daily')
+ GROUP BY table, partition_id;
+```
+
+After the restart, start the timers and check for doubled partitions (every row is one partition holding more than one build):
+
+```sql
+SELECT 'account_op_type_counts', toString(part), count() FROM stellar.account_op_type_counts WHERE account = '' GROUP BY part HAVING count() > 1
+UNION ALL SELECT 'account_movement_counts', toString(part), count() FROM stellar.account_movement_counts WHERE account = '' GROUP BY part HAVING count() > 1
+UNION ALL SELECT 'contracts_census_daily', toString(day), count() - uniqExact(contract_id) FROM stellar.contracts_census_daily GROUP BY day HAVING count() > uniqExact(contract_id)
+UNION ALL SELECT 'asset_stats_daily', toString(day), count() - uniqExact(asset) FROM stellar.asset_stats_daily GROUP BY day HAVING count() > uniqExact(asset);
+```
+
+The counts rollups and the census are safe to leave: their readers do not sum two builds (a doubled counts partition is read from source and shows in `stellarindex_counts_rollup_stale_partitions`), and the next `ch-optype-rollup` run replaces the partition, logging `live partition holds N builds — outdated parts resurrected by a restart`; run `stellarindex-ops ch-optype-rollup -write` to heal now. The census run recomputes only recent days: heal an older day with `stellarindex-ops ch-census-rollup -backfill -from-day <day> -write` under `run-heavy-job.sh` (it walks every day from there to today). `asset_stats_daily` has no reader yet and its run replaces only today: an older doubled day stays doubled; nothing serves it.
+
 ## Replaced binary
 
 `stellarindex_unit_running_replaced_binary` (ticket, `for: 30m`) fires when a process in `{unit}` runs a `/usr/local/bin/stellarindex-*` or `galexie` binary that was replaced on disk after it started. Source: `memory-mappings.sh` (5-minute timer, `memory_mappings.prom`); `1` = stale, `0` = current, no series = no release binary in that unit. The process is executing the OLD build, so a deployed fix is not in effect for whatever it writes. Usual causes: a deploy that skipped the restart (`cli_daemon_units` in `configs/ansible/playbooks/deploy-binary.yml` does not list the unit), or a binary copied by hand. A oneshot caught mid-run on a replaced binary is reported too; it clears on its next start.
@@ -252,6 +280,25 @@ Stop serving: once anything reads the table, a mismatch that a re-derive does no
 ## Lending interest proof stale
 
 `stellarindex_lending_interest_proof_stale` fires when a proof's last finished run is older than its cadence allows, so its gauge no longer describes the table: 48 hours for the daily `ops_job="ch-entry-history-lending-interest-prove"`, 8 days for the weekly `…-prove-full`. `systemctl status lending-interest-prove.timer lending-interest-prove-full.timer`: both are enabled only where `lending_interest_prove_enabled` is set, and removed with their textfiles where it is not. A run still going for hours is `heartbeat_stale` or `no_progress` territory; a refused run (lake hole, WASM gate, an underived pool or a key with no history) fires `stellarindex_ops_job_run_failed` and names its reason in the journal. The proof holds the lending_state lock and the interest lock shared, so the state pass and the timer's interest pass skip while it runs. It waits up to 15 minutes for a writer holding either (a state pass, an interest chunk); past that a fire logs `skipped, a lending_state or interest write run held its lock past 15m0s` and exits 0 without a heartbeat, so repeated skips (a replay, state backfill or interest backfill running for days) end here.
+
+## Lending interest unexplained versions
+
+`stellarindex_lending_interest_unexplained_versions` fires when, for an hour, the last proof run over its series' whole range has counted stored rows of `stellar.lending_interest_hourly`, of the binary's own derive revision, holding a version that moved outside accrual with no same-transaction pool event stating the move exactly (`unreconciled_versions − explained_versions − attributed_versions`, summed). The rows are what the code computes, so this is not a mismatch: an unexplained version means a cause the fold does not reproduce. The gauge holds until the next such run; a host whose proof never ran has no series.
+
+1. List the rows in `clickhouse-client`:
+
+   ```sql
+   SELECT contract_id, asset, hour, first_ledger, last_ledger, brate_mismatches, fee_mismatches,
+          backstop_residual, residual_explained, residual_attributed, supply_residual, default_loss, derive_rev
+   FROM stellar.lending_interest_hourly FINAL
+   WHERE unreconciled_versions > explained_versions + attributed_versions
+   ORDER BY hour
+   ```
+
+2. Read the pool's events over each row's ledgers in `stellar.contract_events` and find the transaction that wrote the version. A Blend V2 `defaulted_debt` whose b_rate cut reproduces is explained and lands in `default_loss`; one left unexplained did not reproduce exactly (a supply or withdraw before the cut in the same transaction, or a contract the audit in `docs/operations/wasm-audits/blend.md`, "Interest accrual arithmetic", does not cover). Anything else is a cause the fold has no rule for.
+3. Record it in that audit doc. Totals over those hours are lower bounds until a rule explains them; a new rule is a derive revision and a re-derive from the floor.
+
+During a derive-revision rollout: the gauge holds the last whole-range proof's count (8 on r1 before revision 3), so the alert fires about an hour after the rules load and stays until a proof after the re-derive. The proof counts only rows of its own revision: an older-revision row is INCOMPLETE, not unexplained, so a run mid-re-derive counts the re-derived rows only, and both `lending-interest-prove.service` and `lending-interest-prove-full.service` exit INCOMPLETE (`stellarindex_ops_job_run_failed`, a ticket) until every hour is re-derived. Once the re-derive reaches the tip, run `systemctl start lending-interest-prove-full.service` by hand rather than waiting for Saturday's timer; it exits 0 and sets the full series' gauge, and the daily series follows on its next run.
 
 ## stellarindex_catchup_lane_failed
 

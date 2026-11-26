@@ -88,6 +88,7 @@ var nightlyOnlyIntegrationImports = map[string]string{
 	"internal/sources/sorobanevents":             nightlyUnitTested,
 	"internal/sources/soroswap":                  nightlyUnitTested,
 	"internal/sources/soroswap_router":           nightlyUnitTested,
+	"internal/sources/sushiswap_v3":              nightlyUnitTested,
 	"internal/supply":                            nightlyUnitTested,
 	"internal/usage":                             nightlyOwnQueries,
 	"internal/xdrjson":                           nightlyUnitTested,

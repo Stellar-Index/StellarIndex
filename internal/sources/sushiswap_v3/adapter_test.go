@@ -170,8 +170,13 @@ func TestGatedContractSet_IsTheProjectorPrefilter(t *testing.T) {
 			t.Errorf("the prefilter omits curated pool %s", pool)
 		}
 	}
-	if len(set) != len(MainnetPools)+len(MainnetFactories) {
-		t.Errorf("prefilter has %d entries, want %d", len(set), len(MainnetPools)+len(MainnetFactories))
+	for _, m := range MainnetPositionManagers {
+		if _, ok := seen[m]; !ok {
+			t.Errorf("the prefilter omits position manager %s", m)
+		}
+	}
+	if want := len(MainnetPools) + len(MainnetFactories) + len(MainnetPositionManagers); len(set) != want {
+		t.Errorf("prefilter has %d entries, want %d", len(set), want)
 	}
 }
 

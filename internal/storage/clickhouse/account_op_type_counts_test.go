@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -42,6 +43,18 @@ func TestPlanOpTypeCounts(t *testing.T) {
 			name:  "complete head whose fingerprint moved is stale; tail starts after it",
 			built: map[uint32]opTypeBuilt{59: full(59, 200), 60: full(60, 299)},
 			want:  opTypeCountsPlan{valid: []uint32{59}, stale: []uint32{58, 60}, tailFrom: 61 * mL},
+			ok:    true,
+		},
+		{
+			name:  "closed partition holding two builds is read from source",
+			built: map[uint32]opTypeBuilt{58: full(58, 100), 59: {through: opTypePartitionEnd(59), srcRows: 200, builds: 2}, 61: {through: 61*mL + 5000}},
+			want:  opTypeCountsPlan{valid: []uint32{58, 61}, stale: []uint32{59, 60}, tailFrom: 61*mL + 5000},
+			ok:    true,
+		},
+		{
+			name:  "open head holding two builds is read from source; tail starts after it",
+			built: map[uint32]opTypeBuilt{60: full(60, 300), 61: {through: 61*mL + 5000, builds: 2}},
+			want:  opTypeCountsPlan{valid: []uint32{60}, stale: []uint32{58, 59, 61}, tailFrom: 62 * mL},
 			ok:    true,
 		},
 		{
@@ -114,6 +127,43 @@ func TestOpTypeRollupWork(t *testing.T) {
 	if got := parts(opTypeRollupWork(built, src, 61, 61*mL+opTypeRollupTipMargin+99, 1)); !slices.Equal(got, []uint32{60}) {
 		t.Errorf("open head already built that far: parts = %v, want it skipped", got)
 	}
+
+	built[58] = opTypeBuilt{through: opTypePartitionEnd(58), srcRows: 100, builds: 2}
+	built[61] = opTypeBuilt{through: 61*mL + 100, builds: 2}
+	w = opTypeRollupWork(built, src, 61, 61*mL+opTypeRollupTipMargin+99, 0)
+	if got := parts(w); !slices.Equal(got, []uint32{60, 59, 58, 57, 61}) {
+		t.Fatalf("doubled partitions: parts = %v, want 58 and the head rebuilt too", got)
+	}
+	for _, x := range w {
+		if (x.Part == 58 || x.Part == 61) && !strings.Contains(x.Reason, "holds 2 builds") {
+			t.Errorf("partition %d reason = %q, want the resurrected-build cause", x.Part, x.Reason)
+		}
+	}
+}
+
+// Two sentinels in one partition (a resurrected build) must take that partition out of the rollup arm end to end.
+func TestAccountOperationTypeCounts_DoubledPartitionReadsSource(t *testing.T) {
+	conn := &stubConn{respond: func(q string) (driver.Rows, error) {
+		switch {
+		case isOpTypesCoverageProbe(q):
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil
+		case strings.Contains(q, "WHERE account = ''"):
+			return &stubRows{data: [][]any{
+				{uint32(0), uint32(mL), uint64(5)}, {uint32(0), uint32(mL), uint64(5)}, {uint32(1), uint32(mL + 9), uint64(0)},
+			}}, nil
+		case strings.Contains(q, "system.parts"):
+			return &stubRows{data: [][]any{{uint32(0), uint64(5)}, {uint32(1), uint64(3)}}}, nil
+		}
+		return &stubRows{}, nil
+	}}
+	r := &ExplorerReader{conn: conn, opTypesCoverageProbe: schemaProbe{now: newFakeClock().now}}
+	if _, err := r.AccountOperationTypeCounts(context.Background(), "GTESTOPTYPES"); err != nil {
+		t.Fatal(err)
+	}
+	last := conn.queries[len(conn.queries)-1]
+	if !strings.Contains(last, "part IN (1)") || !strings.Contains(last, "(ledger_seq >= 0 AND ledger_seq < 1000000)") {
+		t.Fatalf("ran %q, want partition 0 read from source and only 1 from the rollup", last)
+	}
 }
 
 func TestOpTypeCountsRollupQuery(t *testing.T) {
@@ -153,13 +203,41 @@ func (c *execStubConn) execd(sub string) []int {
 	return out
 }
 
-func buildStub(newOps, liveOps uint64) *execStubConn {
+func buildStub(newOps, liveOps uint64) *execStubConn { return buildStubBuilds(newOps, liveOps, 1) }
+
+// buildStubBuilds answers the size check with the live partition holding `builds` sentinels.
+func buildStubBuilds(newOps, liveOps, builds uint64) *execStubConn {
 	return &execStubConn{stubConn: stubConn{respond: func(q string) (driver.Rows, error) {
 		if strings.Contains(q, "system.parts") {
 			return &stubRows{data: [][]any{{uint32(60), uint64(785)}}}, nil
 		}
-		return &stubRows{data: [][]any{{newOps, liveOps}}}, nil
+		return &stubRows{data: [][]any{{newOps, liveOps, builds}}}, nil
 	}}}
+}
+
+// A live partition holding two builds (a restart resurrected the replaced one) sums both; the rebuild compares against one build,
+// so it heals without -shrink-ok and says why, while a recompute below one build still refuses.
+func TestRunOpTypeCountsPartition_HealsResurrectedBuild(t *testing.T) {
+	w := OpTypeRollupPartition{Part: 60, Through: opTypePartitionEnd(60)}
+	conn := buildStubBuilds(10, 20, 2)
+	var logged []string
+	logf := func(f string, a ...any) { logged = append(logged, fmt.Sprintf(f, a...)) }
+	if err := OpTypeCountsRollup.runPartitionConn(context.Background(), conn, w, false, logf); err != nil {
+		t.Fatalf("heal of a doubled partition: %v", err)
+	}
+	if n := len(conn.execd("REPLACE PARTITION ID '60'")); n != 1 {
+		t.Fatalf("replaced %d time(s), want 1", n)
+	}
+	if !slices.ContainsFunc(logged, func(l string) bool { return strings.Contains(l, "live partition holds 2 builds") }) {
+		t.Errorf("log does not name the cause: %q", logged)
+	}
+	conn = buildStubBuilds(9, 20, 2)
+	if err := OpTypeCountsRollup.runPartitionConn(context.Background(), conn, w, false, t.Logf); !errors.Is(err, ErrCountsShrink) {
+		t.Fatalf("recompute below one build: err = %v, want ErrCountsShrink", err)
+	}
+	if n := len(conn.execd("REPLACE PARTITION")); n != 0 {
+		t.Errorf("replaced %d time(s) after a shrink below one build", n)
+	}
 }
 
 func TestRunOpTypeCountsPartition_SwapsAndRecordsFingerprint(t *testing.T) {

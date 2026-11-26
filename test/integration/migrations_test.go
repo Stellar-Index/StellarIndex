@@ -238,6 +238,15 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	assertPolicyAbsent(t, db, ctx, "sushiswap_v3_position_events", "policy_retention")
 	assertColumnType(t, db, ctx, "sushiswap_v3_position_events", "derive_generation", "bigint")
 
+	// 0238 — sushiswap_v3_manager_events: hypertable, compression, no
+	// retention, bigint generation and a bigint (u32-range) token id.
+	assertHypertableExists(t, db, ctx, "sushiswap_v3_manager_events")
+	assertCompressionEnabled(t, db, ctx, "sushiswap_v3_manager_events", true)
+	assertPolicyAttached(t, db, ctx, "sushiswap_v3_manager_events", "policy_compression")
+	assertPolicyAbsent(t, db, ctx, "sushiswap_v3_manager_events", "policy_retention")
+	assertColumnType(t, db, ctx, "sushiswap_v3_manager_events", "derive_generation", "bigint")
+	assertColumnType(t, db, ctx, "sushiswap_v3_manager_events", "token_id", "bigint")
+
 	// 0210 — spectra_events: hypertable, compression, no retention, bigint
 	// generation; spectra_markets is a plain table.
 	assertHypertableExists(t, db, ctx, "spectra_events")
@@ -266,6 +275,7 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	assertTableAbsent(t, db, ctx, "fx_fixings")
 	assertTableAbsent(t, db, ctx, "sushiswap_v3_pools")
 	assertTableAbsent(t, db, ctx, "aquarius_pools")
+	assertTableAbsent(t, db, ctx, "sushiswap_v3_manager_events")
 	assertTableAbsent(t, db, ctx, "spectra_events")
 	assertTableAbsent(t, db, ctx, "spectra_markets")
 	for _, cagg := range []string{
