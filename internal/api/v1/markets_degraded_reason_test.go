@@ -14,7 +14,7 @@ import (
 )
 
 var allDegradedReasons = []string{
-	obs.DegradedCheckUnread, obs.DegradedSectionDropped, obs.DegradedPartialRead, obs.DegradedRefreshFailed,
+	obs.DegradedSourceStale, obs.DegradedCheckUnread, obs.DegradedSectionDropped, obs.DegradedPartialRead, obs.DegradedRefreshFailed,
 	obs.DegradedRefreshOverrun, obs.DegradedRefreshRefused, obs.DegradedProvisional, obs.DegradedRequestCanceled, obs.DegradedOther,
 }
 

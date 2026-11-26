@@ -7,7 +7,7 @@ import (
 )
 
 // detailDegradedReason names why an asset-detail response is flagged degraded; "" when no cause here is one of the closed
-// set (a stale price, supply or carried-forward extension stays "other"). obs picks the highest-precedence cause.
+// set. obs picks the highest-precedence cause.
 func detailDegradedReason(d *AssetDetail, homeDomainDegraded, ctxDead bool) string {
 	var causes []string
 	add := func(on bool, reason string) {
@@ -17,7 +17,9 @@ func detailDegradedReason(d *AssetDetail, homeDomainDegraded, ctxDead bool) stri
 	}
 	add(d.issuerDirectoryUnchecked, obs.DegradedCheckUnread)
 	add(d.extensionUnread, obs.DegradedSectionDropped)
-	add(d.f2ReadFailed || d.sep1Unread || d.decimalsLakeUnread || homeDomainDegraded, obs.DegradedPartialRead)
+	add(d.f2ReadFailed || d.sep1Unread || d.decimalsLakeUnread || d.DecimalsUnresolved || homeDomainDegraded, obs.DegradedPartialRead)
+	add(d.SupplyStale || d.priceStale, obs.DegradedSourceStale)
+	add(d.extensionStale, obs.DegradedProvisional)
 	add(ctxDead, obs.DegradedRequestCanceled)
 	return obs.HighestDegradedReason(causes...)
 }

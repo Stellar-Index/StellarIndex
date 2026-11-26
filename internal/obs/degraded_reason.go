@@ -12,7 +12,8 @@ const (
 	DegradedRefreshFailed   = "refresh_failed"    // the last refresh of the served cache entry failed
 	DegradedRefreshOverrun  = "refresh_overrun"   // the refresh in flight has outrun its budget
 	DegradedRefreshRefused  = "refresh_refused"   // no refresh slot was free, so the last good copy was served unrefreshed
-	DegradedProvisional     = "provisional"       // the cached payload declared itself provisional
+	DegradedSourceStale     = "source_stale"      // the underlying observation (supply, price) is itself old; a re-ask will not heal it
+	DegradedProvisional     = "provisional"       // an older value was served while its refresh is in flight; a re-ask heals it
 	DegradedSectionDropped  = "section_dropped"   // a panel or overlay was dropped from the body
 	DegradedPartialRead     = "partial_read"      // an upstream read failed, so the body is a lower bound
 	DegradedCheckUnread     = "check_unread"      // a gate (issuer directory, exclusion scope) could not be read, so the response withholds data
@@ -24,7 +25,7 @@ const (
 // earliest here is the one counted; this is the only place the order lives.
 var degradedPrecedence = []string{
 	DegradedCheckUnread, DegradedSectionDropped, DegradedPartialRead, DegradedRefreshFailed,
-	DegradedRefreshOverrun, DegradedRefreshRefused, DegradedProvisional, DegradedRequestCanceled,
+	DegradedRefreshOverrun, DegradedRefreshRefused, DegradedSourceStale, DegradedProvisional, DegradedRequestCanceled,
 }
 
 // degradedRank is the position in [degradedPrecedence]; "other" and anything unknown rank last.
@@ -41,7 +42,7 @@ func degradedRank(reason string) int {
 var APIDegradedResponsesTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_api_degraded_responses_total",
-		Help: "API responses served with flags.degraded, labelled by route pattern and reason (check_unread|section_dropped|partial_read|refresh_failed|refresh_overrun|refresh_refused|provisional|request_cancelled|other).",
+		Help: "API responses served with flags.degraded, labelled by route pattern and reason (check_unread|section_dropped|partial_read|refresh_failed|refresh_overrun|refresh_refused|source_stale|provisional|request_cancelled|other).",
 	},
 	[]string{"route", "reason"},
 )

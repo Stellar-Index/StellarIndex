@@ -88,13 +88,36 @@ func TestDetailDegradedReason(t *testing.T) {
 		{"sep1", AssetDetail{sep1Unread: true}, false, false, obs.DegradedPartialRead},
 		{"home domain", AssetDetail{}, true, false, obs.DegradedPartialRead},
 		{"dead context", AssetDetail{}, false, true, obs.DegradedRequestCanceled},
-		{"stale price only", AssetDetail{priceStale: true}, false, false, ""},
+		{"stale price", AssetDetail{priceStale: true}, false, false, obs.DegradedSourceStale},
+		{"stale supply", AssetDetail{SupplyStale: true}, false, false, obs.DegradedSourceStale},
+		{"aged catalogue value", AssetDetail{extensionStale: true}, false, false, obs.DegradedProvisional},
+		{"source_stale beats provisional", AssetDetail{extensionStale: true, SupplyStale: true}, false, false, obs.DegradedSourceStale},
+		{"decimals unresolved", AssetDetail{DecimalsUnresolved: true}, false, false, obs.DegradedPartialRead},
+		{"all three plus directory", AssetDetail{extensionStale: true, SupplyStale: true, issuerDirectoryUnchecked: true}, false, false, obs.DegradedCheckUnread},
+		{"nothing", AssetDetail{}, false, false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := detailDegradedReason(&tc.d, tc.home, tc.dead); got != tc.want {
 				t.Errorf("reason = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// A stored entry served by the real handler counts its stored reason, so the dominant aged-catalogue case is named on a hit.
+func TestAssetDetailHit_replaysStoredReason(t *testing.T) {
+	s := New(Options{Assets: issuedAssetReader{}})
+	parsed := mustParseAsset(rtZED)
+	d := AssetDetail{AssetID: rtZED, Code: "ZED", extensionStale: true, SupplyStale: true}
+	reason := detailDegradedReason(&d, false, false)
+	s.assetDetailCache.put(assetDetailCacheKey(parsed, false), newReasonedAssetDetailEntry(d, []byte("{}\n"), Flags{Stale: true, Degraded: true}, reason))
+	if got, total := degradedReasonOfGET(t, s.Handler(), "/v1/assets/{asset_id}", "/v1/assets/"+rtZED); got != obs.DegradedSourceStale || total != 1 {
+		t.Errorf("reason = %q (counted %v), want %q once", got, total, obs.DegradedSourceStale)
+	}
+	d = AssetDetail{AssetID: rtZED, Code: "ZED", extensionStale: true}
+	s.assetDetailCache.put(assetDetailCacheKey(parsed, false), newReasonedAssetDetailEntry(d, []byte("{}\n"), Flags{Stale: true, Degraded: true}, detailDegradedReason(&d, false, false)))
+	if got, total := degradedReasonOfGET(t, s.Handler(), "/v1/assets/{asset_id}", "/v1/assets/"+rtZED); got != obs.DegradedProvisional || total != 1 {
+		t.Errorf("reason = %q (counted %v), want %q once", got, total, obs.DegradedProvisional)
 	}
 }
 
