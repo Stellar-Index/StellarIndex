@@ -118,6 +118,9 @@ type HourRow struct {
 	// unexplained pair is not stored (each is the row's residual or unreconciled count less the other two).
 	ResidualExplained, ResidualAttributed, ResidualUnexplained *big.Int
 	ExplainedVersions, AttributedVersions, UnexplainedVersions uint32
+	// InterestDrawn (≤ 0), Gulped (≥ 0) and ReconcileBackstopLoss (≤ 0) are ResidualExplained by cause, summing to it
+	// exactly: the explaining events' amounts, per causeColumns.
+	InterestDrawn, Gulped, ReconcileBackstopLoss *big.Int
 	// ResidualLedgers are the ledgers of the versions classified by their events, ascending: the caller proves
 	// their events were read in full. Not stored.
 	ResidualLedgers   []uint32

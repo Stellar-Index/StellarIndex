@@ -50,6 +50,7 @@ func TestLendingInterestHourly_DefaultColumnsRequiredAndHealedByTheOperatorFile(
 		BackstopCreditDelta: n(1), UnreconciledVersions: 1, BRateMismatches: 1, BackstopResidual: n(0),
 		SupplyResidual: n(-592388690912445), DefaultLoss: n(-592388690912445), DefaultVersions: 1, FeeCreditResidual: n(0),
 		ResidualExplained: n(0), ResidualAttributed: n(0), ExplainedVersions: 1,
+		InterestDrawn: n(0), Gulped: n(0), ReconcileBackstopLoss: n(0),
 	}
 	if err := chstore.InsertLendingInterestRows(ctx, addr, []lendinginterest.HourRow{row}, 3); err == nil {
 		t.Fatal("insert into a table without the default columns succeeded")

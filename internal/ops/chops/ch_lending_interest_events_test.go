@@ -283,6 +283,7 @@ func TestCheckResidualClasses(t *testing.T) {
 		ResidualExplained: n(-7), ResidualAttributed: n(-4), ResidualUnexplained: n(1),
 		ExplainedVersions: 1, AttributedVersions: 1, UnexplainedVersions: 1,
 		BRateMismatches: 2, DefaultLoss: n(-5), DefaultVersions: 1,
+		InterestDrawn: n(-9), Gulped: n(4), ReconcileBackstopLoss: n(-2),
 	}
 	if err := checkResidualClasses(ok); err != nil {
 		t.Fatal(err)
@@ -295,9 +296,17 @@ func TestCheckResidualClasses(t *testing.T) {
 	overClassified.DefaultVersions = 3
 	gain.DefaultLoss = n(5)
 	lossWithout.DefaultVersions = 0
+	// Each keeps the per-cause sum at residual_explained but one cause's sign, except "split", which breaks the sum.
+	split, drawnGain, gulpLoss, reconcileGain := ok, ok, ok, ok
+	split.Gulped = n(5)
+	drawnGain.InterestDrawn, drawnGain.ReconcileBackstopLoss = n(2), n(-13)
+	gulpLoss.InterestDrawn, gulpLoss.Gulped = n(-4), n(-1)
+	reconcileGain.InterestDrawn, reconcileGain.ReconcileBackstopLoss = n(-12), n(1)
 	for name, r := range map[string]lendinginterest.HourRow{
 		"amount": amount, "count": count, "defaults over mismatches": overMismatches,
 		"defaults over classified": overClassified, "default gain": gain, "loss without a default": lossWithout,
+		"per-cause split": split, "interest drawn positive": drawnGain, "gulp negative": gulpLoss,
+		"reconcile loss positive": reconcileGain,
 	} {
 		if err := checkResidualClasses(r); err == nil {
 			t.Errorf("%s off: accepted", name)

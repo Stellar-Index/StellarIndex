@@ -597,7 +597,7 @@ func InsertLendingInterestRows(ctx context.Context, addr string, rows []lendingi
 		 gross, protocol_fee, backstop, supplier_intended, supplier_realised, backstop_credit_delta,
 		 unreconciled_versions, brate_mismatches, backstop_residual, supply_residual, default_loss, default_versions,
 		 fee_mismatches, fee_credit_residual, residual_explained, residual_attributed, explained_versions, attributed_versions,
-		 unordered_versions, accrual_errors, error_samples, derive_rev)`)
+		 interest_drawn, gulped, reconcile_backstop_loss, unordered_versions, accrual_errors, error_samples, derive_rev)`)
 	if err != nil {
 		return fmt.Errorf("prepare lending_interest_hourly batch: %w", err)
 	}
@@ -610,7 +610,7 @@ func InsertLendingInterestRows(ctx context.Context, addr string, rows []lendingi
 			r.AccruedVersions, r.Gross, r.ProtocolFee, r.Backstop, r.SupplierIntended, r.SupplierRealised,
 			r.BackstopCreditDelta, r.UnreconciledVersions, r.BRateMismatches, r.BackstopResidual, r.SupplyResidual,
 			r.DefaultLoss, r.DefaultVersions, r.FeeMismatches, r.FeeCreditResidual, r.ResidualExplained, r.ResidualAttributed, r.ExplainedVersions, r.AttributedVersions,
-			r.UnorderedVersions, r.AccrualErrors, samples, rev); err != nil {
+			r.InterestDrawn, r.Gulped, r.ReconcileBackstopLoss, r.UnorderedVersions, r.AccrualErrors, samples, rev); err != nil {
 			return fmt.Errorf("append lending_interest_hourly %s/%s/%s: %w", r.Pool, r.Asset, r.Hour, err)
 		}
 	}
@@ -621,7 +621,7 @@ func checkLendingInterestRow(r lendinginterest.HourRow) error {
 	for _, n := range []*big.Int{
 		r.Gross, r.ProtocolFee, r.Backstop, r.SupplierIntended, r.SupplierRealised,
 		r.BackstopCreditDelta, r.BackstopResidual, r.SupplyResidual, r.DefaultLoss, r.FeeCreditResidual, r.ResidualExplained,
-		r.ResidualAttributed,
+		r.ResidualAttributed, r.InterestDrawn, r.Gulped, r.ReconcileBackstopLoss,
 	} {
 		if n == nil {
 			return fmt.Errorf("clickhouse: lending interest row %s/%s/%s has a missing amount", r.Pool, r.Asset, r.Hour)
