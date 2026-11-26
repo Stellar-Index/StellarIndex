@@ -15,7 +15,7 @@ evaluation_interval: 10m
 tests:
   # ── the textfile_producer_stale catch-all false-fires on producer shapes with
   # no dedicated staleness alert: ops_job's pid-orphan siblings, the
-  # one-off backfill, usd-volume-restamp, tag-tx-index and per-source projected-rebuild
+  # one-off backfill, ch-backfill, supply-seed, usd-volume-restamp, tag-tx-index and per-source projected-rebuild
   # jobs, the monthly
   # restore-drill files and the weekly Tier D verify-archive file. This pins the exclusion — and that it does NOT
   # over-exclude other ops_job primaries, which should still trip the
@@ -28,6 +28,12 @@ tests:
       - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_ch_rebuild.pid4242.prom",instance="r1:9100",job="node_exporter"}'
         values: '0x50600'
       - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_backfill.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x50600'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_ch_backfill.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x50600'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_supply_seed_sac_balances.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x50600'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_supply_seed_claimable_balances.prom",instance="r1:9100",job="node_exporter"}'
         values: '0x50600'
       - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_usd_volume_restamp.prom",instance="r1:9100",job="node_exporter"}'
         values: '0x50600'
