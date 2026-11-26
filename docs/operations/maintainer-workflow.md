@@ -108,6 +108,8 @@ SemVer `vX.Y.Z`; bump rules in
    host exists), computes SHA256SUMS, extracts the CHANGELOG section as
    notes, creates the GitHub Release (`--prerelease` if the tag has a
    `-suffix`). It does **NOT** publish container images (no consumer).
+4. **Publish the docs:** `gh workflow run docs-deploy.yml --ref main`. It is
+   manual; skipped, the public API reference drifts from the repo.
 
 Full runbook + manual fallback: [release-process.md](release-process.md).
 

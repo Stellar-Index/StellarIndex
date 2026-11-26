@@ -678,6 +678,7 @@ After an API restart no reconciliation has run and the alert cannot fire. **Esca
 
 **Check.**
 
+0. The weekly `directory-pin-reminder` workflow opens a `directory-pin-stale` issue once the repo pin (`directory_sync_url` in the archival-node role defaults) is more than 21 days behind upstream; bump it from that issue before this alert can fire.
 1. `grep EXTRA_FLAGS /etc/default/directory-sync`: which commit is pinned.
 2. Compare the upstream repository history since that commit for added scam-class tags.
 
