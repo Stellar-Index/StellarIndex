@@ -2,7 +2,6 @@ package v1
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -30,18 +29,6 @@ type assetDetailEntry struct {
 // assetDetailDegradedTTL is a degraded entry's life: it absorbs a burst, while the complete answer its read's detached refresh
 // lands within seconds replaces it instead of waiting out the full TTL.
 const assetDetailDegradedTTL = 3 * time.Second
-
-// assetDetailAwaitBound is how long a client detail request waits, across all its reads, for the refreshes its stale reads
-// start or join; past it the stale value is served, flagged.
-const assetDetailAwaitBound = 750 * time.Millisecond
-
-// detailAwaitRefresh marks a detail request's reads: the prewarm waits for every refresh, a client up to assetDetailAwaitBound.
-func detailAwaitRefresh(ctx context.Context, prewarm bool) context.Context {
-	if prewarm {
-		return withAwaitRefresh(ctx)
-	}
-	return withAwaitRefreshUntil(ctx, time.Now().Add(assetDetailAwaitBound))
-}
 
 // assetDetailResponseCache caches the whole /v1/assets/{id} response by normalised asset_id, so new fields and overlays flow
 // through with no per-reader plumbing. TTL (set in server.New) MUST exceed the selfPrewarmAssetEndpoints cadence, or the cache
