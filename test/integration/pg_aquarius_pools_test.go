@@ -69,6 +69,14 @@ func TestAquariusPools_layoutSurvivesRestart(t *testing.T) {
 	if err := store.UpsertAquariusPool(ctx, timescale.AquariusPool{ContractID: clPool, PoolType: "stable"}); !errors.Is(err, timescale.ErrAquariusPoolTypeConflict) {
 		t.Errorf("different-type re-upsert = %v, want ErrAquariusPoolTypeConflict", err)
 	}
+	if rows, err = store.LoadAquariusPools(ctx); err != nil || len(rows) != 3 {
+		t.Fatalf("reload: %d rows, %v", len(rows), err)
+	}
+	for _, r := range rows {
+		if r.ContractID == clPool && (r.PoolType != "concentrated" || r.FirstLedger != 66_000_000) {
+			t.Errorf("after re-records: %+v, want the first row (concentrated at 66000000) kept", r)
+		}
+	}
 
 	restarted, err := pipeline.GatedRegistryOptions(ctx, store, logger, ctx, false)
 	if err != nil {
@@ -93,8 +101,17 @@ func TestAquariusPools_layoutSurvivesRestart(t *testing.T) {
 	if err := store.UpsertAquariusPool(ctx, timescale.AquariusPool{ContractID: aquarius.MainnetPools[0], PoolType: "concentrated"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pipeline.GatedRegistryOptions(ctx, store, logger, ctx, false); err == nil {
-		t.Error("warm with a row contradicting MainnetPools succeeded, want an error")
+	// A contradicting row fails closed for that pool only; the warm still starts.
+	contradicted, err := pipeline.GatedRegistryOptions(ctx, store, logger, ctx, false)
+	if err != nil {
+		t.Fatalf("warm with a row contradicting MainnetPools: %v, want it to start", err)
+	}
+	dec = aquarius.NewDecoder(contradicted[aquarius.SourceName]...)
+	if _, err := dec.Decode(aqDeposit(t, aquarius.MainnetPools[0])); !errors.Is(err, aquarius.ErrUnknownLiquidityLayout) {
+		t.Errorf("deposit of the contradicted pool: %v, want ErrUnknownLiquidityLayout", err)
+	}
+	if out, err := dec.Decode(aqDeposit(t, clPool)); err != nil || len(out) != 1 {
+		t.Errorf("deposit of an uncontested pool after the contradiction: %v, %v", out, err)
 	}
 }
 

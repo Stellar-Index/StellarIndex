@@ -361,6 +361,40 @@ func TestAddPool_attrHookGetsRawType(t *testing.T) {
 	}
 }
 
+// A re-announcement never changes a pool's layout: neither a listed pool's nor one learned live, whether the new type
+// implies another layout or none; the attribute hook is not fired with the contradicting type.
+func TestAddPool_firstLayoutWins(t *testing.T) {
+	learned := makeContractStrkey(t, 0x7A)
+	hooked := 0
+	d := NewDecoder(contractid.WithAttrHook(func(string, string, uint32, contractid.Attrs) { hooked++ }))
+	announce := func(pool, typ string) {
+		t.Helper()
+		ev := events.Event{
+			ContractID: MainnetRouter, Ledger: 65_700_002, Topic: []string{TopicSymbolAddPool},
+			Value: marshalB64(t, vecVal(decodeB64ScVal(t, encodeContractAddrFromStrkey(t, pool)), symVal(typ))),
+		}
+		if _, err := d.Decode(ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	announce(learned, "concentrated")
+	hooked = 0
+	for _, re := range []struct{ pool, typ, want string }{
+		{MainnetPools[0], "concentrated", LayoutSharesLast},
+		{MainnetPools[0], "constant_product", LayoutSharesLast},
+		{learned, "stable", LayoutConcentrated},
+		{learned, "constant_product", LayoutConcentrated},
+	} {
+		announce(re.pool, re.typ)
+		if got := d.reg.AttrsOf(re.pool)[AttrLiquidityLayout]; got != re.want {
+			t.Errorf("%s re-announced %q: layout %q, want %q", re.pool, re.typ, got, re.want)
+		}
+	}
+	if hooked != 0 {
+		t.Errorf("attribute hook fired %d times for contradicting re-announcements, want 0", hooked)
+	}
+}
+
 func TestLayoutConflicts(t *testing.T) {
 	classic, cl, unlisted := MainnetPools[0], MainnetConcentratedPools[0], makeContractStrkey(t, 0x79)
 	got := LayoutConflicts(map[string]string{

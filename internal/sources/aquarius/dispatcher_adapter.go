@@ -3,6 +3,7 @@ package aquarius
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -38,6 +39,19 @@ func mainnetLayoutSeed() map[string]contractid.Attrs {
 		seed[p] = contractid.Attrs{AttrLiquidityLayout: LayoutConcentrated}
 	}
 	return seed
+}
+
+// admitPool registers an announced pool. The first layout wins: a re-announcement implying another layout, or none,
+// keeps the pool's attributes, since changing the layout of a live pool would decode its later bodies in a wrong order.
+func (d *Decoder) admitPool(pool, poolType string, ev *events.Event) {
+	attrs := PoolAttrs(poolType)
+	if have := d.reg.AttrsOf(pool)[AttrLiquidityLayout]; have != "" && have != attrs[AttrLiquidityLayout] {
+		slog.Warn("aquarius: add_pool re-announced a pool with a different type; keeping its first layout",
+			"pool", pool, "pool_type", poolType, "layout", have, "ledger", ev.Ledger)
+		d.reg.Seed(pool, ev.ContractID, ev.Ledger)
+		return
+	}
+	d.reg.SeedWithAttrs(pool, ev.ContractID, ev.Ledger, attrs)
 }
 
 // Name implements [dispatcher.Decoder].
@@ -96,7 +110,7 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		}
 		// Matches() guaranteed the emitter is the canonical router, so the announced address
 		// is a genuine pool; ev.ContractID is the provenance.
-		d.reg.SeedWithAttrs(pool, ev.ContractID, ev.Ledger, PoolAttrs(poolType))
+		d.admitPool(pool, poolType, &ev)
 		return nil, nil
 	}
 	closedAt, err := ev.EventClosedAt()

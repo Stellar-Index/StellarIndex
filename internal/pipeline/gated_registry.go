@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
@@ -355,8 +357,9 @@ type aquariusPoolStore interface {
 }
 
 // aquariusPoolOptions seeds each recorded pool's announced type and layout and, on the indexer path, persists each live
-// add_pool. It also returns the recorded pools with a mappable type. A recorded type that contradicts an in-code list
-// fails the warm: neither source is preferred silently.
+// add_pool; it returns the recorded pools with a mappable type. A row contradicting the in-code list naming its pool is
+// seeded with NO layout (that pool's liquidity is refused, never decoded in a guessed order) and logged; a type that
+// would contradict the list is never written. Every table row is trusted into the gate, as sushiswap_v3_pools' are.
 func aquariusPoolOptions(
 	ctx context.Context,
 	store protocolContractStore,
@@ -374,29 +377,54 @@ func aquariusPoolOptions(
 	}
 	recorded := make(map[string]string, len(rows))
 	seed := make(map[string]contractid.Attrs, len(rows))
-	var typed []string
 	for _, r := range rows {
 		recorded[r.ContractID] = r.PoolType
 		seed[r.ContractID] = aquarius.PoolAttrs(r.PoolType)
-		if aquarius.LayoutForAnnouncement(r.PoolType) != "" {
-			typed = append(typed, r.ContractID)
+	}
+	bad := aquarius.LayoutConflicts(recorded)
+	for _, pool := range bad {
+		seed[pool] = contractid.Attrs{aquarius.AttrPoolType: recorded[pool]}
+	}
+	if len(bad) > 0 {
+		logger.Error("aquarius_pools rows contradict the in-code pool list; those pools have NO liquidity layout and "+
+			"their deposit/withdraw events are refused until the row or the list is corrected (ingestion-sink runbook)",
+			"source", aquarius.SourceName, "pools", bad)
+	}
+	var typed []string
+	for id, a := range seed {
+		if a[aquarius.AttrLiquidityLayout] != "" {
+			typed = append(typed, id)
 		}
 	}
-	if bad := aquarius.LayoutConflicts(recorded); len(bad) > 0 {
-		return nil, nil, fmt.Errorf("gated registry warm %s pools: aquarius_pools type contradicts the in-code pool list for %v; "+
-			"correct the list or the row", aquarius.SourceName, bad)
-	}
-	logger.Info("aquarius pool table loaded", "pools", len(rows), "typed", len(typed))
+	logger.Info("aquarius pool table loaded", "pools", len(rows), "typed", len(typed), "contradicting", len(bad))
 	opts := []contractid.Option{contractid.WithAttrSeed(seed)}
 	if withHook {
-		opts = append(opts, contractid.WithAttrHook(func(pool, _ string, ledger uint32, a contractid.Attrs) { //nolint:contextcheck // the hook carries no context; the retrier holds the hook context it was built with
-			row := timescale.AquariusPool{ContractID: pool, PoolType: a[aquarius.AttrPoolType], FirstLedger: ledger}
-			admissions.persist(aquarius.SourceName+"_pools", pool, func(wctx context.Context) error {
-				return ps.UpsertAquariusPool(wctx, row)
-			})
-		}))
+		opts = append(opts, contractid.WithAttrHook(aquariusPoolHook(ps, logger, admissions))) //nolint:contextcheck // the hook carries no context; the retrier holds the hook context it was built with
 	}
 	return opts, typed, nil
+}
+
+// aquariusPoolHook persists a live add_pool's raw type; a type contradicting the in-code list naming the pool is not
+// written, and a stored type the upsert refuses is terminal, not retried.
+func aquariusPoolHook(ps aquariusPoolStore, logger *slog.Logger, admissions *gateAdmissions) func(string, string, uint32, contractid.Attrs) {
+	const label = aquarius.SourceName + "_pools"
+	return func(pool, _ string, ledger uint32, a contractid.Attrs) { //nolint:contextcheck // the hook carries no context; the retrier holds the hook context it was built with
+		typ := a[aquarius.AttrPoolType]
+		if len(aquarius.LayoutConflicts(map[string]string{pool: typ})) > 0 {
+			obs.GateAdmissionPersistFailuresTotal.WithLabelValues(label).Inc()
+			logger.Error("aquarius add_pool type contradicts the in-code pool list; not recorded",
+				"pool", pool, "pool_type", typ, "ledger", ledger)
+			return
+		}
+		row := timescale.AquariusPool{ContractID: pool, PoolType: typ, FirstLedger: ledger}
+		admissions.persist(label, pool, func(wctx context.Context) error {
+			err := ps.UpsertAquariusPool(wctx, row)
+			if errors.Is(err, timescale.ErrAquariusPoolTypeConflict) {
+				return fmt.Errorf("%w: %w", errAdmissionTerminal, err)
+			}
+			return err
+		})
+	}
 }
 
 // withoutContracts returns ids minus drop, in order.

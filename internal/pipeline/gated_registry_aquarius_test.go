@@ -3,15 +3,18 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -19,9 +22,10 @@ import (
 // fakeAquariusStore layers an in-memory aquarius_pools double over the protocol_contracts one.
 type fakeAquariusStore struct {
 	fakeProtocolContractStore
-	pools   []timescale.AquariusPool
-	written []timescale.AquariusPool
-	loadErr error
+	pools     []timescale.AquariusPool
+	written   []timescale.AquariusPool
+	loadErr   error
+	upsertErr error
 }
 
 func (f *fakeAquariusStore) LoadAquariusPools(context.Context) ([]timescale.AquariusPool, error) {
@@ -29,6 +33,9 @@ func (f *fakeAquariusStore) LoadAquariusPools(context.Context) ([]timescale.Aqua
 }
 
 func (f *fakeAquariusStore) UpsertAquariusPool(_ context.Context, p timescale.AquariusPool) error {
+	if f.upsertErr != nil {
+		return f.upsertErr
+	}
 	f.written = append(f.written, p)
 	return nil
 }
@@ -120,18 +127,63 @@ func TestGatedRegistryOptions_aquariusLayoutSurvivesRestart(t *testing.T) {
 	}
 }
 
-func TestGatedRegistryOptions_aquariusPoolTableFailsClosed(t *testing.T) {
+func TestGatedRegistryOptions_aquariusPoolTableUnreadableFailsTheWarm(t *testing.T) {
+	store := &fakeAquariusStore{loadErr: errors.New("relation does not exist")}
+	store.rows = map[string][]string{}
+	if _, err := gatedRegistryOptions(context.Background(), store, slog.New(slog.NewTextHandler(io.Discard, nil)), context.Background(), false); err == nil {
+		t.Error("warm succeeded on an unreadable aquarius_pools, want an error")
+	}
+}
+
+// A row contradicting the in-code list fails closed for that pool only: the warm starts, the pool has no layout (its
+// liquidity refused, never decoded in a guessed order), an ERROR names it, and other pools are unaffected.
+func TestGatedRegistryOptions_aquariusContradictingRowRefusesOnlyThatPool(t *testing.T) {
+	bad, ok := aquarius.MainnetPools[0], aquarius.MainnetPools[1]
+	h := &capturingHandler{}
+	store := &fakeAquariusStore{pools: []timescale.AquariusPool{{ContractID: bad, PoolType: "concentrated"}}}
+	store.rows = map[string][]string{}
+	opts, err := gatedRegistryOptions(context.Background(), store, slog.New(h), context.Background(), false)
+	if err != nil {
+		t.Fatalf("warm with a contradicting row: %v, want it to start", err)
+	}
+	dec := aquarius.NewDecoder(opts[aquarius.SourceName]...)
+	if _, err := dec.Decode(aquariusDeposit(t, bad)); !errors.Is(err, aquarius.ErrUnknownLiquidityLayout) {
+		t.Errorf("deposit of the contradicted pool: %v, want ErrUnknownLiquidityLayout", err)
+	}
+	if out, err := dec.Decode(aquariusDeposit(t, ok)); err != nil || len(out) != 1 {
+		t.Errorf("deposit of an uncontested listed pool: %v, %v", out, err)
+	}
+	logged := false
+	for _, r := range h.records {
+		logged = logged || (r.level >= slog.LevelError && strings.Contains(r.msg, "contradict"))
+	}
+	if !logged {
+		t.Error("no ERROR logged for the contradicting row")
+	}
+}
+
+// The hook never writes a type that contradicts the list naming the pool, and a stored-type refusal is not retried.
+func TestAquariusPoolHook_refusesContradictionsTerminally(t *testing.T) {
 	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
-	for name, store := range map[string]*fakeAquariusStore{
-		"recorded type contradicts the in-code list": {
-			pools: []timescale.AquariusPool{{ContractID: aquarius.MainnetPools[0], PoolType: "concentrated"}},
-		},
-		"table unreadable": {loadErr: errors.New("relation does not exist")},
-	} {
-		store.rows = map[string][]string{}
-		if _, err := gatedRegistryOptions(context.Background(), store, quiet, context.Background(), false); err == nil {
-			t.Errorf("%s: warm succeeded, want an error", name)
-		}
+	const label = aquarius.SourceName + "_pools"
+	failures := func() float64 {
+		return testutil.ToFloat64(obs.GateAdmissionPersistFailuresTotal.WithLabelValues(label))
+	}
+	unpersisted := func() float64 { return testutil.ToFloat64(obs.GateAdmissionsUnpersisted.WithLabelValues(label)) }
+	store := &fakeAquariusStore{}
+	hook := aquariusPoolHook(store, quiet, newGateAdmissions(t.Context(), quiet))
+
+	before := failures()
+	hook(aquarius.MainnetPools[0], aquarius.MainnetRouter, 1, aquarius.PoolAttrs("concentrated"))
+	hook(aquarius.MainnetConcentratedPools[0], aquarius.MainnetRouter, 1, aquarius.PoolAttrs("constant_product"))
+	if len(store.written) != 0 || failures()-before != 2 {
+		t.Errorf("contradicting types: written %+v, failures +%v; want none written and 2 counted", store.written, failures()-before)
+	}
+
+	store.upsertErr = fmt.Errorf("wrapped: %w", timescale.ErrAquariusPoolTypeConflict)
+	hook(testContractStrkey(t, 0xA3), aquarius.MainnetRouter, 1, aquarius.PoolAttrs("stable"))
+	if unpersisted() != 0 || failures()-before != 3 {
+		t.Errorf("stored-type refusal: unpersisted %v, failures +%v; want 0 kept and 3 counted", unpersisted(), failures()-before)
 	}
 }
 
