@@ -3,6 +3,10 @@ package aquarius
 import (
 	"errors"
 	"math/big"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -136,15 +140,113 @@ func TestConcentratedDeposit_layoutFromLiveAddPool(t *testing.T) {
 	}
 }
 
-func TestConcentratedWithdraw_failsLoud(t *testing.T) {
-	ev := clFixture(t, "deposit_liquidity_65675307_a43b2fa30ab8_5.json")
-	ev.Topic[0] = TopicSymbolWithdrawLiquidity
-	d := NewDecoder()
-	if !d.Matches(ev) {
-		t.Fatal("concentrated pool not gated in")
+// Withdraw fixtures predate the 155a17b9 upgrade (the lake has no instance change to that hash before 64,578,395), so
+// their directory names the capture date, not a WASM hash.
+const clWithdrawDir = "concentrated-2026-04-29"
+
+// A concentrated withdraw_liquidity body is [liquidity, amount0, amount1], all positive; the same-tx position_update
+// delta is -liquidity. Values are hand-decoded from the XDR (i128 lo words), not read back.
+func TestConcentratedWithdraw_fixturesCrossCheckAgainstSameTxEvents(t *testing.T) {
+	cases := []struct {
+		name, withdraw, position    string
+		liquidity, amount0, amount1 string
+	}{
+		{
+			"single-sided token1", "withdraw_liquidity_62341437_bf55f09c8439_1.json", "position_update_62341437_bf55f09c8439_3.json",
+			"12196208501", "0", "9999999",
+		}, // 0x02d6f35f75, 0, 0x98967f
+		{
+			"single-sided token0", "withdraw_liquidity_62342234_78c520b8817a_1.json", "position_update_62342234_78c520b8817a_3.json",
+			"10173297756", "999999", "0",
+		}, // 0x025e60345c, 0x0f423f, 0
+		{
+			"two-sided", "withdraw_liquidity_62342237_d3850b73a054_2.json", "position_update_62342237_d3850b73a054_4.json",
+			"3234539544", "657233", "112207592",
+		}, // 0xc0cb2818, 0x0a0751, 0x06b026e8
 	}
-	if out, err := d.Decode(ev); !errors.Is(err, ErrUnverifiedLiquidityLayout) || out != nil {
-		t.Fatalf("Decode(concentrated withdraw) = %v, %v; want nil, ErrUnverifiedLiquidityLayout", out, err)
+	d := NewDecoder()
+	for _, c := range cases {
+		_, ev, _ := loadHashFixture(t, clWithdrawDir, c.withdraw)
+		lq, ok := decodeOne(t, d, ev).(LiquidityEvent)
+		if !ok || lq.Action != LiquidityWithdraw || !lq.Concentrated || len(lq.Amounts) != 2 || !lq.Shares.IsZero() {
+			t.Fatalf("%s: decoded %+v, want a concentrated withdraw with 2 amounts and no shares", c.name, lq)
+		}
+		if lq.Liquidity.String() != c.liquidity || lq.Amounts[0].String() != c.amount0 || lq.Amounts[1].String() != c.amount1 {
+			t.Errorf("%s: liquidity=%s amounts=%v, want %s [%s %s]", c.name, lq.Liquidity, lq.Amounts, c.liquidity, c.amount0, c.amount1)
+		}
+		_, puEv, _ := loadHashFixture(t, clWithdrawDir, c.position)
+		pu, err := decodeRewardsEvent(&puEv, EventPositionUpdate, lq.ObservedAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := new(big.Int).Neg(lq.Liquidity.BigInt()).String(); pu.Attributes["delta"] != want {
+			t.Errorf("%s: same-tx position_update delta %v, want -liquidity %s", c.name, pu.Attributes["delta"], want)
+		}
+	}
+}
+
+// Between the pool's consecutive withdraws at 62,342,234 and 62,342,237 its reserves fall by exactly the second
+// withdraw's amounts, which pins amount0/amount1 to token order.
+func TestConcentratedWithdraw_reservesFallByAmounts(t *testing.T) {
+	d := NewDecoder()
+	reserves := func(name string) []*big.Int {
+		_, ev, _ := loadHashFixture(t, clWithdrawDir, name)
+		rv, ok := decodeOne(t, d, ev).(ReservesEvent)
+		if !ok || len(rv.Reserves) != 2 {
+			t.Fatalf("%s did not decode to a 2-leg ReservesEvent", name)
+		}
+		return []*big.Int{rv.Reserves[0].BigInt(), rv.Reserves[1].BigInt()}
+	}
+	before := reserves("update_reserves_62342234_78c520b8817a_2.json")
+	after := reserves("update_reserves_62342237_d3850b73a054_3.json")
+	_, ev, _ := loadHashFixture(t, clWithdrawDir, "withdraw_liquidity_62342237_d3850b73a054_2.json")
+	lq, ok := decodeOne(t, d, ev).(LiquidityEvent)
+	if !ok {
+		t.Fatal("withdraw did not decode")
+	}
+	for i := range 2 {
+		if drop := new(big.Int).Sub(before[i], after[i]); drop.Cmp(lq.Amounts[i].BigInt()) != 0 {
+			t.Errorf("reserve[%d] fell by %s, withdraw amount%d is %s", i, drop, i, lq.Amounts[i])
+		}
+	}
+}
+
+// Every pool the router's add_pool announced (testdata census: ledger, pool, type) is in exactly the list its type
+// names, the lists hold nothing else, and the decoder seeds each with the layout its announcement implies.
+func TestRouterCensus_poolListsMatchAnnouncedTypes(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "router_add_pool_census.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := NewDecoder()
+	var classic, concentrated int
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		f := strings.Split(line, "\t")
+		if len(f) != 3 {
+			t.Fatalf("census row %q", line)
+		}
+		pool, typ := f[1], f[2]
+		inClassic, inCL := slices.Contains(MainnetPools, pool), slices.Contains(MainnetConcentratedPools, pool)
+		switch typ {
+		case "constant", "stable":
+			classic++
+			if !inClassic || inCL {
+				t.Errorf("%s (%s): in MainnetPools=%v MainnetConcentratedPools=%v", pool, typ, inClassic, inCL)
+			}
+		case "concentrated":
+			concentrated++
+			if inClassic || !inCL {
+				t.Errorf("%s (%s): in MainnetPools=%v MainnetConcentratedPools=%v", pool, typ, inClassic, inCL)
+			}
+		default:
+			t.Fatalf("census type %q", typ)
+		}
+		if got, want := d.reg.AttrsOf(pool)[AttrLiquidityLayout], LayoutForAnnouncement(typ); got != want {
+			t.Errorf("%s (%s): seeded layout %q, want %q", pool, typ, got, want)
+		}
+	}
+	if classic != len(MainnetPools) || concentrated != len(MainnetConcentratedPools) {
+		t.Errorf("census %d classic / %d concentrated, lists hold %d / %d", classic, concentrated, len(MainnetPools), len(MainnetConcentratedPools))
 	}
 }
 

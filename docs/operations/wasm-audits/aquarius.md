@@ -105,19 +105,17 @@ body (a 4-tuple fails the arity check: fail-loud).
 
 Volatile / stableswap / concentrated pools all publish the same
 4-topic + 3-tuple `trade` body, so one trade decoder covers all three.
-**Concentrated pools are live**: three router `add_pool` events after
-ledger 65,663,788 announce type `concentrated`. On
+**Concentrated pools are live**: 63 router `add_pool` events, the first at
+ledger 62,339,683, announce type `concentrated` (census 2026-11-26). On
 `CABOSWXYBLE2UJKYWITFRICR37D4UOB75CNXIH7VI5ZKKL526GFHXAUI` the one
 `trade` (ledger 65,678,793) is `[sold, bought, fee]` and moves
-`update_reserves` accordingly, but `deposit_liquidity` is
-`[liquidity, amount0, amount1]` rather than the classic
-`[amount0, amount1, shares]` with the same arity. The decoder therefore
-decodes liquidity by the pool's layout from `add_pool`, refuses a pool
-whose layout is unknown, and refuses concentrated `withdraw_liquidity`
-(not yet observed); see
-[docs/protocols/aquarius.md](../../protocols/aquarius.md#concentrated-liquidity-pools).
-The concentrated pool WASM hash is not yet resolved, so it is not in
-`audited_wasm.json`.
+`update_reserves` accordingly, but `deposit_liquidity` and
+`withdraw_liquidity` are `[liquidity, amount0, amount1]` rather than the
+classic `[amount0, amount1, shares]` with the same arity. The decoder
+therefore decodes liquidity by the pool's layout from `add_pool` and
+refuses a pool whose layout is unknown; see
+[docs/protocols/aquarius.md](../../protocols/aquarius.md#concentrated-liquidity-pools)
+and the 2026-11-26 event-shape check below.
 
 ## Failure modes specific to Aquarius
 
@@ -132,7 +130,7 @@ The concentrated pool WASM hash is not yet resolved, so it is not in
 5. **i128 → u128 amount type swap** — `scval.AsAmountFromI128` is
    strict; errors per trade. Unlikely.
 6. **New pool type with a reordered or extended body** — concentrated
-   pools reorder `deposit_liquidity` at the same arity (above). Liquidity
+   pools reorder `deposit_liquidity` / `withdraw_liquidity` at the same arity (above). Liquidity
    decoding is keyed on the pool's announced layout, but `trade` and
    `update_reserves` are not, so a new pool type still needs a new audit
    entry.
@@ -436,9 +434,18 @@ re-run against a replay. The hash is in `audited_wasm.json`.
 
 `155a17b9929ffb1f9e84bd6ef5c00a4d613c1ab5f4ad4c502d84515250cc2907` was already
 in `audited_wasm.json` from the 2026-10-08 string check (41 contracts then).
-The concentrated pools `CABOSWXY…XAUI` and `CBQ6AGQY…CAMXO` run it at every
-ledger their events were captured at (`stellar.contract_instance_changes`).
-No new byte search was run for this entry; it rests on event shape only.
+On 2026-11-26 it runs on 79 contracts (`stellar.contract_instance_changes`):
+all 63 router-announced concentrated pools plus 16 the router never
+announced. No concentrated pool runs another hash. The lake's first
+instance change to this hash is at ledger 64,578,395, so concentrated
+events before that ran an earlier, unidentified hash; the withdraw
+fixtures below are from that period and show the same body order.
+
+Byte search of the `155a17b9…` blob (base64 length 147,132), 2026-11-26:
+every listed literal is present — `position_update`, `pool_state`,
+`claim_reward`, `claim_fees`, `set_rewards_config`, `concentrated`, `tick`,
+`sqrt_price`, `deposit_liquidity`, `withdraw_liquidity`, `update_reserves`,
+`trade`.
 
 Fixtures: `test/fixtures/aquarius/155a17b9…/` holds every `deposit_liquidity`
 the two pools emitted (four), each with the same-transaction
@@ -453,9 +460,18 @@ reserve[0] by exactly the bought amount. The trade (fee 13 on 12,635 sold, the
 pool's `add_pool` announcing 10 bps) is too small to tell the gross and net fee
 conventions apart, so it is not in the fee census.
 
-Not established: whether the other contracts on this hash are concentrated
-pools, the `withdraw_liquidity` order, and the order on the three
-pre-upgrade concentrated pools.
+Withdraw fixtures: `test/fixtures/aquarius/concentrated-2026-04-29/` holds
+three real `withdraw_liquidity` transactions with their `update_reserves` and
+`position_update` — single-sided token1 (62,341,437 `CCV2X5TH…`), single-sided
+token0 (62,342,234 `CA4HTZNY…`) and two-sided (62,342,237 `CA4HTZNY…`).
+`TestConcentratedWithdraw_fixturesCrossCheckAgainstSameTxEvents` asserts the
+hand-decoded values and body[0] == −(`position_update` delta);
+`TestConcentratedWithdraw_reservesFallByAmounts` asserts `CA4HTZNY…`'s
+reserves fall between its two consecutive withdraws by exactly the second
+one's body[1] and body[2]. The same body[0] == −delta relation holds in all
+300 withdraw transactions sampled from 62,341,437 – 62,413,470.
+
+Not established: what the 16 unannounced contracts on this hash are.
 
 ## Caveats
 

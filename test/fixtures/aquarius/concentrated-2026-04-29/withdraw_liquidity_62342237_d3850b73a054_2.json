@@ -1,0 +1,16 @@
+{
+  "contract_id": "CA4HTZNY2RBZWEQE5GBMNREZMFRPAZSVJ6OGPC7T3VM7NHRJYFAVID2S",
+  "wasm_hash": "concentrated-2026-04-29",
+  "ledger": 62342237,
+  "tx_hash": "d3850b73a054f64768b900b909204826c706617d97b980a5623368c09c8e98ea",
+  "op_index": 0,
+  "event_index": 2,
+  "ledger_closed_at": "2026-04-29T15:58:19Z",
+  "topics": [
+    "AAAADwAAABJ3aXRoZHJhd19saXF1aWRpdHkAAA==",
+    "AAAAEgAAAAEltPzYWa7C+mNIQ4xImzw8EMmLbSG+T9PLMMtolT75dw==",
+    "AAAAEgAAAAEohS9owZhIjjRvsSEu1QKQU3Ycwk9FM5LjU5ggGwgl5w=="
+  ],
+  "value": "AAAAEAAAAAEAAAADAAAACgAAAAAAAAAAAAAAAMDLKBgAAAAKAAAAAAAAAAAAAAAAAAoHUQAAAAoAAAAAAAAAAAAAAAAGsCbo",
+  "event_name": "withdraw_liquidity"
+}

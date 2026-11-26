@@ -1,0 +1,15 @@
+{
+  "contract_id": "CA4HTZNY2RBZWEQE5GBMNREZMFRPAZSVJ6OGPC7T3VM7NHRJYFAVID2S",
+  "wasm_hash": "concentrated-2026-04-29",
+  "ledger": 62342237,
+  "tx_hash": "d3850b73a054f64768b900b909204826c706617d97b980a5623368c09c8e98ea",
+  "op_index": 0,
+  "event_index": 4,
+  "ledger_closed_at": "2026-04-29T15:58:19Z",
+  "topics": [
+    "AAAADwAAAA9wb3NpdGlvbl91cGRhdGUA",
+    "AAAAEgAAAAAAAAAAAuPAcYNM5pIG/e6c2bwM4YyWnVJ7NX5A1Mi91AaJ6C0="
+  ],
+  "value": "AAAAEAAAAAEAAAADAAAABAAA78QAAAAEAADwPAAAAAr///////////////8/NNfo",
+  "event_name": "position_update"
+}

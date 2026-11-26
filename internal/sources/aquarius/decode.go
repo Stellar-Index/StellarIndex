@@ -211,13 +211,10 @@ func decodeLiquidity(e *events.Event, action LiquidityAction, closedAt time.Time
 	}, nil
 }
 
-// decodeConcentratedLiquidity decodes a concentrated pool's deposit_liquidity: topics [Symbol, Address(token0),
-// Address(token1)], body Vec<i128> [liquidity, amount0, amount1]. On chain the same-tx update_reserves grows by amount0 and
-// amount1 and position_update carries liquidity. withdraw_liquidity has not been observed, so it is refused, not guessed.
+// decodeConcentratedLiquidity decodes a concentrated pool's deposit_liquidity or withdraw_liquidity: topics [Symbol,
+// Address(token0), Address(token1)], body Vec<i128> [liquidity, amount0, amount1], all non-negative. On chain the same-tx
+// update_reserves moves by amount0 and amount1 and position_update's delta is +liquidity (deposit) or -liquidity (withdraw).
 func decodeConcentratedLiquidity(e *events.Event, action LiquidityAction, closedAt time.Time) (LiquidityEvent, error) {
-	if action != LiquidityDeposit {
-		return LiquidityEvent{}, fmt.Errorf("%w: %s from %s", ErrUnverifiedLiquidityLayout, action, e.ContractID)
-	}
 	tokens, err := decodeLiquidityTokens(e, action)
 	if err != nil {
 		return LiquidityEvent{}, err
