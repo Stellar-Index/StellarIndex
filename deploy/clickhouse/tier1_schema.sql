@@ -1643,6 +1643,9 @@ CREATE TABLE IF NOT EXISTS stellar.lending_interest_hourly
     residual_attributed   Int256,                  -- same-tx event whose amount cannot be checked
     explained_versions    UInt32,
     attributed_versions   UInt32,
+    interest_drawn          Int256 DEFAULT 0,      -- ≤ 0: explained interest-fill lots; a lower bound on every pool (V1 fills are attributed)
+    gulped                  Int256 DEFAULT 0,      -- ≥ 0: explained gulp token_delta
+    reconcile_backstop_loss Int256 DEFAULT 0,      -- ≤ 0: explained BLNT reconcile_loss backstop_credit_loss; residual_explained = the three
     unordered_versions    UInt32,                  -- predecessor order unknown: counted, not summed
     accrual_errors        UInt32,                  -- accrual refused the pair: counted, not summed
     error_samples         Array(String),           -- at most 5

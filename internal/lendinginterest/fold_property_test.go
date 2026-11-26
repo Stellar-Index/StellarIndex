@@ -150,7 +150,7 @@ func (g *gen) reserve(pool, asset string, proto Protocol, tx string) {
 	default: // a later transaction in the ledger: no accrual, sometimes a backstop credit draw
 		next.DRate, next.BRate, next.BackstopCredit = cur.DRate, cur.BRate, cur.BackstopCredit
 		if g.rng.Intn(3) == 0 {
-			next.BackstopCredit = new(big.Int).Add(cur.BackstopCredit, big.NewInt(1))
+			next.BackstopCredit = new(big.Int).Sub(cur.BackstopCredit, big.NewInt(1))
 		}
 	}
 	next.BSupply = big.NewInt(1_000_000_000_000 + g.rng.Int63n(1_000_000_000))

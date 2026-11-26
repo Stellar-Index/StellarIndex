@@ -1519,7 +1519,7 @@ func checkLiRows(t *testing.T, ctx context.Context, conn driver.Conn, pool, asse
 		if i >= len(want) {
 			t.Fatalf("extra row at %s", hour)
 		}
-		if !hour.Equal(first.Add(time.Duration(i)*time.Hour)) || fl != firstLedgers[i] || ll != lastLedgers[i] || rev != 3 || feeMismatch != 0 {
+		if !hour.Equal(first.Add(time.Duration(i)*time.Hour)) || fl != firstLedgers[i] || ll != lastLedgers[i] || rev != 4 || feeMismatch != 0 {
 			t.Errorf("row %d: %s ledgers %d-%d rev %d fee mismatches %d", i, hour, fl, ll, rev, feeMismatch)
 		}
 		w := &want[i]
@@ -1646,10 +1646,12 @@ func TestChEntryHistoryLending_InterestEvents(t *testing.T) {
 		hour                                  time.Time
 		unreconciled, explained, attributed   uint32
 		residual, resExplained, resAttributed string
+		drawn, gulped, reconciled             string // residual_explained by cause
 		rev                                   uint16
 	}
 	q, err := conn.Query(ctx, `SELECT hour, unreconciled_versions, explained_versions, attributed_versions, toString(backstop_residual),
-		toString(residual_explained), toString(residual_attributed), derive_rev FROM stellar.lending_interest_hourly FINAL
+		toString(residual_explained), toString(residual_attributed), toString(interest_drawn), toString(gulped),
+		toString(reconcile_backstop_loss), derive_rev FROM stellar.lending_interest_hourly FINAL
 		WHERE contract_id = ? AND asset = ? AND hour > ? ORDER BY hour`, pool, liFillAsset, at(10))
 	if err != nil {
 		t.Fatal(err)
@@ -1657,7 +1659,8 @@ func TestChEntryHistoryLending_InterestEvents(t *testing.T) {
 	var got []cls
 	for q.Next() {
 		var c cls
-		if err := q.Scan(&c.hour, &c.unreconciled, &c.explained, &c.attributed, &c.residual, &c.resExplained, &c.resAttributed, &c.rev); err != nil {
+		if err := q.Scan(&c.hour, &c.unreconciled, &c.explained, &c.attributed, &c.residual, &c.resExplained, &c.resAttributed,
+			&c.drawn, &c.gulped, &c.reconciled, &c.rev); err != nil {
 			t.Fatal(err)
 		}
 		got = append(got, c)
@@ -1665,9 +1668,9 @@ func TestChEntryHistoryLending_InterestEvents(t *testing.T) {
 	_ = q.Close()
 	h := func(n int) time.Time { return time.Date(2027, 2, 21, n, 0, 0, 0, time.UTC) }
 	want := []cls{
-		{h(11), 1, 1, 0, "-62201350", "-62201350", "0", 3}, // the fill's lot, exactly
-		{h(12), 1, 0, 0, "-1234", "0", "0", 3},             // no event: unexplained
-		{h(13), 0, 0, 0, "0", "0", "0", 3},
+		{h(11), 1, 1, 0, "-62201350", "-62201350", "0", "-62201350", "0", "0", 4}, // the fill's lot, exactly, all of it drawn
+		{h(12), 1, 0, 0, "-1234", "0", "0", "0", "0", "0", 4},                     // no event: unexplained
+		{h(13), 0, 0, 0, "0", "0", "0", "0", "0", "0", 4},
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("rows\n%+v\nwant\n%+v", got, want)
@@ -1679,7 +1682,7 @@ func TestChEntryHistoryLending_InterestEvents(t *testing.T) {
 	exec(`ALTER TABLE stellar.lending_interest_hourly UPDATE derive_rev = 1 WHERE contract_id = ? AND hour = ? SETTINGS mutations_sync = 2`,
 		pool, h(11))
 	out, gauge, err = liProve(t, addr)
-	if err == nil || !strings.Contains(err.Error(), "INCOMPLETE") || gauge != "0" || !strings.Contains(out, "derive_rev 1, this binary derives 3") {
+	if err == nil || !strings.Contains(err.Error(), "INCOMPLETE") || gauge != "0" || !strings.Contains(out, "derive_rev 1, this binary derives 4") {
 		t.Fatalf("prove over a revision-1 row: err %v gauge %s\n%s", err, gauge, out)
 	}
 }

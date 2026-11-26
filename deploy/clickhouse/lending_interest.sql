@@ -86,7 +86,16 @@
 -- same-transaction defaulted_debt for the asset (blend.DefaultedBRate): its
 -- supply_residual, the suppliers' socialised loss, then also counts in
 -- default_loss and the version in default_versions, if it is classified.
--- supply_residual − default_loss is what no event explains. The pass reads the pools' contract_events
+-- supply_residual − default_loss is what no event explains. residual_explained
+-- is exactly interest_drawn + gulped + reconcile_backstop_loss, each the sum of
+-- its cause's event amounts over EXPLAINED versions only. Each is a lower bound
+-- on every pool: a Blend V1 fill is attributed, a cause inside an unexplained
+-- version is left out, and events netting to zero in a version whose
+-- backstop_credit reconciles with accrual (no residual, no default) are never
+-- classified, so not split. A served total of any of them sets lower_bound and
+-- names those exclusions (attributed and unexplained versions). A BLNT fee
+-- withdrawal or protocol_credit_loss moves the fee entry, not backstop_credit,
+-- and has no column. The pass reads the pools' contract_events
 -- for each window and refuses it unless every ledger holding a version it
 -- classifies by those events has, in contract_events, exactly the events
 -- stellar.ledgers declares. A pool's cause event that does not decode is
@@ -141,6 +150,9 @@ CREATE TABLE IF NOT EXISTS stellar.lending_interest_hourly
     residual_attributed   Int256,                  -- same-tx event whose amount cannot be checked
     explained_versions    UInt32,
     attributed_versions   UInt32,
+    interest_drawn          Int256 DEFAULT 0,      -- ≤ 0: explained interest-fill lots; a lower bound on every pool (V1 fills are attributed)
+    gulped                  Int256 DEFAULT 0,      -- ≥ 0: explained gulp token_delta
+    reconcile_backstop_loss Int256 DEFAULT 0,      -- ≤ 0: explained BLNT reconcile_loss backstop_credit_loss; residual_explained = the three
     unordered_versions    UInt32,                  -- predecessor order unknown: counted, not summed
     accrual_errors        UInt32,                  -- accrual refused the pair: counted, not summed
     error_samples         Array(String),           -- at most 5
@@ -159,3 +171,14 @@ ORDER BY (contract_id, asset, hour);
 ALTER TABLE stellar.lending_interest_hourly
     ADD COLUMN IF NOT EXISTS default_loss Int256 DEFAULT 0 AFTER supply_residual,
     ADD COLUMN IF NOT EXISTS default_versions UInt32 DEFAULT 0 AFTER default_loss;
+
+-- derive_rev 4 splits residual_explained by cause into interest_drawn, gulped
+-- and reconcile_backstop_loss. Apply this file on EVERY host BEFORE deploying a
+-- derive_rev 4 binary: its INSERT and the proof's read name all three, so
+-- against the old table each fails whole and writes nothing. Older rows read 0
+-- and are derive_rev 3, so they prove INCOMPLETE until the re-derive from the
+-- floor described above, then a full prove (lending-interest-prove-full.service).
+ALTER TABLE stellar.lending_interest_hourly
+    ADD COLUMN IF NOT EXISTS interest_drawn Int256 DEFAULT 0 AFTER attributed_versions,
+    ADD COLUMN IF NOT EXISTS gulped Int256 DEFAULT 0 AFTER interest_drawn,
+    ADD COLUMN IF NOT EXISTS reconcile_backstop_loss Int256 DEFAULT 0 AFTER gulped;

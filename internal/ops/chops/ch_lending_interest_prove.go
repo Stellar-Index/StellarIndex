@@ -542,8 +542,8 @@ var interestColumnNames = []string{
 	"protocol", "first_ledger", "last_ledger", "versions", "accrued_versions", "gross", "protocol_fee", "backstop",
 	"supplier_intended", "supplier_realised", "backstop_credit_delta", "unreconciled_versions", "brate_mismatches",
 	"backstop_residual", "supply_residual", "fee_mismatches", "fee_credit_residual", "unordered_versions",
-	"accrual_errors", "error_samples", "default_loss", "default_versions",
-	"residual_explained", "residual_attributed", "explained_versions", "attributed_versions",
+	"accrual_errors", "error_samples", "default_loss", "default_versions", "interest_drawn", "gulped",
+	"reconcile_backstop_loss", "residual_explained", "residual_attributed", "explained_versions", "attributed_versions",
 	"versions (the lake's count)",
 }
 
@@ -556,6 +556,7 @@ func interestColumns(r lendinginterest.HourRow) []string {
 		r.BackstopCreditDelta.String(), n(r.UnreconciledVersions), n(r.BRateMismatches), r.BackstopResidual.String(),
 		r.SupplyResidual.String(), n(r.FeeMismatches), r.FeeCreditResidual.String(), n(r.UnorderedVersions),
 		n(r.AccrualErrors), fmt.Sprintf("%q", r.ErrorSamples), r.DefaultLoss.String(), n(r.DefaultVersions),
+		r.InterestDrawn.String(), r.Gulped.String(), r.ReconcileBackstopLoss.String(),
 	}
 }
 
