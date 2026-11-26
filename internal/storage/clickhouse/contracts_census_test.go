@@ -36,6 +36,10 @@ func TestRecentContracts_CensusPath(t *testing.T) {
 			if !strings.Contains(q, "GROUP BY contract_id") || !strings.Contains(q, "ORDER BY events DESC") {
 				t.Fatalf("unexpected census query shape: %s", q)
 			}
+			// A resurrected build leaves two rows per (day, contract); summing them raw would double the ranking's events.
+			if !strings.Contains(q, "max(events) AS e") || !strings.Contains(q, "GROUP BY day, contract_id") {
+				t.Fatalf("census query sums raw rows, not one per (day, contract): %s", q)
+			}
 			return &stubRows{data: [][]any{
 				{"CCONTRACTA", int64(500), uint32(63_000_100), base.Add(72 * time.Hour)},
 				{"CCONTRACTB", int64(200), uint32(63_000_050), base.Add(71 * time.Hour)},
