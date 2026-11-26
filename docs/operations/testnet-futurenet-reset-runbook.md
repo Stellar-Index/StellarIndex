@@ -69,8 +69,9 @@ A partial wipe strands watermarks/CAGGs and re-stalls.
 - ClickHouse: drop and recreate the `stellar.*` lake tables (or the DB).
 - MinIO: `mc rb --force` then `mc mb` each of `galexie-live` and `galexie-archive`
   on root's `local` alias (no credentials to handle).
-- Disk: empty galexie's captive-core storage (`captive_core.storage_path`,
-  `/var/lib/galexie/captive`), move the `si-catchup` queue files
+- Disk: remove every `captive-core*` directory under `/var/lib/galexie` (galexie's
+  captive core creates it at run time and it holds the state), empty
+  `/var/lib/galexie/captive` (created by the role), move the `si-catchup` queue files
   (`/var/lib/stellarindex/catchup/*.queue|done|failed|deferred`) and
   `verify-archive-state.json` aside so old-cycle work is not replayed.
 - Redis: flush it. API keys live here under the default `auth_backend`
