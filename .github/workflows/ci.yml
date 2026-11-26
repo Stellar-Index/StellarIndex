@@ -398,6 +398,8 @@ jobs:
               - 'deploy/monitoring/**'
               # ansible-api-env-test.sh checks the self-host guide's API env file.
               - 'docs/operations/self-hosting.md'
+              # ansible-usd-peg-network-gate-test.sh byte-compares the render to this fixture.
+              - 'internal/config/testdata/ansible-pubnet-pegs.toml'
       # dorny/paths-filter's glob matching cannot be exercised offline
       # (no Docker/`act`), so its rule is restated in plain shell at
       # scripts/ci/check-change-class.sh and proven against fixtures

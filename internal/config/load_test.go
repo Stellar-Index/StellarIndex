@@ -277,7 +277,7 @@ func TestLoad_ExampleConfigValid(t *testing.T) {
 	}
 }
 
-// Pins the pubnet USD and fiat pegs through the real decoder and validator. The template renders them from role
+// Pins the pubnet USD and fiat pegs and watched classic assets through the real decoder and validator. The template renders them from role
 // defaults by loop, so this reads the real ansible render of those defaults, which
 // scripts/ci/ansible-usd-peg-network-gate-test.sh holds byte-equal to testdata/ansible-pubnet-pegs.toml. Pins AUDD -> AUD
 // and, via the AUDD<->AUDR par corridor, AUDR -> AUD.
@@ -294,6 +294,9 @@ func TestAnsibleFiatPegStanza_ValidAndComplete(t *testing.T) {
 	wantUSD := []string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"}
 	if !reflect.DeepEqual(c.Trades.USDPeggedClassicAssets, wantUSD) {
 		t.Errorf("deployed usd_pegged_classic_assets = %v, want %v", c.Trades.USDPeggedClassicAssets, wantUSD)
+	}
+	if got := c.Supply.WatchedClassicAssets; len(got) != 9 || got[0] != wantUSD[0] {
+		t.Errorf("deployed watched_classic_assets = %v, want the 9 pubnet defaults led by %s", got, wantUSD[0])
 	}
 	pegs := c.PricingGuard.FiatPeggedClassicAssets
 	want := map[string]string{
