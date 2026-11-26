@@ -465,11 +465,21 @@ func (o *Orchestrator) refuseProxyPivot(ctx context.Context, chain Triangulation
 		return false
 	}
 	o.logger.Warn("triangulation: pivot leg's stablecoin-proxy prints disagree with its own-quote prints — direct price serves",
-		"chain", chain.Target.String(), "window", window.String(), "refusal", refusal)
+		"chain", chain.Target.String(), "window", window.String(), "refusal", refusal,
+		"leg_quote_surface", o.chainSurfaceString(chain, window))
 	meta.PivotProxyShare = shares
 	meta.PivotSurfaceRefusal = refusal
 	o.writeCompositeMeta(ctx, chain.Target, window, meta)
 	return true
+}
+
+// chainSurfaceString renders this tick's quote-surface reading of each priced chain leg for the refusal log.
+func (o *Orchestrator) chainSurfaceString(chain TriangulationChain, window time.Duration) string {
+	ref := compositeReference{legDispersionBps: map[string]float64{}, legSurfaceBps: map[string]float64{}, legSurface: map[string]string{}}
+	for _, leg := range chain.Legs {
+		ref.recordLegReadings(leg, o.tickLegRefs[window])
+	}
+	return ref.legSurfaceString()
 }
 
 // withCorroborationBasis stamps this tick's composite-reference reading
