@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"sync/atomic"
@@ -80,6 +81,35 @@ func TestGateAdmissions_AWriteThatLandsIsNotKept(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	if writes.Load() != 1 || testutil.ToFloat64(obs.GateAdmissionsUnpersisted.WithLabelValues(source)) != 0 {
 		t.Errorf("writes = %d, want exactly one and nothing kept", writes.Load())
+	}
+}
+
+// A write refused permanently (first attempt, or on a retry after a transient failure) is counted and dropped, not
+// kept: retrying it forever would hold the unpersisted gauge, and its alert, up with no end condition.
+func TestGateAdmissions_ATerminalRefusalIsNotKept(t *testing.T) {
+	const source = "gate-admission-terminal-test"
+	g := testGateAdmissions(t.Context())
+	failures := func() float64 {
+		return testutil.ToFloat64(obs.GateAdmissionPersistFailuresTotal.WithLabelValues(source))
+	}
+	unpersisted := func() float64 { return testutil.ToFloat64(obs.GateAdmissionsUnpersisted.WithLabelValues(source)) }
+	terminal := fmt.Errorf("%w: type conflict", errAdmissionTerminal)
+
+	var writes atomic.Int64
+	g.persist(source, "CFIRST", func(context.Context) error { writes.Add(1); return terminal })
+	if unpersisted() != 0 || failures() != 1 {
+		t.Fatalf("after a terminal first attempt: unpersisted %v failures %v, want 0 and 1", unpersisted(), failures())
+	}
+	g.persist(source, "CRETRY", func(context.Context) error {
+		if writes.Add(1) == 2 {
+			return errors.New("postgres: failing over")
+		}
+		return terminal
+	})
+	waitFor(t, func() bool { return unpersisted() == 0 && writes.Load() >= 3 })
+	time.Sleep(20 * time.Millisecond)
+	if n := writes.Load(); n != 3 {
+		t.Errorf("writes = %d, want 3 (terminal, transient, terminal on the one retry)", n)
 	}
 }
 

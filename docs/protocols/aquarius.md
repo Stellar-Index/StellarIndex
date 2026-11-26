@@ -260,10 +260,14 @@ The decoder keeps a per-pool liquidity layout in the gate. A pool is
 `constant` / `stable` or it is in `MainnetPools`. Any other pool's liquidity
 events are refused (`ErrUnknownLiquidityLayout`); a refusal counts as
 projector `decode_error`, and the decode-failed log line carries the error.
-`protocol_contracts` has no column for the type, so a layout learned from a
-live `add_pool` does not survive a restart: a pool in neither list then has
-its liquidity events refused, and the boot warm logs a WARN naming it ("NO
-liquidity layout") until it is added to the list its type names.
+The live indexer records each `add_pool`'s raw type in `aquarius_pools`
+(migration 0237), and the boot warm restores the layout from it, so a pool
+learned live keeps its layout across a restart. A recorded type that
+contradicts the list naming the pool fails the warm (the indexer refuses to
+start) rather than picking one. A pool with no layout from either source (a
+`protocol_contracts` row in neither list, or a recorded type this binary
+cannot map) has its liquidity events refused, and the boot warm logs a WARN
+naming it ("NO liquidity layout").
 A concentrated pool's `aquarius_liquidity` rows carry the two token amounts
 and `shares` NULL: the pool mints no LP shares, and its liquidity is in the
 `position_update` row of `aquarius_rewards_events`.
