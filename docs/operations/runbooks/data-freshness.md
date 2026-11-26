@@ -5,7 +5,7 @@ status: draft
 ---
 # Runbook — data freshness
 
-All alerts here are `severity: ticket` (P3), identical in `configs/prometheus/rules.r1/data-freshness.yml` and `deploy/monitoring/rules/data-freshness.yml`; the two serving alerts are identical in both `serving-freshness.yml` copies.
+All alerts here are `severity: ticket` (P3), identical in `configs/prometheus/rules.r1/data-freshness.yml` and `deploy/monitoring/rules/data-freshness.yml`; the served-value alerts are identical in both `served-values.yml` copies, the two serving alerts are identical in both `serving-freshness.yml` copies.
 
 Most gauges come from `data-freshness.sh` (`configs/ansible/roles/archival-node/files/data-freshness.sh` -> `/usr/local/sbin/data-freshness.sh`), run by `data-freshness.timer` every 15 min, writing `/var/lib/node_exporter/textfile_collector/data_freshness.prom` atomically. Served-value gauges come from `verify-served-values`. If several alerts fire together, check the emitter first ([watchdog_silent](#stellarindex_data_freshness_watchdog_silent)).
 

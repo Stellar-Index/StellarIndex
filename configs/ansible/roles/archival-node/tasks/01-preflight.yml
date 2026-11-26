@@ -33,6 +33,34 @@
       {{ region_id | default('(unset)') }}. A new value should extend this
       list deliberately, not fall through to a default.
 
+# The asset defaults carry pubnet issuers; on a test net the same strings name other accounts. The
+# comparison set is read from the role's defaults file so an inventory override cannot move it.
+# Both CODE-ISSUER and CODE:ISSUER match, as canonical.ParseAsset accepts both.
+- name: Verify a test net carries no pubnet issuer from the role defaults
+  vars:
+    peg_defaults: "{{ lookup('ansible.builtin.file', role_path ~ '/defaults/main.yml') | from_yaml }}"
+    peg_pubnet_issuers: >-
+      {{ (peg_defaults.stellarindex_usd_pegged_classic_assets
+          + (peg_defaults.stellarindex_fiat_pegged_classic_assets.keys() | list)
+          + peg_defaults.stellarindex_watched_classic_assets)
+         | map('regex_replace', '^.*[-:]', '') | unique | join('|') }}
+    peg_issuer_re: "{{ '[-:](' ~ peg_pubnet_issuers ~ ')$' }}"
+    peg_usd_hits: "{{ stellarindex_usd_pegged_classic_assets | select('regex', peg_issuer_re) | list }}"
+    peg_fiat_hits: "{{ stellarindex_fiat_pegged_classic_assets.keys() | list | select('regex', peg_issuer_re) | list }}"
+    peg_watched_hits: "{{ stellarindex_watched_classic_assets | select('regex', peg_issuer_re) | list }}"
+  ansible.builtin.assert:
+    that:
+      - stellar_network == 'pubnet' or not (run_aggregator | default(true) | bool)
+        or (peg_usd_hits + peg_fiat_hits + peg_watched_hits) | length == 0
+    fail_msg: >-
+      {{ inventory_hostname }} is on {{ stellar_network }} with run_aggregator on but carries a
+      pubnet issuer from the role defaults:
+      stellarindex_usd_pegged_classic_assets [{{ peg_usd_hits | join(', ') }}];
+      stellarindex_fiat_pegged_classic_assets [{{ peg_fiat_hits | join(', ') }}];
+      stellarindex_watched_classic_assets [{{ peg_watched_hits | join(', ') }}].
+      Set each non-empty one in the host inventory to this network's own assets (the USD peg
+      is this network's USDC; {} for no fiat pegs), or set run_aggregator: false.
+
 # allowed_ssh_cidrs has no role
 # default either (see defaults/main.yml). SSH is the port that grants
 # root on this box, and a "0.0.0.0/0" default would hand it to
