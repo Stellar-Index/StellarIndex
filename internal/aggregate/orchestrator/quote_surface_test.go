@@ -209,7 +209,7 @@ func TestQuoteSurface_SingleOwnVenueIsTheWholeWindowCompare(t *testing.T) {
 	}
 }
 
-// A thin leg (both surfaces ~1 USD a print, under the 10k-per-hour floor) never decides alone: its verdict is exactly the
+// A thin leg (both surfaces ~1 USD a print, under every per-hour floor) never decides alone: its verdict is exactly the
 // whole-window compare's.
 func TestQuoteSurface_ThinLegIsTheWholeWindowCompare(t *testing.T) {
 	for name, bps := range map[string]int64{"trend, no de-peg": 0, "de-peg": -100} {

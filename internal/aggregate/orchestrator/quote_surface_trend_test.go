@@ -150,13 +150,13 @@ func TestQuoteSurface_ContinuousTrendsNeverAcceptAHiddenDepeg(t *testing.T) {
 					if d.Cmp(tol) > 0 {
 						hidden++
 					}
-					if o := surfaceOracleFor(trades, proxied, sz.slot); exceeds(o.whole) {
+					if o := surfaceOracleFor(trades, proxied, sz.window, sz.slot); exceeds(o.whole) {
 						t.Errorf("%s: fallback passed but the whole-window gap %.1f bps refuses", name, ratBps(o.whole))
 					}
 					continue
 				}
 				alone++
-				o := surfaceOracleFor(trades, proxied, sz.slot)
+				o := surfaceOracleFor(trades, proxied, sz.window, sz.slot)
 				res := trendResidual(trades, proxied, sz.slot, c, o, lr.surfaceGap)
 				if res.Cmp(maxResidual) > 0 {
 					maxResidual = res

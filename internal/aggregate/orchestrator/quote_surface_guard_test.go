@@ -46,17 +46,44 @@ type oracleSlot struct {
 	venues     map[string]*sums
 }
 
-// eligible: >= 2 own venues, own base >= proxy base / 4, each surface >= 10k USD per hour of slot (8-decimal scale), venue VWAPs
-// within surfaceTol of the lowest.
+// perHour is n whole units per hour of slot at the 8-decimal scale.
+func perHour(n int64, slot time.Duration) *big.Rat {
+	return new(big.Rat).SetFrac64(n*100_000_000*int64(slot), int64(time.Hour))
+}
+
+func under(v *big.Int, floor *big.Rat) bool { return new(big.Rat).SetInt(v).Cmp(floor) < 0 }
+
+// reference is the slot's venues with >= 10 % of its own base and >= 10k USD per hour, and their sums (nil base with none).
+func (s oracleSlot) reference(slot time.Duration) (map[string]*sums, sums) {
+	qual, ref := map[string]*sums{}, sums{}
+	for name, v := range s.venues {
+		if new(big.Int).Mul(v.base, big.NewInt(10)).Cmp(s.own.base) >= 0 && !under(v.quote, perHour(10_000, slot)) {
+			qual[name] = v
+			ref.base = new(big.Int).Add(orZero(ref.base), v.base)
+			ref.quote = new(big.Int).Add(orZero(ref.quote), v.quote)
+		}
+	}
+	return qual, ref
+}
+
+func orZero(v *big.Int) *big.Int {
+	if v == nil {
+		return new(big.Int)
+	}
+	return v
+}
+
+// eligible: >= 2 reference venues, reference base >= proxy base / 4, both surfaces >= 150k XLM and >= 25k USD per hour of slot
+// (8-decimal scale), reference venue VWAPs within surfaceTol of the lowest.
 func (s oracleSlot) eligible(slot time.Duration) bool {
-	floor := new(big.Rat).SetFrac64(10_000*100_000_000*int64(slot), int64(time.Hour))
-	under := func(q *big.Int) bool { return new(big.Rat).SetInt(q).Cmp(floor) < 0 }
-	if len(s.venues) < 2 || new(big.Int).Mul(s.own.base, big.NewInt(4)).Cmp(s.proxy.base) < 0 || under(s.own.quote) ||
-		under(s.proxy.quote) {
+	qual, ref := s.reference(slot)
+	if len(qual) < 2 || new(big.Int).Mul(ref.base, big.NewInt(4)).Cmp(s.proxy.base) < 0 ||
+		under(ref.base, perHour(150_000, slot)) || under(s.proxy.base, perHour(150_000, slot)) ||
+		under(ref.quote, perHour(25_000, slot)) || under(s.proxy.quote, perHour(25_000, slot)) {
 		return false
 	}
 	var lo, hi *big.Rat
-	for _, v := range s.venues {
+	for _, v := range qual {
 		p := v.price()
 		if lo == nil || p.Cmp(lo) < 0 {
 			lo = p
@@ -70,10 +97,10 @@ func (s oracleSlot) eligible(slot time.Duration) bool {
 
 // surfaceOracleOf is the oracle for a 24 h window (hourly slots).
 func surfaceOracleOf(trades []canonical.Trade, proxied map[string]struct{}) surfaceOracle {
-	return surfaceOracleFor(trades, proxied, time.Hour)
+	return surfaceOracleFor(trades, proxied, 24*time.Hour, time.Hour)
 }
 
-func surfaceOracleFor(trades []canonical.Trade, proxied map[string]struct{}, slot time.Duration) surfaceOracle {
+func surfaceOracleFor(trades []canonical.Trade, proxied map[string]struct{}, window, slot time.Duration) surfaceOracle {
 	slots := map[int64]*oracleSlot{}
 	var proxy, own sums
 	for _, tr := range trades {
@@ -117,7 +144,8 @@ func surfaceOracleFor(trades []canonical.Trade, proxied map[string]struct{}, slo
 		g := relGap(s.proxy.price(), own.price())
 		switch {
 		case s.own.base != nil && s.eligible(slot):
-			g = relGap(s.proxy.price(), s.own.price())
+			_, ref := s.reference(slot)
+			g = relGap(s.proxy.price(), ref.price())
 			covered.Add(covered, s.proxy.base)
 			out.eligible++
 		}
@@ -133,7 +161,9 @@ func surfaceOracleFor(trades []canonical.Trade, proxied map[string]struct{}, slo
 		abs := new(big.Rat).Abs(out.aligned)
 		band := new(big.Rat).Sub(big.NewRat(1, 1), out.coverage)
 		band.Mul(band, out.rng).Mul(band, new(big.Rat).Add(big.NewRat(1, 1), abs)).Add(band, abs)
-		out.decides = out.coverage.Cmp(big.NewRat(19, 20)) >= 0 && band.Cmp(big.NewRat(surfaceTol, 10_000)) <= 0
+		windowFloor := perHour(50_000, window)
+		out.decides = out.coverage.Cmp(big.NewRat(19, 20)) >= 0 && band.Cmp(big.NewRat(surfaceTol, 10_000)) <= 0 &&
+			!under(proxy.quote, windowFloor) && !under(own.quote, windowFloor)
 		out.verdict = out.aligned
 		if !out.decides && new(big.Rat).Abs(out.whole).Cmp(new(big.Rat).Abs(out.aligned)) > 0 {
 			out.verdict = out.whole
@@ -236,8 +266,8 @@ func TestQuoteSurface_IneligibleDepeggedSlotsStillRefuse(t *testing.T) {
 	window := 24 * time.Hour
 	cases := map[string]func(off time.Duration, tk *surfaceTick){
 		"one own venue in the de-pegged slots": func(_ time.Duration, tk *surfaceTick) { tk.soleOwn = true },
-		"disagreeing dust in the de-pegged slots": func(off time.Duration, tk *surfaceTick) {
-			tk.extraPrice, tk.extraBase = basis(flat(off), 500), xlm(1)
+		"a disagreeing qualifying venue in the de-pegged slots": func(off time.Duration, tk *surfaceTick) {
+			tk.extraPrice, tk.extraBase = basis(flat(off), 500), xlm(20) // 1/6 of own base, 14.4k USD per hour
 		},
 	}
 	for name, spoil := range cases {
@@ -380,7 +410,7 @@ func checkGenerated(t *testing.T, name string, window, slot time.Duration, c sur
 	proxied map[string]struct{}, st *surfaceStats,
 ) {
 	t.Helper()
-	want := surfaceOracleFor(trades, proxied, slot)
+	want := surfaceOracleFor(trades, proxied, window, slot)
 	if want.whole == nil {
 		return
 	}
@@ -430,7 +460,8 @@ func abs64(v int64) int64 {
 // T5: over generated windows of each size, hour- and minute-aligned (partial edge slots), against the independent oracle: the
 // reading equals the oracle's verdict exactly in both coverage regimes; below 95 % coverage a whole-window gap over 75 bps always
 // refuses; every proxy slot over 75 bps with one sign refuses; and a decide-alone pass that the whole window would have refused hides
-// no more true de-peg than the stated bound allows.
+// no more true de-peg than the stated bound allows. The exact-verdict check restates the rule, so it catches drift from the written
+// rule, not a wrong rule; the true-price checks here and in ContinuousTrendsNeverAcceptAHiddenDepeg are the authority.
 func TestQuoteSurface_GeneratedWindowsHoldTheDecisionRule(t *testing.T) {
 	sizes := []struct{ window, slot, step time.Duration }{
 		{24 * time.Hour, time.Hour, 10 * time.Minute},
