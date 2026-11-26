@@ -409,7 +409,7 @@ func sampleSupplySkip(ext *LedgerExtract, s SupplySkipSample) {
 
 // recordSupplyFlow decodes a mint/burn/clawback event (ADR-0034) so per-token supply is a pure SQL sum; a skipped body adds no flow and is tallied by reason.
 func recordSupplyFlow(ext *LedgerExtract, row ContractEventRow, seq uint32, closeTime time.Time, txHash string) {
-	amt, skip := ClassifySupplyEventXDR(row.ContractID, row.DataXDR)
+	amt, skip := ClassifySupplyEventXDR(row.ContractID, row.TopicsXDR, row.DataXDR)
 	if skip != "" {
 		if ext.SupplyFlowSkips == nil {
 			ext.SupplyFlowSkips = map[string]int{}

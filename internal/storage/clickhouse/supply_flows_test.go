@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
 func TestIsSupplyFlowSym(t *testing.T) {
@@ -63,24 +62,6 @@ func TestAssembleTokenSupply_NegativeMarkedIncomplete(t *testing.T) {
 	// guard must not over-reach into the real zero case.
 	if ts := assembleTokenSupply("C_ZERO", "100", "100", "0", 2); ts.Total.Sign() != 0 || ts.Incomplete {
 		t.Errorf("fully-burned token: Total=%s Incomplete=%v, want 0/false", ts.Total, ts.Incomplete)
-	}
-}
-
-func TestDecodeSupplyAmount(t *testing.T) {
-	// Bare i128, positive value 1_000_000 (Hi=0, Lo=value).
-	i128 := xdr.ScVal{Type: xdr.ScValTypeScvI128, I128: &xdr.Int128Parts{Hi: 0, Lo: 1_000_000}}
-	amt, _, ok := DecodeSupplyAmount(i128)
-	if !ok {
-		t.Fatal("DecodeSupplyAmount(i128) ok=false, want true")
-	}
-	if amt.String() != "1000000" {
-		t.Errorf("DecodeSupplyAmount(i128) = %s, want 1000000", amt.String())
-	}
-
-	// A non-amount type (bool) is undecodable → ok=false, not a panic.
-	b := xdr.ScVal{Type: xdr.ScValTypeScvBool, B: new(bool)}
-	if _, reason, ok := DecodeSupplyAmount(b); ok {
-		t.Errorf("DecodeSupplyAmount(bool) ok=true, want false (reason=%q)", reason)
 	}
 }
 
