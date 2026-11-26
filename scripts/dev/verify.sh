@@ -561,6 +561,7 @@ lane_d() { # everything else
     echo "=== Ansible Postgres DSN encoding self-test ===" && ./scripts/ci/ansible-postgres-dsn-test.sh
     echo "=== Ansible API env file render self-test ===" && ./scripts/ci/ansible-api-env-test.sh
     echo "=== Ansible validated stellarindex.toml write self-test ===" && ./scripts/ci/ansible-config-check-test.sh
+    echo "=== Ansible USD-peg network gate self-test ===" && ./scripts/ci/ansible-usd-peg-network-gate-test.sh
     echo "=== Ansible Postgres WAL archiving render self-test ===" && ./scripts/ci/ansible-postgres-archive-test.sh
     echo "=== Ansible nftables per-source SSH rate-limit self-test ===" && ./scripts/ci/ansible-ssh-rate-limit-test.sh
     echo "=== Ansible prometheus archival-host guard self-test ===" && ./scripts/ci/ansible-prometheus-host-guard-test.sh

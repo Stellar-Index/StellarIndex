@@ -2215,6 +2215,12 @@ jobs:
         # listing_sync_enabled and the retire block to its negation.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-listing-sync-gate-test.sh
+      - name: ansible USD-peg network gate (local ansible run)
+        # The peg, oracle and connector defaults are pubnet identities; a test
+        # net that prices must render none of them, and the pubnet render of
+        # the pegs must stay byte-equal to the fixture internal/config loads.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-usd-peg-network-gate-test.sh
       - name: zfs-snapshot dataset coverage
         # The rolling-snapshot job must cover the Galexie LCM archive
         # (data/minio), not only data/clickhouse and data/postgres, which are
