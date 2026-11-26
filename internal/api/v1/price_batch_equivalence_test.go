@@ -168,6 +168,9 @@ func eqXLMSpellingsOptions(t *testing.T) v1.Options {
 		{base: eqID("SACQ"), quote: eqXLMSAC, price: "4.0", sources: []string{"soroswap"}},
 		{base: eqID("FAKE"), quote: eqScamXLM, price: "9.0", sources: []string{"sdex"}},
 		{base: eqID("QXLM"), quote: eqScamXLM, price: "7.0", sources: []string{"sdex"}},
+		// WHLD: no native book, a crypto:XLM book frozen with nothing held, a fresh SAC book the walk must not reach.
+		{base: eqID("WHLD"), quote: "crypto:XLM", price: "1.1", sources: []string{"sdex", "soroswap"}},
+		{base: eqID("WHLD"), quote: eqXLMSAC, price: "1.2", sources: []string{"sdex", "soroswap"}},
 	} {
 		key := p.base + "/" + p.quote
 		r.snapshots[key] = v1.PriceSnapshot{
@@ -175,6 +178,7 @@ func eqXLMSpellingsOptions(t *testing.T) v1.Options {
 		}
 		r.sources[key] = p.sources
 	}
+	o.Freeze.(frozenPairs)[eqID("WHLD")+"/crypto:XLM"] = true
 	return o
 }
 
@@ -210,7 +214,8 @@ func eqSpecs() []eqSpec {
 		// against the XLM SAC, FAKE only against the impostor.
 		name: "xlm-spellings",
 		ids: []string{
-			eqID("QXLM"), eqID("FRZQ"), eqID("DIRC"), eqID("SACQ"), eqID("FAKE"), "native", "crypto:XLM", eqXLMSAC, eqScamXLM,
+			eqID("QXLM"), eqID("FRZQ"), eqID("DIRC"), eqID("SACQ"), eqID("FAKE"), eqID("WHLD"), "native", "crypto:XLM", eqXLMSAC,
+			eqScamXLM,
 		},
 		quotes: []string{"native", "crypto:XLM", eqXLMSAC, eqScamXLM}, thin: off, build: eqXLMSpellingsOptions,
 	}, {
@@ -515,7 +520,9 @@ func eqAnchors() map[string]string {
 		eqKey("xlm-spellings", eqID("QXLM"), eqScamXLM, false):    `served price="7.0"`,
 		eqKey("xlm-spellings", eqID("FAKE"), eqScamXLM, false):    `served price="9.0"`,
 		eqKey("xlm-spellings", eqID("FAKE"), "native", false):     "missing",
-		eqKey("xlm-spellings", eqID("SACQ"), eqScamXLM, false):    "missing",
+		// A withheld spelling ends the walk: the later SAC book is never served in its place.
+		eqKey("xlm-spellings", eqID("WHLD"), "native", false):  "withheld",
+		eqKey("xlm-spellings", eqID("SACQ"), eqScamXLM, false): "missing",
 	}
 }
 
