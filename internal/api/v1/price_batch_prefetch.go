@@ -108,29 +108,43 @@ func (s *Server) batchPrefetchFills(quote canonical.Asset) []func(context.Contex
 	return out
 }
 
-// batchPrefetchReads is the (spelling, quote) reads a batch's rows begin with, windowed for the Redis VWAP fallback: per
-// id, [assetAliases] in the order [Server.readPriceWithAliasesServedOnce] and [Server.tryRedisVWAPFallback] walk them.
-// Only the first batchPrefetchMaxIDs ids are read; ok is false when any id would fail the batch, which then reads nothing.
+// batchPrefetchReads is the (spelling, quote spelling) reads a batch's rows begin with, windowed for the Redis VWAP
+// fallback: per spelling of quote in the row's quote walk ([walkQuoteAliases]), per id, [assetAliases] in the order
+// [Server.readPriceWithAliasesServedOnce] and [Server.tryRedisVWAPFallback] walk them. Only the first
+// batchPrefetchMaxIDs ids are read; ok is false when any id would fail the batch, which then reads nothing.
 func batchPrefetchReads(ids []string, quote canonical.Asset) (reads []readset.PairRead, ok bool) {
-	seen := map[readset.PairKey]bool{}
+	assets := make([]canonical.Asset, 0, min(len(ids), batchPrefetchMaxIDs))
 	for i, raw := range ids {
 		asset, err := parsePriceLeg(raw)
 		if err != nil || asset.Equal(quote) {
 			return nil, false
 		}
-		if i >= batchPrefetchMaxIDs {
-			continue
+		if i < batchPrefetchMaxIDs {
+			assets = append(assets, asset)
 		}
-		for _, a := range assetAliases(asset) {
-			r := readset.PairRead{Base: a, Quote: quote, Window: triangulationLookupWindow}
-			if a.Equal(quote) || seen[r.Key()] {
-				continue
+	}
+	seen := map[readset.PairKey]bool{}
+	for _, q := range assetAliases(quote) {
+		for _, asset := range assets {
+			if !asset.Equal(q) {
+				reads = appendAliasReads(reads, seen, asset, q)
 			}
-			seen[r.Key()] = true
-			reads = append(reads, r)
 		}
 	}
 	return reads, true
+}
+
+// appendAliasReads appends each unseen spelling of asset against quote.
+func appendAliasReads(reads []readset.PairRead, seen map[readset.PairKey]bool, asset, quote canonical.Asset) []readset.PairRead {
+	for _, a := range assetAliases(asset) {
+		r := readset.PairRead{Base: a, Quote: quote, Window: triangulationLookupWindow}
+		if a.Equal(quote) || seen[r.Key()] {
+			continue
+		}
+		seen[r.Key()] = true
+		reads = append(reads, r)
+	}
+	return reads
 }
 
 // readBases is each distinct base spelling of reads, in order.

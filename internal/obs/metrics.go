@@ -188,6 +188,7 @@ func registerAPIServingMetrics() {
 	Registry.MustRegister(
 		PricingGuardDegradedTotal,
 		APICacheOpsTotal,
+		APICacheFillDuration,
 		APIPriceBatchPrefetchTotal,
 		APICoverageFloorProbesTotal,
 		APILCMHomeDomainFallbackTotal,
@@ -912,6 +913,16 @@ var APICacheOpsTotal = prometheus.NewCounterVec(
 		Help: "Cache operations in API cache wrappers (in-memory and *_redis read-through), labelled by cache name + op + result (read outcomes hit|miss|stale|error, side-events refresh|refresh_error|evicted).",
 	},
 	[]string{"cache", "op", "result"},
+)
+
+// APICacheFillDuration is how long a detached cache fill's upstream call took, by fill name and result (ok, error, timeout).
+var APICacheFillDuration = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "stellarindex_api_cache_fill_duration_seconds",
+		Help:    "Duration of a detached API cache fill (the upstream call behind a miss or a stale refresh), by fill name and result (ok|error|timeout).",
+		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 30},
+	},
+	[]string{"cache", "result"},
 )
 
 // APIPriceBatchPrefetchTotal counts /v1/price/batch read-memo outcomes per seam: hit, fallthrough, expired, prefetch_error, capped.

@@ -9,26 +9,28 @@
 # rather than a permanently-down one. See the derivation, and why a
 # hardcoded list is the bug this file fixes, in the role defaults.
 #
-# Deliberately absent: `alerting:` and `rule_files:`. That is a scope
-# decision, not an oversight. /v1/status needs the scrape layer —
-# Heartbeats/Latency/Freshness read plain series, and Incidents()
-# queries the `ALERTS` series Prometheus synthesizes itself, so an
-# empty rule set answers "nothing firing" instead of erroring.
-# Alertmanager would add paging that a disposable test net has no
-# on-call rotation for. Adding rules later is a drop-in:
-# deploy/monitoring/rules/ (multi-host labels) and
-# configs/prometheus/rules.r1/ (the hyphenated-job overlay that matches
-# the job names below) are both in tree.
+# `rule_files:` is rendered only with local_prometheus_rules_enabled:
+# the listed configs/prometheus/rules.r1/ files (the hyphenated-job
+# overlay that matches the job names below). Firing rules show in the
+# `ALERTS` series, which /v1/status Incidents() reads, and at
+# /api/v1/alerts. There is deliberately no `alerting:` block: nothing
+# is delivered or paged, since a test net has no on-call rotation.
 
 global:
   scrape_interval: {{ local_prometheus_scrape_interval }}
   scrape_timeout: {{ local_prometheus_scrape_timeout }}
   evaluation_interval: {{ local_prometheus_scrape_interval }}
   # Stamped on every series so a federated/compared read can tell the
-  # networks apart. Same two labels prometheus.r1.yml carries.
+  # networks apart. region/deployment match prometheus.r1.yml.
   external_labels:
     region: {{ region_id }}
     deployment: {{ region_deployment | default('production') }}
+    host: {{ inventory_hostname }}
+{% if local_prometheus_rules_enabled | bool %}
+
+rule_files:
+  - /etc/prometheus/rules.local/*.yml
+{% endif %}
 
 scrape_configs:
 {% for job in local_prometheus_scrape_jobs %}

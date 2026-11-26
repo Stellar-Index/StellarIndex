@@ -672,13 +672,13 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 func (s *Server) resolvePriceServeQuoteAliases(r *http.Request, reader PriceReader, asset, quote canonical.Asset) (priceServe, *ThinAdmission, canonical.Asset) {
 	return walkQuoteAliases(asset, quote, func(q canonical.Asset) (priceServe, *ThinAdmission) {
 		return s.resolvePriceServeThin(r, reader, asset, q)
-	})
+	}, priceServe.answersWalk)
 }
 
-// walkQuoteAliases runs resolve over each spelling of quote; the first that prices, withholds or fails answers, else the first
-// spelling's miss. Shared by /v1/price and SEP-40 x_last_price so the two closed surfaces walk identically.
-func walkQuoteAliases(asset, quote canonical.Asset, resolve func(canonical.Asset) (priceServe, *ThinAdmission)) (priceServe, *ThinAdmission, canonical.Asset) {
-	var first priceServe
+// walkQuoteAliases runs resolve over each spelling of quote; the first that answers (prices, withholds or fails) ends the walk,
+// else the first spelling's miss. Shared by /v1/price, /v1/price/batch and SEP-40 x_last_price so they walk identically.
+func walkQuoteAliases[T any](asset, quote canonical.Asset, resolve func(canonical.Asset) (T, *ThinAdmission), answers func(T) bool) (T, *ThinAdmission, canonical.Asset) {
+	var first T
 	var firstAdm *ThinAdmission
 	firstMarket, tried := quote, false
 	for _, q := range assetAliases(quote) {
@@ -686,7 +686,7 @@ func walkQuoteAliases(asset, quote canonical.Asset, resolve func(canonical.Asset
 			continue
 		}
 		ps, adm := resolve(q)
-		if ps.miss == nil || ps.miss.err != nil || ps.miss.withheld != "" {
+		if answers(ps) {
 			return ps, adm, q
 		}
 		if !tried {
@@ -729,6 +729,10 @@ func (p priceServe) retryReason() PriceWithheldReason {
 
 func (p priceServe) priced() bool {
 	return p.miss == nil && p.err == nil
+}
+
+func (p priceServe) answersWalk() bool {
+	return p.miss == nil || p.miss.err != nil || p.miss.withheld != ""
 }
 
 // resolvePriceServe runs one pass under whatever [ThinAdmission] ctx carries.
