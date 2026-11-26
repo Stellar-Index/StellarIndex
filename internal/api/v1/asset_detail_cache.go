@@ -2,6 +2,7 @@ package v1
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -15,14 +16,31 @@ import (
 // cache time, skipping the handler chain and overlays on a hit. body, detail and flags are as built, before any exclusion
 // judgement: a hit under an empty exclusion set writes body, otherwise it judges detail.
 type assetDetailEntry struct {
-	body     []byte
-	detail   AssetDetail
-	flags    Flags
-	cachedAt time.Time
+	body      []byte
+	detail    AssetDetail
+	flags     Flags
+	cachedAt  time.Time
+	expiresAt time.Time
 	// degraded: the body was built over a failed or slow read, so a replay
 	// must not carry the route's shared-cache band.
 	degraded bool
 	stale    bool
+}
+
+// assetDetailDegradedTTL is a degraded entry's life: it absorbs a burst, while the complete answer its read's detached refresh
+// lands within seconds replaces it instead of waiting out the full TTL.
+const assetDetailDegradedTTL = 3 * time.Second
+
+// assetDetailAwaitBound is how long a client detail request waits, across all its reads, for the refreshes its stale reads
+// start or join; past it the stale value is served, flagged.
+const assetDetailAwaitBound = 750 * time.Millisecond
+
+// detailAwaitRefresh marks a detail request's reads: the prewarm waits for every refresh, a client up to assetDetailAwaitBound.
+func detailAwaitRefresh(ctx context.Context, prewarm bool) context.Context {
+	if prewarm {
+		return withAwaitRefresh(ctx)
+	}
+	return withAwaitRefreshUntil(ctx, time.Now().Add(assetDetailAwaitBound))
 }
 
 // assetDetailResponseCache caches the whole /v1/assets/{id} response by normalised asset_id, so new fields and overlays flow
@@ -32,6 +50,7 @@ type assetDetailResponseCache struct {
 	mu      sync.RWMutex
 	entries map[string]*assetDetailEntry
 	ttl     time.Duration
+	now     func() time.Time
 }
 
 // newAssetDetailResponseCache constructs a cache; ttl=0 disables caching (every probe misses).
@@ -39,10 +58,11 @@ func newAssetDetailResponseCache(ttl time.Duration) *assetDetailResponseCache {
 	return &assetDetailResponseCache{
 		entries: make(map[string]*assetDetailEntry),
 		ttl:     ttl,
+		now:     time.Now,
 	}
 }
 
-// get returns the entry for assetID if present and fresh (cachedAt + ttl > now); otherwise (nil, false).
+// get returns the entry for assetID if present and unexpired; otherwise (nil, false).
 func (c *assetDetailResponseCache) get(assetID string) (*assetDetailEntry, bool) {
 	if c == nil || c.ttl <= 0 {
 		return nil, false
@@ -53,7 +73,7 @@ func (c *assetDetailResponseCache) get(assetID string) (*assetDetailEntry, bool)
 	if !ok {
 		return nil, false
 	}
-	if time.Since(e.cachedAt) > c.ttl {
+	if c.now().After(e.expiresAt) {
 		return nil, false
 	}
 	return e, true
@@ -65,7 +85,7 @@ const assetDetailCacheMaxEntries = 4096
 
 // newAssetDetailEntry is the entry for one built detail and its rendered body.
 func newAssetDetailEntry(detail AssetDetail, body []byte, flags Flags) *assetDetailEntry {
-	return &assetDetailEntry{body: body, detail: detail, flags: flags, cachedAt: time.Now(), degraded: flags.Degraded, stale: flags.Stale}
+	return &assetDetailEntry{body: body, detail: detail, flags: flags, degraded: flags.Degraded, stale: flags.Stale}
 }
 
 // put stores an entry under assetID, last-write-wins: concurrent writers are accepted as a stampede cost over a
@@ -76,6 +96,12 @@ func (c *assetDetailResponseCache) put(assetID string, e *assetDetailEntry) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	ttl := c.ttl
+	if e.degraded {
+		ttl = min(ttl, assetDetailDegradedTTL)
+	}
+	e.cachedAt = c.now()
+	e.expiresAt = e.cachedAt.Add(ttl)
 	if _, exists := c.entries[assetID]; !exists && len(c.entries) >= assetDetailCacheMaxEntries {
 		c.evictLocked()
 	}
@@ -86,9 +112,9 @@ func (c *assetDetailResponseCache) put(assetID string, e *assetDetailEntry) {
 // capacity. Caller holds c.mu.
 func (c *assetDetailResponseCache) evictLocked() {
 	before := len(c.entries)
-	now := time.Now()
+	now := c.now()
 	for id, e := range c.entries {
-		if now.Sub(e.cachedAt) > c.ttl {
+		if now.After(e.expiresAt) {
 			delete(c.entries, id)
 		}
 	}

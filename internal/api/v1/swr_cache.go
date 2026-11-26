@@ -70,8 +70,8 @@ func (c *swrCache[V]) get(ctx context.Context, op, key string, upstream func(con
 	var zero V
 	r := c.lookup(op, key, upstream)
 	if r.entry == nil {
-		if r.refresh != nil && awaitsRefresh(ctx) {
-			return c.awaitRefresh(ctx, r)
+		if until, ok := awaitRefreshDeadline(ctx); ok && r.refresh != nil && (until.IsZero() || r.stale) {
+			return c.awaitRefresh(ctx, r, until)
 		}
 		return r.val, r.at, r.stale, nil
 	}
@@ -100,17 +100,30 @@ type awaitRefreshKey struct{}
 // withAwaitRefresh marks ctx's reads as having no latency constraint (the self-prewarm): an expired value is refreshed before
 // it is returned, so the render they build, and cache, does not carry a value that a read cadence above the bound aged past it.
 func withAwaitRefresh(ctx context.Context) context.Context {
-	return context.WithValue(ctx, awaitRefreshKey{}, true)
+	return context.WithValue(ctx, awaitRefreshKey{}, time.Time{})
 }
 
-func awaitsRefresh(ctx context.Context) bool {
-	v, _ := ctx.Value(awaitRefreshKey{}).(bool)
-	return v
+// withAwaitRefreshUntil marks ctx's reads as willing to wait until a shared deadline for the refresh of a value that would be
+// served flagged; one deadline per request bounds its total added latency however many reads it makes.
+func withAwaitRefreshUntil(ctx context.Context, until time.Time) context.Context {
+	return context.WithValue(ctx, awaitRefreshKey{}, until)
 }
 
-// awaitRefresh waits for r's refresh (or ctx) and returns the entry as it then stands, judged per [swrverdict.Stale]: refreshed
-// it is clean; a failed refresh, or one ctx gave up on past the bound, is still flagged.
-func (c *swrCache[V]) awaitRefresh(ctx context.Context, r lookupResult[V]) (V, time.Time, bool, error) {
+// awaitRefreshDeadline reports whether ctx's reads await a refresh, and until when (zero: unbounded).
+func awaitRefreshDeadline(ctx context.Context) (time.Time, bool) {
+	v, ok := ctx.Value(awaitRefreshKey{}).(time.Time)
+	return v, ok
+}
+
+// awaitRefresh waits for r's refresh (or ctx, or until when set) and returns the entry as it then stands, judged per
+// [swrverdict.Stale]: refreshed it is clean; a failed refresh, or one the wait gave up on, is still flagged. The refresh is
+// detached, so giving up never cancels it.
+func (c *swrCache[V]) awaitRefresh(ctx context.Context, r lookupResult[V], until time.Time) (V, time.Time, bool, error) {
+	if !until.IsZero() {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, until)
+		defer cancel()
+	}
 	select {
 	case <-r.flight:
 	case <-ctx.Done():
