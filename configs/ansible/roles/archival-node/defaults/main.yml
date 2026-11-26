@@ -1360,12 +1360,10 @@ local_prometheus_rules_enabled: false
 # against this host's run_* switches; scripts/ci/
 # ansible-local-prometheus-rules-test.sh rejects the known-bad ones.
 #
-# data-freshness.yml is NOT here although it carries the price-history
-# alert (stellarindex_twap_history_missing): its
-# stellarindex_served_value_check_stale fires on absent_over_time of a
-# series only verify-served-values writes, and that job is pubnet-only
-# (verify_served_values_enabled), so on a test net it fires within ~1h.
+# served-values.yml stays out: its check_stale fires on absent_over_time
+# of a series only the pubnet-only verify-served-values job writes.
 local_prometheus_rule_files:
+  - data-freshness.yml
   - metrics-registry.yml
   - signup-reaper.yml
 

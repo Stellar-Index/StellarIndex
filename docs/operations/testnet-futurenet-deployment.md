@@ -105,7 +105,7 @@ Triage `systemctl list-units --state=failed` first. Gated on `stellar_network ==
 `run_local_prometheus: true` installs a single-host, loopback-only Prometheus that scrapes this box (`roles/archival-node/tasks/23-local-prometheus.yml`); `/v1/status` reads it for heartbeats and incidents. It loads no alert rules unless the operator also sets, in the host's inventory:
 
 - `local_prometheus_rules_enabled: true`
-- `local_prometheus_rule_files`: rule file names from `configs/prometheus/rules.r1/`, installed verbatim. The role default is a list checked against a test net (no aggregator, backups, ZFS or second region); `scripts/ci/ansible-local-prometheus-rules-test.sh` rejects files with `absent()`-style or `page` rules. `data-freshness.yml` (price-history alerts) is not in the default: its `stellarindex_served_value_check_stale` fires on a test net, where `verify-served-values` does not run.
+- `local_prometheus_rule_files`: rule file names from `configs/prometheus/rules.r1/`, installed verbatim. The role default is a list checked against a test net (no aggregator, backups, ZFS or second region); `scripts/ci/ansible-local-prometheus-rules-test.sh` rejects files with `absent()`-style or `page` rules. The default includes `data-freshness.yml`, which carries the price-history alerts; `served-values.yml` is left out because `verify-served-values` does not run on a test net, so its `stellarindex_served_value_check_stale` would fire.
 
 Apply with `--tags local-prometheus`. The play copies the listed files to `/etc/prometheus/rules.local/`, deletes files no longer listed, validates with `promtool check rules`, and restarts Prometheus. Unlisted, empty or missing files fail the play.
 

@@ -3,10 +3,10 @@
 # Prometheus rule loading (local_prometheus_rules_enabled):
 #   - every file in the default include list local_prometheus_rule_files exists
 #     in configs/prometheus/rules.r1/;
-#   - none is a file known to misfire on a test net, none uses absent() or
-#     absent_over_time() (a staleness rule on a component the host may not run
-#     fires forever), and none carries severity page (a page turns the public
-#     /v1/status `overall` to degraded);
+#   - none is a file known to misfire on a test net, none applies absent() or
+#     absent_over_time() to a metric outside ALLOWED_ABSENT (a staleness rule
+#     on a component the host may not run fires forever), and none carries
+#     severity page (a page turns the public /v1/status `overall` to degraded);
 #   - the template renders rule_files only with the switch on, at the dir the
 #     task installs into, and never an `alerting:` block (no delivery).
 #
@@ -19,9 +19,12 @@ ROLE="${ROLE:-$PWD/configs/ansible/roles/archival-node}"
 RULES_DIR="${RULES_DIR:-$PWD/configs/prometheus/rules.r1}"
 RULES_GLOB="/etc/prometheus/rules.local/*.yml"
 
-# Each misfires on a lean host; data-freshness.yml through
+# Each misfires on a lean host; served-values.yml through
 # stellarindex_served_value_check_stale (pubnet-only verify-served-values).
-FORBIDDEN="data-freshness.yml aggregator.yml backup-offsite.yml cross-region.yml zfs-snapshots.yml restore-drill.yml"
+FORBIDDEN="served-values.yml aggregator.yml backup-offsite.yml cross-region.yml zfs-snapshots.yml restore-drill.yml"
+# Metrics an included file may test with absent(): their producer runs on every
+# archival node (data-freshness.timer is not network-gated).
+ALLOWED_ABSENT="stellarindex_data_freshness_stale"
 
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  ok   — $1"; }
@@ -83,14 +86,19 @@ for f in $files; do
     *" $f "*) bad "$f is in the default include list but misfires on a test net" ;;
   esac
   live="$(grep -v '^[[:space:]]*#' "$RULES_DIR/$f")"
-  if grep -qE 'absent(_over_time)?\(' <<<"$live"; then
-    bad "$f uses absent()/absent_over_time(); a staleness rule fires forever where the component does not run"
-  fi
+  absent_metrics="$(grep -oE 'absent(_over_time)?\([[:space:]]*[A-Za-z_:][A-Za-z0-9_:]*' <<<"$live" \
+    | sed -E 's/^absent(_over_time)?\([[:space:]]*//' | sort -u)"
+  for m in $absent_metrics; do
+    case " $ALLOWED_ABSENT " in
+      *" $m "*) ;;
+      *) bad "$f applies absent() to $m, not in ALLOWED_ABSENT; it fires forever where its producer does not run" ;;
+    esac
+  done
   if grep -qE '^[[:space:]]*severity:[[:space:]]*"?page"?' "$RULES_DIR/$f"; then
     bad "$f carries severity page; it would turn a test net's /v1/status overall to degraded"
   fi
 done
-[ "$fail" -eq 0 ] && [ "$n" -gt 0 ] && ok "every listed file exists, is not forbidden, has no absent() and no page rule"
+[ "$fail" -eq 0 ] && [ "$n" -gt 0 ] && ok "every listed file exists, is not forbidden, has no disallowed absent() and no page rule"
 
 for v in off on; do
   if [ -f "$TMP/$v.yml" ] && grep -qE '^[[:space:]]*alerting:' "$TMP/$v.yml"; then

@@ -57,8 +57,8 @@ configure_job() {
       ENABLED_VAR="verify_served_values_enabled"
       STALE_ALERT="stellarindex_served_value_check_stale"
       RULE_FILES=(
-        "deploy/monitoring/rules/data-freshness.yml"
-        "configs/prometheus/rules.r1/data-freshness.yml"
+        "deploy/monitoring/rules/served-values.yml"
+        "configs/prometheus/rules.r1/served-values.yml"
       ) ;;
     supply-verify-rollup)
       UNIT="supply-verify-rollup"
