@@ -980,9 +980,12 @@ Subcommands:
                           counted as skipped. Use it for a decoder fix
                           that changes ONE kind's stored shape, never
                           for one that changes trades or cross-table
-                          derived state. A kind the source cannot emit
-                          is refused up front; a whole-range run that
-                          emits none of a named kind exits non-zero.
+                          derived state. A kind the source does not
+                          declare, or the flag passed empty, is refused
+                          up front; a whole-range run that emits none
+                          of a named kind exits non-zero. Pin -to to
+                          the dry run's printed default for -write;
+                          procedure: runbooks/projector.md.
                           The filter is part of the checkpoint key
                           (...@<build>#only-kinds=<sorted list>).
                           Without a trade or oracle kind the aggregate

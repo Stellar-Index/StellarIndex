@@ -6,6 +6,7 @@ package chops
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -28,6 +29,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/projector"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	sep41supply "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
@@ -66,13 +68,9 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	if gerr := checkProjectedRebuildBackfillSafe(*sourceName, uint32(*from)); gerr != nil { //nolint:gosec // ledger sequences fit uint32 in real usage.
 		return gerr
 	}
-	onlyKinds, unlisted, kerr := parseOnlyKinds(*sourceName, *onlyKindsFlag)
+	onlyKinds, kerr := parseOnlyKinds(*sourceName, *onlyKindsFlag, flagPassed(fs, "only-kinds"))
 	if kerr != nil {
 		return kerr
-	}
-	if len(unlisted) > 0 {
-		fmt.Fprintf(os.Stderr, "projected-rebuild: -only-kinds %s: not among %s's statically known kinds; the run fails if it emits none of them\n",
-			strings.Join(unlisted, ","), *sourceName)
 	}
 
 	windowSize := uint32(*window) //nolint:gosec // operator-supplied window size; zero guarded below.
@@ -168,16 +166,18 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 		return gerr
 	}
 
-	fmt.Fprintf(os.Stderr, "projected-rebuild: source=%s range=[%d,%d] window=%d workers=%d mode=%s ch=%s only-kinds=%s\n",
-		*sourceName, fromLedger, toLedger, windowSize, numWorkers, writeModeLabel(write), *chAddr, onlyKinds.label())
+	fmt.Fprintf(os.Stderr, "projected-rebuild: source=%s range=[%d,%d] window=%d workers=%d mode=%s ch=%s\n",
+		*sourceName, fromLedger, toLedger, windowSize, numWorkers, writeModeLabel(write), *chAddr)
+	if onlyKinds != nil {
+		fmt.Fprintf(os.Stderr, "projected-rebuild: only-kinds=%s derive_generation=%d\n", onlyKinds.label(), store.DeriveGeneration())
+	}
 
 	if write {
-		scope, listed, cerr := reconcileScopeOf(cfg, *sourceName)
-		if cerr != nil {
-			return fmt.Errorf("reconciliation catalogue: %w", cerr)
+		needed, nerr := dirtyWindowNeeded(cfg, *sourceName, onlyKinds)
+		if nerr != nil {
+			return nerr
 		}
-		if derr := recordRebuildDirtyWindow(ctx, os.Stderr, store, rebuildNeedsDirtyWindow(scope, listed, onlyKinds),
-			*sourceName, fromLedger, toLedger, onlyKinds); derr != nil {
+		if derr := recordRebuildDirtyWindow(ctx, os.Stderr, store, needed, *sourceName, fromLedger, toLedger, onlyKinds); derr != nil {
 			return derr
 		}
 	}
@@ -201,7 +201,7 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 		Logger:    logger,
 		Heartbeat: hb,
 	})
-	printProjectedRebuildSummary(*sourceName, fromLedger, toLedger, write, result)
+	printProjectedRebuildSummary(*sourceName, fromLedger, toLedger, write, store.DeriveGeneration(), result)
 	interrupted := ctx.Err() != nil
 	// After the run, even a failed or interrupted one: any window it wrote is
 	// below the fold checkpoint. A failed reset fails the job, interrupted or not.
@@ -275,41 +275,72 @@ func (f kindFilter) cursorSuffix() string {
 	return "#only-kinds=" + strings.Join(f, ",")
 }
 
-// parseOnlyKinds validates -only-kinds against the source's SourceSpec: each kind must carry the "<prefix>." of a kind
-// one of the source's event types reports. Kinds that vary by value (aquarius.reserves_sync) cannot be listed
-// statically, so those are returned as unlisted; a run that then emits none of a named kind fails (projectedRebuildOutcome).
-func parseOnlyKinds(source, raw string) (only kindFilter, unlisted []string, err error) {
+// flagPassed reports whether name was set on the command line, so an explicitly empty value is told apart from absence.
+func flagPassed(fs *flag.FlagSet, name string) bool {
+	passed := false
+	fs.Visit(func(f *flag.Flag) { passed = passed || f.Name == name })
+	return passed
+}
+
+// parseOnlyKinds validates -only-kinds against the kinds the source's SourceSpec event types declare ([sourceKinds]). A
+// kind outside that set is refused, and so is a flag passed empty: `-only-kinds "$UNSET"` must not become a full rewrite.
+func parseOnlyKinds(source, raw string, passed bool) (kindFilter, error) {
 	if strings.TrimSpace(raw) == "" {
-		return nil, nil, nil
+		if passed {
+			return nil, errors.New("projected-rebuild: -only-kinds was passed empty; omit the flag to rewrite every kind")
+		}
+		return nil, nil
 	}
-	spec, ok := pipeline.SpecByName(source)
+	known, ok := sourceKinds(source)
 	if !ok {
-		return nil, nil, fmt.Errorf("projected-rebuild: -only-kinds: %q has no source spec to check kinds against", source)
+		return nil, fmt.Errorf("projected-rebuild: -only-kinds: %q has no source spec to check kinds against", source)
 	}
-	known, prefixes := map[string]bool{}, map[string]bool{}
-	for _, ev := range spec.Events {
-		k := ev.EventKind()
-		known[k] = true
-		p, _, _ := strings.Cut(k, ".")
-		prefixes[p] = true
-	}
+	var only kindFilter
 	for _, k := range strings.Split(raw, ",") {
 		k = strings.TrimSpace(k)
-		p, rest, dot := strings.Cut(k, ".")
-		if !dot || rest == "" || !prefixes[p] {
-			return nil, nil, fmt.Errorf("projected-rebuild: -only-kinds %q is not a kind source %s emits (known: %s)", k, source, strings.Join(slices.Sorted(maps.Keys(known)), ", "))
-		}
-		if slices.Contains(only, k) {
-			continue
-		}
-		only = append(only, k)
 		if !known[k] {
-			unlisted = append(unlisted, k)
+			return nil, fmt.Errorf("projected-rebuild: -only-kinds %q is not a kind source %s emits (known: %s)", k, source, strings.Join(slices.Sorted(maps.Keys(known)), ", "))
+		}
+		if !slices.Contains(only, k) {
+			only = append(only, k)
 		}
 	}
 	sort.Strings(only)
-	sort.Strings(unlisted)
-	return only, unlisted, nil
+	return only, nil
+}
+
+// sourceKinds is every kind the source's SourceSpec event types report: EventKinds() for a type whose kind depends on its
+// value (aquarius.ReservesEvent), its zero value's EventKind() otherwise. A value-dependent kind a type does not declare is
+// refused, which fails closed.
+func sourceKinds(source string) (map[string]bool, bool) {
+	spec, ok := pipeline.SpecByName(source)
+	if !ok {
+		return nil, false
+	}
+	known := map[string]bool{}
+	for _, ev := range spec.Events {
+		if multi, ok := ev.(interface{ EventKinds() []string }); ok {
+			for _, k := range multi.EventKinds() {
+				known[k] = true
+			}
+			continue
+		}
+		known[ev.EventKind()] = true
+	}
+	return known, true
+}
+
+// dirtyWindowNeeded decides the dirty window for a -write. Only a filtered run reads the catalogue, so an unfiltered one
+// keeps its old path exactly: always recorded, with no catalogue build to fail or log.
+func dirtyWindowNeeded(cfg config.Config, source string, only kindFilter) (bool, error) {
+	if only == nil {
+		return true, nil
+	}
+	scope, listed, err := reconcileScopeOf(cfg, source)
+	if err != nil {
+		return false, fmt.Errorf("reconciliation catalogue (needed to decide -only-kinds' dirty window): %w", err)
+	}
+	return rebuildNeedsDirtyWindow(scope, listed, only), nil
 }
 
 // rebuildNeedsDirtyWindow reports whether a -write owes a projection dirty window. An unfiltered run always does. A filtered
@@ -563,6 +594,7 @@ func writeProjectedOutputs(
 		if err == nil {
 			continue
 		}
+		counters.addFailedKind(out.EventKind())
 		var dropped *pipeline.TradeDroppedError
 		if errors.As(err, &dropped) {
 			// Counted, never held — see the godoc. The pipeline already
@@ -635,8 +667,48 @@ type ProjectedRebuildResult struct {
 	KindCounts map[string]int64
 	// KindsSkipped counts outputs by kind that -only-kinds kept out of the sink; OnlyKinds is the filter (nil = none).
 	KindsSkipped map[string]int64
-	OnlyKinds    kindFilter
-	Elapsed      time.Duration
+	// KindsFailed counts outputs by kind the sink refused (insert errors and permanent drops); KindCounts includes them.
+	KindsFailed map[string]int64
+	OnlyKinds   kindFilter
+	// UnlayeredPools names gated aquarius pools in neither in-code layout list ([unlayeredAquariusPools]).
+	UnlayeredPools []string
+	Elapsed        time.Duration
+}
+
+// unlayeredAquariusPools names the gated aquarius pools in neither in-code layout list. protocol_contracts does not carry a
+// layout, so such a pool's deposits decode only if this run saw its add_pool first: windows run out of order across
+// workers, so its liquidity can be refused in one run and written in another. Empty for any other source.
+func unlayeredAquariusPools(src projector.Source) []string {
+	if src.Name != aquarius.SourceName {
+		return nil
+	}
+	gated, ok := src.Decoder.(interface{ GatedContractSet() []string })
+	if !ok {
+		return nil
+	}
+	pools := slices.DeleteFunc(gated.GatedContractSet(), func(id string) bool { return id == aquarius.MainnetRouter })
+	out := aquarius.PoolsWithoutLayout(pools)
+	sort.Strings(out)
+	return out
+}
+
+func unlayeredPoolLines(pools []string) []string {
+	if len(pools) == 0 {
+		return nil
+	}
+	return []string{
+		fmt.Sprintf("!! %d aquarius pool(s) have no in-code liquidity layout: %s", len(pools), strings.Join(pools, ",")),
+		"!! their deposit/withdraw decode depended on window order; add each to aquarius.MainnetPools or",
+		"!! MainnetConcentratedPools by its add_pool type and re-run, or compare against a -workers 1 run.",
+	}
+}
+
+func sumKindCounts(m map[string]int64) int64 {
+	var n int64
+	for _, v := range m {
+		n += v
+	}
+	return n
 }
 
 // unseenKinds lists the -only-kinds entries no output of this run carried.
@@ -727,6 +799,13 @@ func RunProjectedRebuild(ctx context.Context, opts ProjectedRebuildOptions) (Pro
 		counters.insertErrors.Add(insertErrs)
 	}
 
+	fillProjectedRebuildResult(&result, counters, opts.Source, logger)
+	result.Elapsed = time.Since(start)
+	return result, runErr
+}
+
+// fillProjectedRebuildResult copies a finished run's counters into its result; every worker must have exited.
+func fillProjectedRebuildResult(result *ProjectedRebuildResult, counters *projectedRebuildCounters, src projector.Source, logger *slog.Logger) {
 	result.WindowsProcessed = int(counters.windowsDone.Load())
 	result.LedgersCovered = counters.completedLedgers.Load()
 	result.EventsRead = counters.eventsRead.Load()
@@ -735,11 +814,11 @@ func RunProjectedRebuild(ctx context.Context, opts ProjectedRebuildOptions) (Pro
 	result.InsertErrors = counters.insertErrors.Load()
 	result.WindowsHeld = counters.windowsHeld.Load()
 	result.PermanentDrops = counters.permanentDrops.Load()
-	result.EvictedOrphans = collectEvictedOrphans(opts.Source, logger)
+	result.EvictedOrphans = collectEvictedOrphans(src, logger)
 	result.KindCounts = counters.kindCounts
 	result.KindsSkipped = counters.skippedKinds
-	result.Elapsed = time.Since(start)
-	return result, runErr
+	result.KindsFailed = counters.failedKinds
+	result.UnlayeredPools = unlayeredAquariusPools(src)
 }
 
 // capProjectedRebuildWorkers clamps n to [1, projectedRebuildMaxWorkers].
@@ -793,10 +872,17 @@ type projectedRebuildCounters struct {
 	kindMu         sync.Mutex
 	kindCounts     map[string]int64
 	skippedKinds   map[string]int64
+	failedKinds    map[string]int64
 }
 
 func newProjectedRebuildCounters() *projectedRebuildCounters {
-	return &projectedRebuildCounters{kindCounts: map[string]int64{}, skippedKinds: map[string]int64{}}
+	return &projectedRebuildCounters{kindCounts: map[string]int64{}, skippedKinds: map[string]int64{}, failedKinds: map[string]int64{}}
+}
+
+func (c *projectedRebuildCounters) addFailedKind(k string) {
+	c.kindMu.Lock()
+	c.failedKinds[k]++
+	c.kindMu.Unlock()
 }
 
 func (c *projectedRebuildCounters) addKind(k string) {
@@ -1068,13 +1154,11 @@ func projectedRebuildKindLines(r ProjectedRebuildResult, write bool) []string {
 		}
 		return lines
 	}
-	col := "written"
-	if !write {
-		col = "would-write"
-	}
-	lines := []string{
-		fmt.Sprintf("\nper-kind counts under -only-kinds %s (skipped = decoded but kept out of the sink):", r.OnlyKinds.label()),
-		fmt.Sprintf("  %-40s %12s %12s", "kind", col, "skipped"),
+	lines := []string{fmt.Sprintf("\nper-kind event counts under -only-kinds %s (events, not rows; skipped = decoded but kept out of the sink):", r.OnlyKinds.label())}
+	if write {
+		lines = append(lines, fmt.Sprintf("  %-40s %12s %12s %12s", "kind", "written", "failed", "skipped"))
+	} else {
+		lines = append(lines, fmt.Sprintf("  %-40s %12s %12s", "kind", "would-write", "skipped"))
 	}
 	all := map[string]int64{}
 	for k, n := range r.KindCounts {
@@ -1084,7 +1168,11 @@ func projectedRebuildKindLines(r ProjectedRebuildResult, write bool) []string {
 		all[k] += n
 	}
 	for _, k := range kindsByCount(all) {
-		lines = append(lines, fmt.Sprintf("  %-40s %12d %12d", k, r.KindCounts[k], r.KindsSkipped[k]))
+		if write {
+			lines = append(lines, fmt.Sprintf("  %-40s %12d %12d %12d", k, r.KindCounts[k]-r.KindsFailed[k], r.KindsFailed[k], r.KindsSkipped[k]))
+		} else {
+			lines = append(lines, fmt.Sprintf("  %-40s %12d %12d", k, r.KindCounts[k], r.KindsSkipped[k]))
+		}
 	}
 	if unseen := r.unseenKinds(); len(unseen) > 0 {
 		lines = append(lines, fmt.Sprintf("!! -only-kinds %s: no output of this run carried it", strings.Join(unseen, ",")))
@@ -1109,15 +1197,29 @@ func kindsByCount(m map[string]int64) []string {
 
 // printProjectedRebuildSummary prints per-topic emitted counts and the headline counters. It is a
 // sanity check; compute-completeness (ADR-0033) stays the authoritative coverage verdict.
-func printProjectedRebuildSummary(name string, from, to uint32, write bool, r ProjectedRebuildResult) {
+func printProjectedRebuildSummary(name string, from, to uint32, write bool, generation int64, r ProjectedRebuildResult) {
 	fmt.Printf("\n=== projected-rebuild %s [%d,%d] %s ===\n", name, from, to, writeModeLabel(write))
+	if write {
+		fmt.Printf("derive_generation: %d (every row this run wrote carries it)\n", generation)
+	}
 	fmt.Printf("windows: planned=%d skipped(resume)=%d processed=%d\n", r.WindowsPlanned, r.WindowsSkipped, r.WindowsProcessed)
-	if r.WindowsOtherBuild > 0 {
+	if r.WindowsOtherBuild > 0 && r.OnlyKinds == nil {
+		fmt.Printf("windows: %d were checkpointed by another build and were not skipped (resume trusts only build %s)\n",
+			r.WindowsOtherBuild, version.Version)
+	} else if r.WindowsOtherBuild > 0 {
 		fmt.Printf("windows: %d were checkpointed by another build or -only-kinds filter and were not skipped (resume trusts only build %s, only-kinds=%s)\n",
 			r.WindowsOtherBuild, version.Version, r.OnlyKinds.label())
 	}
 	fmt.Printf("ledgers covered this run: %d\n", r.LedgersCovered)
-	fmt.Printf("events read: %d   emitted: %d   decode errors: %d\n", r.EventsRead, r.EventsEmitted, r.DecodeErrors)
+	if r.OnlyKinds == nil {
+		fmt.Printf("events read: %d   emitted: %d   decode errors: %d\n", r.EventsRead, r.EventsEmitted, r.DecodeErrors)
+	} else {
+		fmt.Printf("events read: %d   decoder outputs: %d (skipped by -only-kinds: %d)   decode errors: %d\n",
+			r.EventsRead, r.EventsEmitted, sumKindCounts(r.KindsSkipped), r.DecodeErrors)
+	}
+	for _, line := range unlayeredPoolLines(r.UnlayeredPools) {
+		fmt.Println(line)
+	}
 	for _, line := range projectedRebuildLossLines(r) {
 		fmt.Println(line)
 	}

@@ -222,25 +222,30 @@ type reconcileScope struct {
 	byOther bool
 }
 
-// reconcileScopeOf reads source's reconcile scope from the catalogue. Metadata only: no decoder runs, so unlike a
-// re-deriving consumer it needs no gate warm. listed is false for a source the catalogue does not carry.
+// reconcileScopeOf reads source's reconcile scope from the catalogue. It must never read a decoder field (it is exempt from
+// TestCatalogueConsumers_WarmTheGates for that reason): only the name match lives here, and scopeOf sees targets alone.
+// listed is false for a source the catalogue does not carry.
 func reconcileScopeOf(cfg config.Config, source string) (scope reconcileScope, listed bool, err error) {
 	cat, _, err := buildReconciliationCatalogue(cfg)
 	if err != nil {
 		return reconcileScope{}, false, err
 	}
 	for _, s := range cat {
-		if s.name != source {
-			continue
+		if s.name == source {
+			return scopeOf(s.targets, s.aggregate != nil), true, nil
 		}
-		scope.byOther = s.aggregate != nil
-		for _, t := range s.targets {
-			scope.byOther = scope.byOther || t.kinds == nil
-			scope.kinds = append(scope.kinds, t.kinds...)
-		}
-		return scope, true, nil
 	}
 	return reconcileScope{}, false, nil
+}
+
+// scopeOf derives a reconcile scope from a source's targets and whether it also reconciles window totals.
+func scopeOf(targets []reconTarget, windowTotals bool) reconcileScope {
+	scope := reconcileScope{byOther: windowTotals}
+	for _, t := range targets {
+		scope.byOther = scope.byOther || t.kinds == nil
+		scope.kinds = append(scope.kinds, t.kinds...)
+	}
+	return scope
 }
 
 // outlastsPass reports whether the daily -pass must not force this source's

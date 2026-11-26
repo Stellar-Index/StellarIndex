@@ -7,11 +7,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"flag"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +22,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/projector"
@@ -174,11 +177,11 @@ func TestWindowCursorSub_Format(t *testing.T) {
 // its kinds. The key is built from the parsed filter, so the flag's order and repeats do not change it.
 func TestWindowCursorSub_OnlyKindsKeyedApartAndOrderIndependent(t *testing.T) {
 	w := opsutil.RangeChunk{From: 100, To: 199}
-	ab, _, err := parseOnlyKinds("aquarius", "aquarius.trade,aquarius.liquidity")
+	ab, err := parseOnlyKinds("aquarius", "aquarius.trade,aquarius.liquidity", true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ba, _, err := parseOnlyKinds("aquarius", " aquarius.liquidity , aquarius.trade,aquarius.liquidity")
+	ba, err := parseOnlyKinds("aquarius", " aquarius.liquidity , aquarius.trade,aquarius.liquidity", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,29 +210,63 @@ func TestWindowCursorSub_OnlyKindsKeyedApartAndOrderIndependent(t *testing.T) {
 	}
 }
 
-// An unknown or misspelled kind is refused before any work, so it cannot become a no-op rewrite of a whole range.
+// An unknown or misspelled kind is refused before any work, even one with the source's prefix, so it cannot become a no-op
+// rewrite whose checkpoints sit under the typo's key.
 func TestParseOnlyKinds_RefusesKindsTheSourceCannotEmit(t *testing.T) {
-	for _, raw := range []string{"soroswap.liquidity", "liquidity", "aquarius.", "aquarius.trade,,aquarius.liquidity", "aquariusliquidity"} {
-		if _, _, err := parseOnlyKinds("aquarius", raw); err == nil {
+	for _, raw := range []string{
+		"soroswap.liquidity", "liquidity", "aquarius.", "aquarius.trade,,aquarius.liquidity", "aquariusliquidity",
+		"aquarius.liquidty", "aquarius.liquidity,aquarius.reserve_sync",
+	} {
+		if _, err := parseOnlyKinds("aquarius", raw, true); err == nil {
 			t.Errorf("parseOnlyKinds(aquarius, %q) accepted a kind aquarius cannot emit", raw)
 		}
 	}
-	if _, _, err := parseOnlyKinds("no_such_source", "x.y"); err == nil {
+	if _, err := parseOnlyKinds("no_such_source", "x.y", true); err == nil {
 		t.Error("a source with no spec was accepted")
 	}
-	only, unlisted, err := parseOnlyKinds("aquarius", "aquarius.reserves_sync,aquarius.liquidity")
+	only, err := parseOnlyKinds("aquarius", "aquarius.reserves_sync,aquarius.liquidity", true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(only, kindFilter{"aquarius.liquidity", "aquarius.reserves_sync"}) || !reflect.DeepEqual(unlisted, []string{"aquarius.reserves_sync"}) {
-		t.Errorf("only=%v unlisted=%v, want the value-dependent reserves_sync kind accepted but reported as not statically known", only, unlisted)
-	}
-	if only, _, err := parseOnlyKinds("aquarius", "  "); err != nil || only != nil {
-		t.Errorf("empty flag: only=%v err=%v, want no filter", only, err)
+	if !reflect.DeepEqual(only, kindFilter{"aquarius.liquidity", "aquarius.reserves_sync"}) {
+		t.Errorf("only=%v, want the declared value-dependent reserves_sync kind accepted", only)
 	}
 }
 
-// The post-run backstop for a kind the static check cannot prove: a whole-range walk that never saw it fails.
+// `-only-kinds "$KINDS"` with KINDS unset must not turn into an unfiltered rewrite of every kind and every usd_volume.
+func TestParseOnlyKinds_RefusesAnExplicitlyEmptyFlag(t *testing.T) {
+	for _, raw := range []string{"", "  "} {
+		if only, err := parseOnlyKinds("aquarius", raw, true); err == nil || only != nil {
+			t.Errorf("passed %q: only=%v err=%v, want a refusal", raw, only, err)
+		}
+	}
+	if only, err := parseOnlyKinds("aquarius", "", false); err != nil || only != nil {
+		t.Errorf("flag absent: only=%v err=%v, want no filter", only, err)
+	}
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	fs.String("only-kinds", "", "")
+	if err := fs.Parse([]string{"-only-kinds", ""}); err != nil {
+		t.Fatal(err)
+	}
+	if !flagPassed(fs, "only-kinds") {
+		t.Error("flagPassed missed an explicitly empty -only-kinds")
+	}
+}
+
+// The value-dependent kind is declared beside the method that produces it, so the declared set cannot drift from it.
+func TestSourceKinds_DeclaresAquariusValueDependentKinds(t *testing.T) {
+	known, ok := sourceKinds("aquarius")
+	if !ok {
+		t.Fatal("aquarius has no spec")
+	}
+	for _, ev := range []consumer.Event{aquarius.ReservesEvent{}, aquarius.ReservesEvent{Kind: aquarius.EventReservesSync}, aquarius.LiquidityEvent{}} {
+		if !known[ev.EventKind()] {
+			t.Errorf("sourceKinds(aquarius) lacks %q, which the decoder emits", ev.EventKind())
+		}
+	}
+}
+
+// The post-run backstop for a declared kind the range never carried: a whole-range walk that never saw it fails.
 func TestProjectedRebuildOutcome_UnseenOnlyKindFails(t *testing.T) {
 	r := ProjectedRebuildResult{
 		WindowsPlanned: 2, WindowsProcessed: 2, OnlyKinds: kindFilter{"aquarius.liquidity", "aquarius.liquidty"},
@@ -255,7 +292,12 @@ func TestWriteProjectedOutputs_OnlyKindsKeepsOtherKindsOutOfTheSink(t *testing.T
 		t.Errorf("emitted=%d insertErrs=%d, want 3 emitted and 1 sink failure (the rozo output alone reached the nil store)", emitted, insertErrs)
 	}
 	if counters.skippedKinds["aquarius.liquidity"] != 2 || counters.kindCounts["rozo.event"] != 1 || counters.kindCounts["aquarius.liquidity"] != 0 {
-		t.Errorf("kindCounts=%v skipped=%v, want rozo.event written once and aquarius.liquidity skipped twice", counters.kindCounts, counters.skippedKinds)
+		t.Errorf("kindCounts=%v skipped=%v, want rozo.event offered once and aquarius.liquidity skipped twice", counters.kindCounts, counters.skippedKinds)
+	}
+	r := ProjectedRebuildResult{OnlyKinds: opts.OnlyKinds, KindCounts: counters.kindCounts, KindsSkipped: counters.skippedKinds, KindsFailed: counters.failedKinds}
+	got := strings.Join(projectedRebuildKindLines(r, true), "\n")
+	if !regexp.MustCompile(`rozo\.event\s+0\s+1\s+0`).MatchString(got) || !strings.Contains(got, "written") || !strings.Contains(got, "failed") {
+		t.Errorf("-write kind table must count the failed insert as failed, not written:\n%s", got)
 	}
 }
 
@@ -300,6 +342,50 @@ func TestRebuildNeedsDirtyWindow(t *testing.T) {
 		if got := rebuildNeedsDirtyWindow(scope, listed, tc.only); got != tc.want {
 			t.Errorf("rebuildNeedsDirtyWindow(%s, %v) = %v, want %v", tc.source, tc.only, got, tc.want)
 		}
+	}
+}
+
+// An unfiltered -write must not build the catalogue: a config the catalogue rejects (a malformed watched contract) would
+// otherwise become a new way for an unfiltered rebuild to fail.
+func TestDirtyWindowNeeded_UnfilteredNeverReadsTheCatalogue(t *testing.T) {
+	bad := config.Config{}
+	bad.Supply.WatchedSEP41Contracts = []string{"not-a-contract"}
+	if _, _, err := reconcileScopeOf(bad, "aquarius"); err == nil {
+		t.Fatal("fixture: the catalogue accepted a malformed watched contract; the test proves nothing")
+	}
+	if needed, err := dirtyWindowNeeded(bad, "aquarius", nil); err != nil || !needed {
+		t.Errorf("unfiltered: needed=%v err=%v, want true with no catalogue read", needed, err)
+	}
+	if _, err := dirtyWindowNeeded(bad, "aquarius", kindFilter{"aquarius.liquidity"}); err == nil {
+		t.Error("filtered: a catalogue error must refuse the run, not guess")
+	}
+}
+
+// scopeOf takes targets alone, so the scope cannot depend on a decoder.
+func TestScopeOf(t *testing.T) {
+	got := scopeOf([]reconTarget{{"trades", "", []string{"x.trade"}}, {"x_admin", "", []string{"x.admin"}}}, false)
+	if got.byOther || !reflect.DeepEqual(got.kinds, []string{"x.trade", "x.admin"}) {
+		t.Errorf("scopeOf = %+v", got)
+	}
+	if !scopeOf([]reconTarget{{"trades", "", nil}}, false).byOther || !scopeOf(nil, true).byOther {
+		t.Error("a census target or window totals must mark the scope as counted other than by kind")
+	}
+}
+
+// A gated aquarius pool in neither in-code layout list decodes liquidity only if its add_pool came first in this run, so
+// the run names it instead of differing silently between runs.
+func TestUnlayeredAquariusPools_NamesPoolsOutsideTheInCodeLists(t *testing.T) {
+	const extra = "CAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC526"
+	dec := aquarius.NewDecoder(contractid.WithSeed([]string{extra}))
+	got := unlayeredAquariusPools(projector.Source{Name: aquarius.SourceName, Decoder: dec})
+	if !reflect.DeepEqual(got, []string{extra}) {
+		t.Errorf("unlayeredAquariusPools = %v, want only %s (the router and in-code pools are layered)", got, extra)
+	}
+	if got := unlayeredAquariusPools(projector.Source{Name: aquarius.SourceName, Decoder: aquarius.NewDecoder()}); len(got) != 0 {
+		t.Errorf("in-code pools only: got %v, want none", got)
+	}
+	if lines := strings.Join(unlayeredPoolLines([]string{extra}), "\n"); !strings.Contains(lines, extra) || !strings.Contains(lines, "-workers 1") {
+		t.Errorf("summary lines must name the pool and the remedy:\n%s", lines)
 	}
 }
 
