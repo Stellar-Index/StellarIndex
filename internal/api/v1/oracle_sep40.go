@@ -667,7 +667,7 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 	// walk /v1/price takes, so both closed surfaces serve one number; the thin second pass is /v1/price's opt-in only.
 	ps, _, market := walkQuoteAliases(base, quote, func(q canonical.Asset) (priceServe, *ThinAdmission) {
 		return s.resolvePriceServe(ctx, reader, base, q), nil
-	})
+	}, priceServe.answersWalk)
 	// Substance-gated pair: withheld beats the fallback chain — same rationale as handleOracleLastPrice above.
 	if errors.Is(ps.err, ErrPriceWithheld) {
 		writePriceWithheldProblem(w, r, base, quote, priceWithheldReason(ps.err))

@@ -268,11 +268,11 @@ func pfHits(seam string) float64 {
 }
 
 // pfInScope reports whether a row's read is one the planner covers for req: an alias spelling of a requested id against
-// the request's quote, with the Redis VWAP fallback's window on the triangulated seam.
+// an alias spelling of the request's quote, with the Redis VWAP fallback's window on the triangulated seam.
 func pfInScope(t *testing.T, req eqBatchRequest, r pfRead) bool {
 	t.Helper()
 	q, err := canonical.ParseAsset(req.quote)
-	if err != nil || r.key.Quote != q.String() {
+	if err != nil || !slices.ContainsFunc(canonical.AssetAliases(q), func(a canonical.Asset) bool { return a.String() == r.key.Quote }) {
 		return false
 	}
 	if (r.seam == "triangulated") != (r.key.Window == 5*time.Minute) || (r.seam != "triangulated" && r.key.Window != 0) {
@@ -328,6 +328,40 @@ func TestPriceBatchPrefetch_RowEqualsSinglePrice(t *testing.T) {
 	eqRowsEqualSingles(t, func(t *testing.T, spec eqSpec) http.Handler {
 		return v1.New(pfOptions(t, spec, newPfStats(pfOK))).Handler()
 	}, func(ids []string) []string { return pfPadded(eqBatchRequest{ids: ids}).ids })
+}
+
+// A 100-id XLM-quoted batch, under each quote spelling: planner on answers byte-identically, and the rows the quote walk
+// carries to another spelling (QXLM via crypto:XLM, SACQ via the SAC) read that spelling from the prefetch.
+func TestPriceBatchPrefetch_XLMQuotedBatchReadsEverySpellingFromTheMemo(t *testing.T) {
+	var spec eqSpec
+	for _, s := range eqSpecs() {
+		if s.name == "xlm-spellings" {
+			spec = s
+		}
+	}
+	ids := []string{eqID("QXLM"), eqID("SACQ"), eqID("DIRC"), eqID("FRZQ"), eqID("FAKE")}
+	for i := len(ids); i < 100; i++ {
+		ids = append(ids, eqID(fmt.Sprintf("X%d", i)))
+	}
+	// The memo-answered closed reads each quote's walk makes: every served row whose first spelling found a bucket.
+	wantHits := map[string]float64{"native": 4, "crypto:XLM": 3, eqXLMSAC: 4}
+	for quote, want := range wantHits {
+		st := newPfStats(pfOK)
+		plain, on := v1.New(spec.build(t)).Handler(), v1.New(pfOptions(t, spec, st)).Handler()
+		hits := pfHits("pf_prices")
+		if m := batchEnvelopeMismatch(t, plain, on, eqBatchRequest{post: true, ids: ids, quote: quote}); m != "" {
+			t.Errorf("quote=%s: planner on differs: %s", quote, m)
+		}
+		var aliasFell int
+		for _, r := range st.fell {
+			if r.key.Quote != quote && pfInScope(t, eqBatchRequest{ids: ids, quote: quote}, r) {
+				aliasFell++
+			}
+		}
+		if got := pfHits("pf_prices") - hits; got < want || aliasFell != 0 {
+			t.Errorf("quote=%s: %v prefetch hits, %d alias-spelling reads went to the store; want >= %v and 0", quote, got, aliasFell, want)
+		}
+	}
 }
 
 func pfUniverse(t *testing.T) eqSpec {
