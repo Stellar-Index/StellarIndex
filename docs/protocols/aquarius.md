@@ -223,9 +223,34 @@ WASM. The per-hash inventory — the never-upgraded cohort on
 `ae0da5a8…` (volatile) / `f1077e0b…` (stableswap) / `8875f0c7…`
 (rewards-enhanced), the upgraded cohort's five-WASM chain, and the decoder
 verdict for each — is [wasm-audits/aquarius.md](../operations/wasm-audits/aquarius.md).
-No concentrated-liquidity pool has been observed. Nothing in the decoder
-would refuse one: a router-announced pool is registered without a WASM
-check, so a new family is caught only by re-running that audit.
+A router-announced pool is registered without a WASM check, so a new
+family is caught only by re-running that audit.
+
+### Concentrated-liquidity pools
+
+The router's `add_pool` body is `Vec[Address(pool), Symbol(pool_type), …]`.
+Three `add_pool` events after router ledger 65,663,788 announce pools of
+type `concentrated` (the first two, at 65,675,280 and 65,675,307, announce
+`CBQ6AGQYE5HCDK7VIDUH6756IFPBTLF2HNQH57DAFMOHK3CVDH4CAMXO` and
+`CABOSWXYBLE2UJKYWITFRICR37D4UOB75CNXIH7VI5ZKKL526GFHXAUI`). On
+`CABOSWXY…` their `trade` and `update_reserves` bodies have the classic
+shape, but `deposit_liquidity` (3 topics, 3×i128, the same arity as a
+two-token classic pool) is ordered `[liquidity, amount0, amount1]`, not
+`[amount0, amount1, shares]`: the same-tx `update_reserves` grows by
+`amount0`/`amount1` and `position_update` carries `liquidity`.
+`withdraw_liquidity` has not been observed on a concentrated pool.
+
+The decoder keeps a per-pool liquidity layout in the gate. A pool is
+`concentrated` when its `add_pool` says so or it is in
+`aquarius.MainnetConcentratedPools`; it is shares-last when it is in
+`MainnetPools` or the router announced it at or before ledger 65,663,788
+(`protocol_contracts.first_ledger` after a restart). Any other pool's
+liquidity events are refused (`ErrUnknownLiquidityLayout`), as is a
+concentrated `withdraw_liquidity` (`ErrUnverifiedLiquidityLayout`); both
+count as projector `decode_error`. A concentrated deposit's
+`aquarius_liquidity` rows carry the two token amounts and `shares` NULL:
+the pool mints no LP shares, and its liquidity is in the
+`position_update` row of `aquarius_rewards_events`.
 The two router-WASM deployments share code hash `06F4207B…`.
 
 ### ⚠️ Flagged — excluded from the gate (NOT silently dropped)

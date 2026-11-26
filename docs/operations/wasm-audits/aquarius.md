@@ -104,13 +104,20 @@ body (a 4-tuple fails the arity check: fail-loud).
 ### Pool-type orthogonality
 
 Volatile / stableswap / concentrated pools all publish the same
-4-topic + 3-tuple-body shape, so one decoder covers all three.
-**Concentrated pools** (feature-branch, no live mainnet
-pools) have no decoder guard: the router's `add_pool` registers any
-announced pool without a WASM-hash or pool-type check, and a
-registered pool's 4-topic, 3×i128 `trade` decodes. If concentrated
-pools ship live, re-verify the trade event shape first (the body
-might gain concentrated-tick info).
+4-topic + 3-tuple `trade` body, so one trade decoder covers all three.
+**Concentrated pools are live**: three router `add_pool` events after
+ledger 65,663,788 announce type `concentrated`. On
+`CABOSWXYBLE2UJKYWITFRICR37D4UOB75CNXIH7VI5ZKKL526GFHXAUI` the one
+`trade` (ledger 65,678,793) is `[sold, bought, fee]` and moves
+`update_reserves` accordingly, but `deposit_liquidity` is
+`[liquidity, amount0, amount1]` rather than the classic
+`[amount0, amount1, shares]` with the same arity. The decoder therefore
+decodes liquidity by the pool's layout from `add_pool`, refuses a pool
+whose layout is unknown, and refuses concentrated `withdraw_liquidity`
+(not yet observed); see
+[docs/protocols/aquarius.md](../../protocols/aquarius.md#concentrated-liquidity-pools).
+The concentrated pool WASM hash is not yet resolved, so it is not in
+`audited_wasm.json`.
 
 ## Failure modes specific to Aquarius
 
@@ -124,10 +131,11 @@ might gain concentrated-tick info).
    check; every trade dropped (fail-loud).
 5. **i128 → u128 amount type swap** — `scval.AsAmountFromI128` is
    strict; errors per trade. Unlikely.
-6. **New pool type with extended body** — concentrated/v2 pools might
-   publish a longer body or different topics. Nothing refuses a new family
-   whose body is still 3×i128; this audit is the only check, so new
-   pool types need new audit entries.
+6. **New pool type with a reordered or extended body** — concentrated
+   pools reorder `deposit_liquidity` at the same arity (above). Liquidity
+   decoding is keyed on the pool's announced layout, but `trade` and
+   `update_reserves` are not, so a new pool type still needs a new audit
+   entry.
 7. **User topic moved or removed** — topic[3] is
    `Address(user)`; removal changes arity 4 → 3 (fail-loud).
 
@@ -390,8 +398,8 @@ Byte offsets in the base64-decoded XDR (big-endian words):
 | | body[2] u64 | 72 – 83 | 1,795,666,520 |
 
 The two `add_pool` events announce pools of type `concentrated`; the decoder
-registers each announced address in its contract-identity gate and emits no
-event, and does not branch on pool type. The two announced pools are not
+registers each announced address in its contract-identity gate with the
+`concentrated` liquidity layout and emits no event. The two announced pools are not
 `CBTOQ7X7TLDBRHJW4UYUDR7WR4NAYESZA7FYUZVLAN2JLQG5ZXWJJIG6`.
 
 Pool-side anchor: in the same transaction (ledger 65,667,281, `9ec5f48b…99cf`)
@@ -434,12 +442,13 @@ re-run against a replay. The hash is in `audited_wasm.json`.
   pool WASM compiled from the aquarius-amm tree.
 - **New pools deployed after 2026-04-29 not in this audit.**
   Re-run the enumeration when extending `last_verified`.
-- **No pool-type gate.** Classification doesn't gate on
+- **Pool type gates liquidity decoding only.** Classification doesn't gate on
   pool type or WASM hash — it matches
   topic[0] = Symbol("trade") regardless of variant. All
-  three pool types in production (including the 6
-  rewards-enhanced pools) emit the same trade-event shape via the
-  shared events crate, so the decoder works on all of them.
+  pool types in production (including the 6
+  rewards-enhanced pools) emit the same trade-event shape, as does the one
+  `trade` observed on a concentrated pool. `deposit_liquidity` / `withdraw_liquidity` are decoded
+  by the pool's layout (Pool-type orthogonality, above).
 
 ## References
 
