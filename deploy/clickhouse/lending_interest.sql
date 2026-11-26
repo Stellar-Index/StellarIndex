@@ -80,8 +80,13 @@
 -- fill's lot, a gulp's token_delta, BLNT reconcile_loss's backstop_credit_loss),
 -- attributed (a Blend V1 interest fill, whose event carries no lot, beside a
 -- draw) or unexplained; unexplained = backstop_residual − residual_explained −
--- residual_attributed, and versions likewise. A version whose b_rate or fee
--- entry also moved stays unexplained. The pass reads the pools' contract_events
+-- residual_attributed, and versions likewise. A version whose fee entry also
+-- moved stays unexplained, as does one whose b_rate moved, except on Blend V2
+-- where the stored b_rate is exactly accrual's less the cut of each
+-- same-transaction defaulted_debt for the asset (blend.DefaultedBRate): its
+-- supply_residual, the suppliers' socialised loss, then also counts in
+-- default_loss and the version in default_versions, if it is classified.
+-- supply_residual − default_loss is what no event explains. The pass reads the pools' contract_events
 -- for each window and refuses it unless every ledger holding a version it
 -- classifies by those events has, in contract_events, exactly the events
 -- stellar.ledgers declares. A pool's cause event that does not decode is
@@ -128,6 +133,8 @@ CREATE TABLE IF NOT EXISTS stellar.lending_interest_hourly
     brate_mismatches      UInt32,
     backstop_residual     Int256,
     supply_residual       Int256,
+    default_loss          Int256 DEFAULT 0,        -- supply_residual of classified V2 defaulted_debt versions (≤ 0)
+    default_versions      UInt32 DEFAULT 0,
     fee_mismatches        UInt32,
     fee_credit_residual   Int256,
     residual_explained    Int256,                  -- amount-matched to an event
@@ -143,3 +150,12 @@ CREATE TABLE IF NOT EXISTS stellar.lending_interest_hourly
 ENGINE = ReplacingMergeTree(derived_at)
 PARTITION BY toYYYYMM(hour)
 ORDER BY (contract_id, asset, hour);
+
+-- An existing host's table predates default_loss / default_versions. Apply this
+-- file BEFORE deploying a derive_rev 3 binary: its INSERT and the proof's read
+-- name both columns, so against the old table each fails whole and writes
+-- nothing. Rows written before the ALTER read 0 and are derive_rev 2, so they
+-- prove INCOMPLETE until the re-derive from the floor described above.
+ALTER TABLE stellar.lending_interest_hourly
+    ADD COLUMN IF NOT EXISTS default_loss Int256 DEFAULT 0 AFTER supply_residual,
+    ADD COLUMN IF NOT EXISTS default_versions UInt32 DEFAULT 0 AFTER default_loss;

@@ -560,10 +560,16 @@ func (st *state) add(row *HourRow, a blend.Accrual, fee *blnt.Accrual, prev blen
 		s.dst.Add(s.dst, s.v)
 	}
 	onlyBackstop := true
+	var defaultLoss *big.Int
 	if !a.BRateMatches {
-		onlyBackstop = false
 		row.BRateMismatches++
-		row.SupplyResidual.Add(row.SupplyResidual, supplyResidual(prev, next, a.ExpectedBRate))
+		sr := supplyResidual(prev, next, a.ExpectedBRate)
+		row.SupplyResidual.Add(row.SupplyResidual, sr)
+		if st.defaulted(prev, nexts, a.ExpectedBRate) {
+			defaultLoss = sr
+		} else {
+			onlyBackstop = false
+		}
 	}
 	if fee != nil {
 		row.FeeCreditResidual.Add(row.FeeCreditResidual, fee.FeeCreditResidual)
@@ -572,9 +578,9 @@ func (st *state) add(row *HourRow, a blend.Accrual, fee *blnt.Accrual, prev blen
 			row.FeeMismatches++
 		}
 	}
-	if !onlyBackstop || a.BackstopResidual.Sign() != 0 {
+	if !onlyBackstop || a.BackstopResidual.Sign() != 0 || defaultLoss != nil {
 		row.UnreconciledVersions++
-		st.explain(row, nexts, a.BackstopResidual, onlyBackstop)
+		st.explain(row, nexts, a.BackstopResidual, onlyBackstop, defaultLoss)
 	}
 }
 
@@ -596,7 +602,7 @@ func (st *state) row(proto Protocol, v Version) *HourRow {
 		Pool: v.Pool, Asset: v.Asset, Protocol: proto, Hour: h, FirstLedger: v.Ledger,
 		Gross: new(big.Int), ProtocolFee: new(big.Int), Backstop: new(big.Int), SupplierIntended: new(big.Int),
 		SupplierRealised: new(big.Int), BackstopCreditDelta: new(big.Int), BackstopResidual: new(big.Int),
-		SupplyResidual: new(big.Int), FeeCreditResidual: new(big.Int), ExcludedCreditDelta: new(big.Int),
+		SupplyResidual: new(big.Int), DefaultLoss: new(big.Int), FeeCreditResidual: new(big.Int), ExcludedCreditDelta: new(big.Int),
 		ResidualExplained: new(big.Int), ResidualAttributed: new(big.Int), ResidualUnexplained: new(big.Int),
 		FeeOnlyCreditDelta: new(big.Int), FeeOnlyCarryDelta: new(big.Int),
 	}

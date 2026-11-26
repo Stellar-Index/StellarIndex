@@ -2179,13 +2179,11 @@ func scanTxSummaries(rows driver.Rows) ([]TxSummary, error) {
 // day absorbs the UTC rollover while catching a stalled ~30 min rollup timer.
 const censusHeadMaxLag = 24 * time.Hour
 
-// recentContractsCensusQuery sums the day-keyed census over the window; the day floor comes
-// from sinceLedger via a pruned PK lookup on stellar.ledgers.
-const recentContractsCensusQuery = `SELECT contract_id,
-		       toInt64(sum(events)) AS events,
-		       max(last_ledger) AS last_ledger, max(last_seen) AS last_seen
-		FROM stellar.contracts_census_daily
-		WHERE day >= ?
+// recentContractsCensusQuery sums the census from the window's day floor (from sinceLedger), each (day, contract) once at its
+// largest row: a restart can resurrect a replaced build beside the current one.
+const recentContractsCensusQuery = `SELECT contract_id, toInt64(sum(e)) AS events, max(ll) AS last_ledger, max(ls) AS last_seen
+		FROM (SELECT day, contract_id, max(events) AS e, max(last_ledger) AS ll, max(last_seen) AS ls
+		      FROM stellar.contracts_census_daily WHERE day >= ? GROUP BY day, contract_id)
 		GROUP BY contract_id
 		ORDER BY events DESC
 		LIMIT ?`

@@ -123,21 +123,23 @@ func RunCensusDay(ctx context.Context, addr string, day time.Time, shrinkOK bool
 	return runCensusDayConn(ctx, conn, day, shrinkOK, logf)
 }
 
-// censusShrinkCheck compares the staging recompute with the live partition
-// and fails with ErrCensusShrink when either count went down.
+// censusShrinkCheck compares the staging recompute with the live partition and fails with ErrCensusShrink when either count went
+// down. The live side counts each contract once (its largest row): a restart can bring a replaced build back beside the current one,
+// and measuring the sum of both would refuse the very REPLACE that heals it.
 func censusShrinkCheck(ctx context.Context, conn censusExecConn, staging string, day time.Time) error {
 	var newRows, newEvents, liveRows, liveEvents uint64
 	if err := conn.QueryRow(ctx, fmt.Sprintf(`SELECT
 		(SELECT count() FROM stellar.%s),
 		(SELECT toUInt64(sum(events)) FROM stellar.%s),
-		(SELECT count() FROM stellar.contracts_census_daily WHERE day = ?),
-		(SELECT toUInt64(sum(events)) FROM stellar.contracts_census_daily WHERE day = ?)`, staging, staging),
+		(SELECT uniqExact(contract_id) FROM stellar.contracts_census_daily WHERE day = ?),
+		(SELECT toUInt64(sum(e)) FROM (SELECT max(events) AS e FROM stellar.contracts_census_daily WHERE day = ? GROUP BY contract_id))`,
+		staging, staging),
 		day, day).Scan(&newRows, &newEvents, &liveRows, &liveEvents); err != nil {
 		return fmt.Errorf("clickhouse: census day %s size check: %w", day.Format("2006-01-02"), err)
 	}
 	if newRows < liveRows || newEvents < liveEvents {
 		return fmt.Errorf("%w: day %s recomputed %d contract(s) / %d event(s), live has %d / %d — "+
-			"the lake lost data under this day; pass -shrink-ok only if that is intended",
+			"events were removed from the lake for this day since the live build; find why before passing -shrink-ok",
 			ErrCensusShrink, day.Format("2006-01-02"), newRows, newEvents, liveRows, liveEvents)
 	}
 	return nil

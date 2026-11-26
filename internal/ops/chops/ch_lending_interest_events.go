@@ -102,6 +102,10 @@ func blendEvents(outs []consumer.Event, proto lendinginterest.Protocol, base len
 		case blend.FillAuctionEvent:
 			es, err = blendFill(e, proto, base)
 		case blend.EmissionEvent:
+			if e.Kind == blend.EventDefaultedDebt && proto == lendinginterest.BlendV2 {
+				es, err = blendDefault(e, base)
+				break
+			}
 			if e.Kind != blend.EventGulp {
 				continue
 			}
@@ -116,6 +120,15 @@ func blendEvents(outs []consumer.Event, proto lendinginterest.Protocol, base len
 		out = append(out, es...)
 	}
 	return out, nil
+}
+
+// blendDefault is a V2 defaulted_debt's d_tokens_burnt; V1's leaves its b_rate mismatch unexplained.
+func blendDefault(e blend.EmissionEvent, base lendinginterest.Event) ([]lendinginterest.Event, error) {
+	if e.Asset == "" || e.Amount == nil || e.Amount.Sign() < 0 {
+		return nil, fmt.Errorf("defaulted_debt without an asset or with d-tokens %v", e.Amount)
+	}
+	base.Cause, base.Asset, base.DTokens = lendinginterest.CauseDefaultedDebt, e.Asset, new(big.Int).Set(e.Amount)
+	return []lendinginterest.Event{base}, nil
 }
 
 // blendFill is an interest fill's lot, negated per asset; V1's body has no lot, so its fill is attribution only.
