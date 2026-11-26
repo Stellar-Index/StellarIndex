@@ -77,7 +77,7 @@ func orZero(v *big.Int) *big.Int {
 // (8-decimal scale), reference venue VWAPs within surfaceTol of the lowest.
 func (s oracleSlot) eligible(slot time.Duration) bool {
 	qual, ref := s.reference(slot)
-	if len(qual) < 2 || new(big.Int).Mul(ref.base, big.NewInt(4)).Cmp(s.proxy.base) < 0 ||
+	if len(qual) < 2 || new(big.Int).Mul(ref.base, big.NewInt(3)).Cmp(s.proxy.base) < 0 ||
 		under(ref.base, perHour(150_000, slot)) || under(s.proxy.base, perHour(150_000, slot)) ||
 		under(ref.quote, perHour(25_000, slot)) || under(s.proxy.quote, perHour(25_000, slot)) {
 		return false
@@ -289,7 +289,7 @@ func TestQuoteSurface_IneligibleDepeggedSlotsStillRefuse(t *testing.T) {
 
 // T4(c): an attacker trading on the honest venues themselves passes the agreement rule, so it concentrates in slots where honest
 // own volume is thin against heavy proxy volume (16 h of 1000 proxy : 50 own, 8 h of 50 : 1000; 2 % de-peg). Those slots are
-// ineligible until own volume reaches 1/4 of proxy, so the attack must bring ~20 % of the window's proxy volume (~37 % of honest own
+// ineligible until own volume reaches 1/3 of proxy, so the attack must bring ~29 % of the window's proxy volume (~54 % of honest own
 // volume); judged against thin slots it would need ~9 %. The whole-window compare needs ~170 % of honest own volume.
 func TestQuoteSurface_ThinSlotAttackCostScalesWithProxyVolume(t *testing.T) {
 	window := 24 * time.Hour
@@ -322,8 +322,8 @@ func TestQuoteSurface_ThinSlotAttackCostScalesWithProxyVolume(t *testing.T) {
 	const proxyTotal, honestOwn = 6 * (16*1000 + 8*50), 6 * (16*50 + 8*1000)
 	t.Logf("attack cost, %% of proxy volume (%% of honest own): option A %d (%d), whole window %d (%d)",
 		xNew, xNew*proxyTotal/honestOwn, xOld, xOld*proxyTotal/honestOwn)
-	if xNew != -1 && xNew < 15 {
-		t.Errorf("a %d %%-of-proxy own-venue attack masked a 2 %% de-peg; want >= 15 %% (thin slots must not vouch)", xNew)
+	if xNew != -1 && xNew < 25 {
+		t.Errorf("a %d %%-of-proxy own-venue attack masked a 2 %% de-peg; want >= 25 %% (thin slots must not vouch)", xNew)
 	}
 }
 
@@ -346,18 +346,18 @@ func genSurfaceCase(rng *rand.Rand, start time.Time, window, slot time.Duration)
 	slope := []int64{-6, 0, 6}[rng.IntN(3)]
 	depegFrom, depegBps := []int{0, rng.IntN(n), m - 1}[rng.IntN(3)], []int64{0, -150, 150, 400, 5000}[rng.IntN(5)]
 	thin, shifted, spoilDepeg := rng.IntN(2) == 0, rng.IntN(2) == 0, rng.IntN(2) == 0
-	ownQuietFrom, proxyVols, ownVols := n, []int64{250, 1000}, []int64{250, 1000}
+	ownQuietFrom, proxyVols, ownVols := n, []int64{334, 1000}, []int64{334, 1000}
 	if thin {
-		ownQuietFrom, proxyVols, ownVols = n-rng.IntN(n/2+1), []int64{0, 250, 1000}, []int64{0, 50, 250, 1000}
+		ownQuietFrom, proxyVols, ownVols = n-rng.IntN(n/2+1), []int64{0, 334, 1000}, []int64{0, 50, 334, 1000}
 	}
 	proxyVol, ownVol := make([]int64, n), make([]int64, n)
 	sole, extra := make([]bool, n), make([]bool, n)
 	for s := range n {
 		proxyVol[s], ownVol[s] = proxyVols[rng.IntN(len(proxyVols))], ownVols[rng.IntN(len(ownVols))]
 		if shifted && !thin {
-			proxyVol[s], ownVol[s] = 1000, 250
+			proxyVol[s], ownVol[s] = 1000, 334
 			if 3*s >= 2*n {
-				proxyVol[s], ownVol[s] = 250, 1000
+				proxyVol[s], ownVol[s] = 334, 1000
 			}
 		}
 		sole[s], extra[s] = thin && rng.IntN(4) == 0, thin && rng.IntN(4) == 0
@@ -380,10 +380,10 @@ func genSurfaceCase(rng *rand.Rand, start time.Time, window, slot time.Duration)
 			tk.ownBase = xlm(ownVol[s])
 		}
 		if extra[s] {
-			tk.extraPrice, tk.extraBase = tk.proxyPrice, xlm(ownVol[s]/10+1)
+			tk.extraPrice, tk.extraBase = tk.proxyPrice, xlm(ownVol[s]/5+1)
 		}
-		if spoilDepeg && bps(ts) != 0 {
-			tk.extraPrice, tk.extraBase = basis(price, 100), xlm(1) // dust that makes de-pegged slots ineligible
+		if spoilDepeg && bps(ts) != 0 { // a venue over the floor disagreeing, so de-pegged slots are ineligible
+			tk.extraPrice, tk.extraBase = basis(price, 100), xlm(ownVol[s]/5+1)
 		}
 		return tk
 	}

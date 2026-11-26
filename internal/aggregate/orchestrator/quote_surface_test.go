@@ -103,13 +103,13 @@ func basis(p *big.Rat, bps int64) *big.Rat {
 // xlm is n thousand XLM at the test venues' 8-decimal scale (at 0.12, 1 unit = 120 USD).
 func xlm(n int64) *big.Int { return new(big.Int).Mul(big.NewInt(n), big.NewInt(100_000_000_000)) }
 
-// shiftedVolume is the production shape: stablecoin volume early, real-USD volume late (4:1 each way, the thinnest own share an
-// eligible slot may have).
+// shiftedVolume is the production shape: stablecoin volume early, real-USD volume late (~3:1 each way, about the thinnest own share
+// an eligible slot may have).
 func shiftedVolume(off time.Duration) (proxyBase, ownBase *big.Int) {
 	if off >= 16*time.Hour {
-		return xlm(250), xlm(1000)
+		return xlm(334), xlm(1000)
 	}
-	return xlm(1000), xlm(250)
+	return xlm(1000), xlm(334)
 }
 
 // readSurface judges trades the way a published leg is judged and returns the leg reading.
@@ -123,7 +123,7 @@ func readSurface(t *testing.T, window time.Duration, trades []canonical.Trade, p
 func gapBps(lr legRef) float64 { return ratBps(lr.surfaceGap) }
 
 // T1: the production false positive. Price rises 6 % in the last 8 h, stablecoin volume trades early and real-USD volume late, both at
-// the same instantaneous price: the whole-window gap is ~-250 bps, but there is no de-peg, so the leg must stand.
+// the same instantaneous price: the whole-window gap is past -100 bps, but there is no de-peg, so the leg must stand.
 func TestQuoteSurface_TrendWithShiftedVolumeIsNotADepeg(t *testing.T) {
 	trades, proxied := buildSurface(t, 24*time.Hour, 10*time.Minute, func(off time.Duration) surfaceTick {
 		pb, ob := shiftedVolume(off)

@@ -34,10 +34,10 @@ const (
 	// surfaceVenueQuoteFloorPerHour: a venue qualifies only with this much quote volume. Kraken 13.7k / 23k / 59k / 113k USD (min
 	// 5.1k), bitstamp 6.9k / 9.4k / 19k / 33k.
 	surfaceVenueQuoteFloorPerHour = 10_000
-	// surfaceOwnShareDenom: the reference's base must be >= 1/4 of the slot's proxy base, so faking a reference costs volume in
-	// proportion to the proxy volume it vouches for. Own/proxy base 0.46 / 0.69 / 1.16 / 1.62: at 1 (own >= proxy) the 697-window
-	// replay rises from 4 to 39 false alarms (main: 34) and from 607 to 130 windows decided alone.
-	surfaceOwnShareDenom = 4
+	// surfaceOwnShareDenom: the reference's base must be >= 1/3 of the slot's proxy base, so faking a reference costs volume in
+	// proportion to the proxy volume it vouches for. Own/proxy base 0.46 / 0.69 / 1.16 / 1.62. 697-window replay, false alarms /
+	// decided alone: 1/4 4 / 607, 1/3 7 / 571, 1/1 39 / 130 (main: 34 / 0).
+	surfaceOwnShareDenom = 3
 	// surfaceBaseFloorXLMPerHour: both surfaces must carry this much XLM base. Own 509k / 914k / 1.7M / 2.6M, proxy 426k / 562k /
 	// 992k / 1.5M (min 183k). A leg whose base is not XLM has no floor and so never decides alone.
 	surfaceBaseFloorXLMPerHour = 150_000
