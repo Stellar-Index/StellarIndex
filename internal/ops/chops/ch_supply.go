@@ -69,12 +69,11 @@ func chSupply(args []string) error { //nolint:gocognit,gocyclo,funlen // linear:
 	fmt.Fprintf(os.Stderr, "ch-supply: summing mint/burn/clawback flows for [%d,%d] from %s (final=%v seed-flows=%v)\n", lo, hi, *chAddr, *useFinal, *seedFlows)
 	err = clickhouse.StreamMintBurnFlows(ctx, *chAddr, lo, hi, *useFinal, func(f clickhouse.MintBurnFlow) error {
 		flows++
-		v, skipType, ok := clickhouse.DecodeSupplyAmountXDR(f.DataXDR)
-		if !ok {
-			// Undecodable / non-i128 body (some SEP-41 variants carry a map);
-			// skip rather than misparse. skipType pinpoints the shape to handle.
+		// The live sink's classifier, so a seeded supply_flows row exists exactly where the sink would write one.
+		v, skip := clickhouse.ClassifySupplyEventXDR(f.ContractID, f.TopicsXDR, f.DataXDR)
+		if skip != "" {
 			decodeErrors++
-			skipByType[skipType]++
+			skipByType[skip]++
 			return nil
 		}
 		a := tokens[f.ContractID]

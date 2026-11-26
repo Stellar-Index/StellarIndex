@@ -29,10 +29,15 @@ var judgedNonToken = map[string]Judgement{
 	},
 }
 
-// ClassifySupplyEventXDR is [ClassifySupplyBodyXDR] for one contract's event. A skip equal to the contract's judged Reason becomes
-// judged_non_token; any other skip, and any body that decodes, is returned unchanged.
-func ClassifySupplyEventXDR(contractID, dataXDR string) (*big.Int, string) {
-	amt, skip := ClassifySupplyBodyXDR(dataXDR)
+// ClassifySupplyEventXDR classifies one contract's mint/burn/clawback/transfer event (base64 topics incl. topic[0], and body): topics
+// that are no token's shape are not_token_shaped whatever the body, else [ClassifySupplyBodyXDR] decides. A skip equal to the
+// contract's judged Reason becomes judged_non_token; any other skip, and any amount that decodes, is returned unchanged.
+func ClassifySupplyEventXDR(contractID string, topicsXDR []string, dataXDR string) (*big.Int, string) {
+	var amt *big.Int
+	skip := supplyTopicsSkip(topicsXDR)
+	if skip == "" {
+		amt, skip = ClassifySupplyBodyXDR(dataXDR)
+	}
 	if j, ok := judgedNonToken[contractID]; ok && skip != "" && skip == j.Reason {
 		return nil, SupplySkipJudgedNonToken
 	}

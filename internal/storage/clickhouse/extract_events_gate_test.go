@@ -26,7 +26,7 @@ func gateContractEvent(t *testing.T) xdr.ContractEvent {
 		Body: xdr.ContractEventBody{
 			V: 0,
 			V0: &xdr.ContractEventV0{
-				Topics: []xdr.ScVal{{Type: xdr.ScValTypeScvSymbol, Sym: &sym}},
+				Topics: []xdr.ScVal{{Type: xdr.ScValTypeScvSymbol, Sym: &sym}, contractAddrScVal(0x43)},
 				Data:   xdr.ScVal{Type: xdr.ScValTypeScvI128, I128: &amount},
 			},
 		},
