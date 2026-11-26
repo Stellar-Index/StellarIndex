@@ -113,7 +113,7 @@ YML
 rules_file() { # rules_file <threshold-seconds>
   cat <<YML
 groups:
-  - name: data-freshness
+  - name: served-values
     rules:
       - alert: stellarindex_served_value_check_stale
         expr: |
@@ -155,8 +155,8 @@ YML
     "verify_served_values_enabled: \"{{ (stellar_network | default('pubnet')) == 'pubnet' }}\"" \
     > "$r/$DEFAULTS/main.yml"
 
-  rules_file 172800 > "$r/deploy/monitoring/rules/data-freshness.yml"
-  rules_file 172800 > "$r/configs/prometheus/rules.r1/data-freshness.yml"
+  rules_file 172800 > "$r/deploy/monitoring/rules/served-values.yml"
+  rules_file 172800 > "$r/configs/prometheus/rules.r1/served-values.yml"
   echo "$r"
 }
 
@@ -234,15 +234,15 @@ sed 's|OnCalendar=\*-\*-\* 06:20:00 UTC|OnCalendar=Mon *-*-* 06:20:00 UTC|' \
 check "an OnCalendar form the gate cannot parse is refused, not guessed" 1 "$weekly"
 
 too_tight="$(mk_tree too_tight)"
-rules_file 86400 > "$too_tight/deploy/monitoring/rules/data-freshness.yml"
+rules_file 86400 > "$too_tight/deploy/monitoring/rules/served-values.yml"
 check "a threshold below one period plus slack is caught" 1 "$too_tight"
 
 too_loose="$(mk_tree too_loose)"
-rules_file 604800 > "$too_loose/configs/prometheus/rules.r1/data-freshness.yml"
+rules_file 604800 > "$too_loose/configs/prometheus/rules.r1/served-values.yml"
 check "a threshold beyond two periods is caught" 1 "$too_loose"
 
 one_tree="$(mk_tree one_tree)"
-rm "$one_tree/configs/prometheus/rules.r1/data-freshness.yml"
+rm "$one_tree/configs/prometheus/rules.r1/served-values.yml"
 check "a missing second rule tree is caught" 1 "$one_tree"
 
 empty_tasks="$(mk_tree empty_tasks)"

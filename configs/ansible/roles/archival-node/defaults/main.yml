@@ -1367,13 +1367,32 @@ pgbackrest_exporter_version: "0.23.0"  # matches the version live on r1; 0.18.0'
 # unit `prometheus.service`) plus a scrape config of localhost targets.
 # r1 keeps its out-of-band arrangement (this stays false there).
 #
-# ALERTING IS OUT OF SCOPE HERE, deliberately — not forgotten. What
-# /v1/status needs is the SCRAPE layer: Heartbeats/Latency/Freshness
-# all read plain series, and Incidents() queries the `ALERTS` series
-# that Prometheus itself synthesizes from loaded rules, so an empty
-# rule set answers "no firing alerts" without erroring. Alertmanager
-# would add paging, which a disposable test net has no on-call for.
+# Alert DELIVERY is not configured: no Alertmanager, no `alerting:`
+# block, nobody is notified. Rules can be loaded (below); a firing rule
+# is visible only in the `ALERTS` series, which Incidents() reads for
+# /v1/status, and on the host at localhost:9090/api/v1/alerts.
 run_local_prometheus: false
+
+# Load alert rules into the local Prometheus. Needs run_local_prometheus.
+# Off by default; the operator turns it on per host in inventory.
+local_prometheus_rules_enabled: false
+
+# Rule FILE names from configs/prometheus/rules.r1/, installed verbatim
+# (no per-host rewriting, so the r1 and deploy/monitoring mirrors stay
+# equivalent). An INCLUDE list, because most r1 files misfire on a
+# lean host: absent()-style staleness rules on components a test net
+# does not run (aggregator, backups, ZFS, cross-region, CEX connectors),
+# and page-severity rules that would turn a test net's public /v1/status
+# `overall` to degraded. Add a file only after reading every rule in it
+# against this host's run_* switches; scripts/ci/
+# ansible-local-prometheus-rules-test.sh rejects the known-bad ones.
+#
+# served-values.yml stays out: its check_stale fires on absent_over_time
+# of a series only the pubnet-only verify-served-values job writes.
+local_prometheus_rule_files:
+  - data-freshness.yml
+  - metrics-registry.yml
+  - signup-reaper.yml
 
 # Loopback-only bind. The API reads localhost:9090 from the same box,
 # and 9090 is not in internal_allow_ports on any inventory — the bind
@@ -1443,7 +1462,7 @@ local_prometheus_caddy_admin_port: 2019
 #
 # Not scraped, on purpose: MinIO (its /metrics needs a bearer token
 # minted by hand — see the job comment in prometheus.r1.yml) and
-# Alertmanager (not installed; see run_local_prometheus above).
+# Alertmanager (not installed: alert delivery is not configured).
 local_prometheus_scrape_jobs: >-
   {{
     [{'job': 'prometheus', 'target': '127.0.0.1:' ~ (local_prometheus_listen | regex_replace('^.*:', ''))}]

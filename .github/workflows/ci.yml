@@ -1581,6 +1581,11 @@ jobs:
         # stalled publication) and the live 1003-partition shape GREEN. No
         # network, no aws cli.
         run: ./scripts/ci/check-public-dataset-test.sh
+      - name: check-directory-pin self-test
+        # Fixtures for the pin-age verdict directory-pin-reminder.yml runs
+        # weekly: the 21-day threshold, the no-newer-commits case and the
+        # branch-pin rejection. No network.
+        run: ./scripts/ci/check-directory-pin-test.sh
       - name: check-fleet-release-drift self-test
         # Fixtures for the test-net release-drift verdict
         # fleet-release-drift.yml calls daily and deploy.yml runs after every
@@ -2325,6 +2330,11 @@ jobs:
         # firewall pointed at the old port. Structural grep, no hosts.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-prometheus-port-var-test.sh
+      - name: local prometheus rule include-list test
+        # The single-host Prometheus loads an INCLUDE list of rules.r1 files;
+        # a file with absent()-style or page rules misfires on a test net.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-local-prometheus-rules-test.sh
       - name: patroni etcd TLS render test
         # etcd and Patroni's etcd3 client must render https with mutual cert
         # auth by default, and the config tasks must refuse missing PEM

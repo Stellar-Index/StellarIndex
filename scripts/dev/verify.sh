@@ -571,6 +571,7 @@ lane_d() { # everything else
     echo "=== Ansible ZFS ARC cap self-test ===" && ./scripts/ci/ansible-zfs-arc-cap-test.sh
     echo "=== Ansible Postgres log size-cap self-test ===" && ./scripts/ci/ansible-pg-logrotate-cap-test.sh
     echo "=== Ansible prometheus port var self-test ===" && ./scripts/ci/ansible-prometheus-port-var-test.sh
+    echo "=== Ansible local prometheus rules self-test ===" && ./scripts/ci/ansible-local-prometheus-rules-test.sh
     echo "=== Ansible patroni etcd TLS self-test ===" && ./scripts/ci/ansible-patroni-etcd-tls-test.sh
     echo "=== Patroni credential quoting self-test ===" && ./scripts/ci/lint-patroni-basic-auth-quoting-test.sh
     echo "=== Ansible node-exporter-collectors install self-test ===" && ./scripts/ci/ansible-node-exporter-collectors-install-test.sh
@@ -627,6 +628,7 @@ lane_d() { # everything else
     # Repo-gates self-tests need a verify.sh twin, or check-verify-parity
     # goes red on main for everyone.
     echo "=== Public-dataset drift decision-core self-test ===" && ./scripts/ci/check-public-dataset-test.sh
+    echo "=== Directory-pin age self-test ===" && ./scripts/ci/check-directory-pin-test.sh
     echo "=== Replay-plan tripwire self-test ===" && ./scripts/ci/lint-replay-plan-test.sh
     echo "=== Verdict helpers self-test (oneshot waits, sentinel gates) ===" && bash scripts/ops/ops-verdict-test.sh
     echo "=== ClickHouse maintenance + Phase-D failure-path self-test ===" && bash scripts/ops/ch-maintenance-fail-closed-test.sh
