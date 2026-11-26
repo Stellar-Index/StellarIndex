@@ -241,6 +241,26 @@ func TestInterestEventDecoder_GulpAndReconcileLoss(t *testing.T) {
 	}
 }
 
+// The real defaulted_debt of mainnet pool CCCCIQSD… at ledger 61341315 (event 2) is its asset's d_tokens_burnt; the
+// same shape on a V1 pool is no cause, so its b_rate mismatch stays unexplained.
+func TestInterestEventDecoder_DefaultedDebt(t *testing.T) {
+	const pool = "CCCCIQSDILITHMM7PBSLVDT5MISSY7R26MNZXCX4H7J5JQ5FPIYOGYFS"
+	ev := events.Event{
+		Type: "contract", ContractID: pool, Ledger: 61341315, LedgerClosedAt: liClose(61341315).Format(time.RFC3339),
+		TxHash: "097d5ce03412177cf393c44b8dc0024cd0698fa815f7a6c53423b7cccd1a69e9", EventIndex: 2,
+		Topic: []string{"AAAADwAAAA5kZWZhdWx0ZWRfZGVidAAA", "AAAAEgAAAAEltPzYWa7C+mNIQ4xImzw8EMmLbSG+T9PLMMtolT75dw=="},
+		Value: "AAAACgAAAAAAAAAAAAIZUzIv95w=", InSuccessfulContractCall: true,
+	}
+	got, err := newInterestEventDecoder(map[string]lendinginterest.Protocol{pool: lendinginterest.BlendV2}).decode(ev)
+	if err != nil || len(got) != 1 || got[0].Cause != lendinginterest.CauseDefaultedDebt || got[0].Amount != nil ||
+		got[0].Asset != "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA" || got[0].DTokens.String() != "590795068405660" {
+		t.Fatalf("V2: %+v %v", got, err)
+	}
+	if got, err := newInterestEventDecoder(map[string]lendinginterest.Protocol{pool: lendinginterest.BlendV1}).decode(ev); err != nil || len(got) != 0 {
+		t.Fatalf("V1: %+v %v", got, err)
+	}
+}
+
 // A real V1 interest fill (auction_type 2, no lot in the body) is a CauseInterestFillV1 with no amount; a real V1
 // user-liquidation fill is nothing.
 func TestInterestEventDecoder_V1InterestFill(t *testing.T) {
@@ -262,6 +282,7 @@ func TestCheckResidualClasses(t *testing.T) {
 		Pool: "P", Asset: "A", BackstopResidual: n(-10), UnreconciledVersions: 3,
 		ResidualExplained: n(-7), ResidualAttributed: n(-4), ResidualUnexplained: n(1),
 		ExplainedVersions: 1, AttributedVersions: 1, UnexplainedVersions: 1,
+		BRateMismatches: 2, DefaultLoss: n(-5), DefaultVersions: 1,
 	}
 	if err := checkResidualClasses(ok); err != nil {
 		t.Fatal(err)
@@ -269,7 +290,15 @@ func TestCheckResidualClasses(t *testing.T) {
 	amount, count := ok, ok
 	amount.ResidualUnexplained = n(0)
 	count.UnexplainedVersions = 0
-	for name, r := range map[string]lendinginterest.HourRow{"amount": amount, "count": count} {
+	overMismatches, overClassified, gain, lossWithout := ok, ok, ok, ok
+	overMismatches.BRateMismatches = 0
+	overClassified.DefaultVersions = 3
+	gain.DefaultLoss = n(5)
+	lossWithout.DefaultVersions = 0
+	for name, r := range map[string]lendinginterest.HourRow{
+		"amount": amount, "count": count, "defaults over mismatches": overMismatches,
+		"defaults over classified": overClassified, "default gain": gain, "loss without a default": lossWithout,
+	} {
 		if err := checkResidualClasses(r); err == nil {
 			t.Errorf("%s off: accepted", name)
 		}
