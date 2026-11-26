@@ -151,22 +151,31 @@ func decodeReserves(e *events.Event, closedAt time.Time, kind string) (ReservesE
 	}, nil
 }
 
-// decodeLiquidity decodes deposit_liquidity / withdraw_liquidity. topics: [Symbol(action), Address(token_0..n-1)];
-// body: Vec<i128> [amount_0..n-1, share_amount] (shares minted/burned). Decode by topic-count vs body-length so N-token stableswap is kept.
-func decodeLiquidity(e *events.Event, action LiquidityAction, closedAt time.Time) (LiquidityEvent, error) {
+// decodeLiquidityTokens reads the token addresses from topics [Symbol(action), Address(token_0..n-1)].
+func decodeLiquidityTokens(e *events.Event, action LiquidityAction) ([]string, error) {
 	if len(e.Topic) < 2 {
-		return LiquidityEvent{}, fmt.Errorf("%w: %s needs >=2 topics (symbol + >=1 token), got %d",
+		return nil, fmt.Errorf("%w: %s needs >=2 topics (symbol + >=1 token), got %d",
 			ErrMalformedPayload, action, len(e.Topic))
 	}
-	nTokens := len(e.Topic) - 1
-	tokens := make([]string, nTokens)
-	for i := 0; i < nTokens; i++ {
+	tokens := make([]string, len(e.Topic)-1)
+	for i := range tokens {
 		addr, err := decodeAddressTopic(e.Topic[i+1])
 		if err != nil {
-			return LiquidityEvent{}, fmt.Errorf("%w: %s token[%d]: %w", ErrMalformedPayload, action, i, err)
+			return nil, fmt.Errorf("%w: %s token[%d]: %w", ErrMalformedPayload, action, i, err)
 		}
 		tokens[i] = addr
 	}
+	return tokens, nil
+}
+
+// decodeLiquidity decodes a volatile / stableswap pool's deposit_liquidity / withdraw_liquidity. topics: [Symbol(action), Address(token_0..n-1)];
+// body: Vec<i128> [amount_0..n-1, share_amount] (shares minted/burned). Decode by topic-count vs body-length so N-token stableswap is kept.
+func decodeLiquidity(e *events.Event, action LiquidityAction, closedAt time.Time) (LiquidityEvent, error) {
+	tokens, err := decodeLiquidityTokens(e, action)
+	if err != nil {
+		return LiquidityEvent{}, err
+	}
+	nTokens := len(tokens)
 
 	vals, err := decodeAmountVec(e.Value)
 	if err != nil {
@@ -199,6 +208,45 @@ func decodeLiquidity(e *events.Event, action LiquidityAction, closedAt time.Time
 		Tokens:     tokens,
 		Amounts:    amounts,
 		Shares:     shares,
+	}, nil
+}
+
+// decodeConcentratedLiquidity decodes a concentrated pool's deposit_liquidity or withdraw_liquidity: topics [Symbol,
+// Address(token0), Address(token1)], body Vec<i128> [liquidity, amount0, amount1], all non-negative. On chain the same-tx
+// update_reserves moves by amount0 and amount1 and position_update's delta is +liquidity (deposit) or -liquidity (withdraw).
+func decodeConcentratedLiquidity(e *events.Event, action LiquidityAction, closedAt time.Time) (LiquidityEvent, error) {
+	tokens, err := decodeLiquidityTokens(e, action)
+	if err != nil {
+		return LiquidityEvent{}, err
+	}
+	if len(tokens) != 2 {
+		return LiquidityEvent{}, fmt.Errorf("%w: concentrated %s has %d tokens, want 2", ErrMalformedPayload, action, len(tokens))
+	}
+	vals, err := decodeAmountVec(e.Value)
+	if err != nil {
+		return LiquidityEvent{}, fmt.Errorf("%w: %s body: %w", ErrMalformedPayload, action, err)
+	}
+	if len(vals) != 3 {
+		return LiquidityEvent{}, fmt.Errorf("%w: concentrated %s body length %d, want 3 (liquidity, amount0, amount1)",
+			ErrMalformedPayload, action, len(vals))
+	}
+	for i, v := range vals {
+		if v.Sign() < 0 {
+			return LiquidityEvent{}, fmt.Errorf("%w: concentrated %s body[%d] negative: %s", ErrMalformedPayload, action, i, v)
+		}
+	}
+	return LiquidityEvent{
+		ContractID:   e.ContractID,
+		Ledger:       e.Ledger,
+		TxHash:       e.TxHash,
+		OpIndex:      uint32(e.OperationIndex), //nolint:gosec // OperationIndex is non-negative by Soroban spec.
+		EventIndex:   uint32(e.EventIndex),     //nolint:gosec // EventIndex is non-negative by Soroban spec.
+		ObservedAt:   closedAt,
+		Action:       action,
+		Tokens:       tokens,
+		Amounts:      vals[1:],
+		Concentrated: true,
+		Liquidity:    vals[0],
 	}, nil
 }
 
@@ -289,28 +337,34 @@ func sdkDecodeAddressTopic(topicB64 string) (string, error) {
 	return scval.AsAddressStrkey(sv)
 }
 
-// decodeAnnouncedPool extracts the pool a ROUTER `add_pool` event announces (ADR-0035/0040 fan-out seam):
-// body Vec[Address(pool), ...], and the pool must be a C-strkey.
-func decodeAnnouncedPool(e *events.Event) (string, error) {
+// decodeAnnouncedPool extracts the pool a ROUTER `add_pool` event announces (ADR-0035/0040 fan-out seam) and its pool-type
+// Symbol: body Vec[Address(pool), Symbol(pool_type), ...]; the pool must be a C-strkey. A missing or non-Symbol type is ""
+// (the pool is still admitted; its liquidity layout is then decided by LayoutForAnnouncement).
+func decodeAnnouncedPool(e *events.Event) (pool, poolType string, err error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {
-		return "", fmt.Errorf("%w: add_pool body: %w", ErrMalformedPayload, err)
+		return "", "", fmt.Errorf("%w: add_pool body: %w", ErrMalformedPayload, err)
 	}
 	elts, err := scval.AsVec(body)
 	if err != nil {
-		return "", fmt.Errorf("%w: add_pool body not a vec: %w", ErrMalformedPayload, err)
+		return "", "", fmt.Errorf("%w: add_pool body not a vec: %w", ErrMalformedPayload, err)
 	}
 	if len(elts) == 0 {
-		return "", fmt.Errorf("%w: add_pool body vec is empty", ErrMalformedPayload)
+		return "", "", fmt.Errorf("%w: add_pool body vec is empty", ErrMalformedPayload)
 	}
-	pool, err := scval.AsAddressStrkey(elts[0])
+	pool, err = scval.AsAddressStrkey(elts[0])
 	if err != nil {
-		return "", fmt.Errorf("%w: add_pool pool address: %w", ErrMalformedPayload, err)
+		return "", "", fmt.Errorf("%w: add_pool pool address: %w", ErrMalformedPayload, err)
 	}
 	if len(pool) == 0 || pool[0] != 'C' {
-		return "", fmt.Errorf("%w: add_pool announced a non-contract address %q", ErrMalformedPayload, pool)
+		return "", "", fmt.Errorf("%w: add_pool announced a non-contract address %q", ErrMalformedPayload, pool)
 	}
-	return pool, nil
+	if len(elts) > 1 {
+		if sym, serr := scval.AsSymbol(elts[1]); serr == nil {
+			poolType = sym
+		}
+	}
+	return pool, poolType, nil
 }
 
 // decodeFee decodes `set_protocol_fee` (Map[fee_protocol{0,1}_{new,old}: u32] or Vec[u32], see decodeSetProtocolFee) and

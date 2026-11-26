@@ -297,6 +297,7 @@ func gatedRegistryOptions(
 			"source", source, "factories", meta.Factories,
 			"children", len(ids), "curated", len(meta.CuratedSet),
 			"gated", len(seed), "reconciled", reconciled)
+		warnUnlayeredAquariusPools(logger, source, ids)
 
 		// Only a factory-anchored source without a curated set reaches this before its genesis walk: its gate is whatever the decoder seeds from code,
 		// so a missing child is dropped silently. The remedy works because such decoders admit children from creation events.
@@ -312,6 +313,19 @@ func gatedRegistryOptions(
 		out[source] = opts
 	}
 	return out, nil
+}
+
+// warnUnlayeredAquariusPools surfaces warmed aquarius pools in neither in-code list: protocol_contracts cannot carry the
+// layout their add_pool announced, so until listed their deposit/withdraw events are refused as decode_error.
+func warnUnlayeredAquariusPools(logger *slog.Logger, source string, ids []string) {
+	if source != aquarius.SourceName {
+		return
+	}
+	if missing := aquarius.PoolsWithoutLayout(ids); len(missing) > 0 {
+		logger.Warn("aquarius pools warmed with NO liquidity layout — their deposit/withdraw events are refused "+
+			"until each is added to aquarius.MainnetPools or MainnetConcentratedPools by its add_pool type",
+			"source", source, "count", len(missing), "pools", missing)
+	}
 }
 
 // withoutContracts returns ids minus drop, in order.

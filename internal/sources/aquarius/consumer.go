@@ -79,8 +79,13 @@ type LiquidityEvent struct {
 	Tokens  []string
 	Amounts []canonical.Amount
 	// Shares is the LP-share amount minted (deposit) / burned
-	// (withdraw) — a single per-event value, NOT per-token.
+	// (withdraw) — a single per-event value, NOT per-token. Unset when Concentrated.
 	Shares canonical.Amount
+	// Concentrated marks a concentrated pool's event. Liquidity is then its liquidity (L) delta, which is not an LP-share
+	// count, so the sink stores shares NULL; the same value is persisted by the pool's position_update.
+	Concentrated bool
+	// Liquidity is not persisted (position_update carries it); it is kept so decode can be checked against that event.
+	Liquidity canonical.Amount
 }
 
 // EventKind implements [consumer.Event].

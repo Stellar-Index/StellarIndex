@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
@@ -28,7 +30,14 @@ type routerFixture struct {
 
 func loadRouterFixture(t *testing.T, name string) (routerFixture, events.Event, time.Time) {
 	t.Helper()
-	path := filepath.Join("..", "..", "..", "test", "fixtures", "aquarius", routerUpgradeWasmHash, name)
+	return loadHashFixture(t, routerUpgradeWasmHash, name)
+}
+
+// loadHashFixture reads test/fixtures/aquarius/<hash>/<name>, requiring its wasm_hash to match the directory and every
+// base64 field to round-trip.
+func loadHashFixture(t *testing.T, hash, name string) (routerFixture, events.Event, time.Time) {
+	t.Helper()
+	path := filepath.Join("..", "..", "..", "test", "fixtures", "aquarius", hash, name)
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -37,7 +46,7 @@ func loadRouterFixture(t *testing.T, name string) (routerFixture, events.Event, 
 	if err := json.Unmarshal(raw, &fx); err != nil {
 		t.Fatal(err)
 	}
-	if fx.WasmHash != routerUpgradeWasmHash {
+	if fx.WasmHash != hash {
 		t.Fatalf("fixture wasm_hash = %s", fx.WasmHash)
 	}
 	for _, s := range append([]string{fx.Value}, fx.Topics...) {
@@ -73,6 +82,7 @@ func TestRouterUpgradeFixtures_addPool(t *testing.T) {
 	}{
 		{"add_pool_65675280_bea153581781.json", "CBQ6AGQYE5HCDK7VIDUH6756IFPBTLF2HNQH57DAFMOHK3CVDH4CAMXO"},
 		{"add_pool_65675307_a43b2fa30ab8.json", "CABOSWXYBLE2UJKYWITFRICR37D4UOB75CNXIH7VI5ZKKL526GFHXAUI"},
+		{"add_pool_65675330_be17f9d0da4b.json", "CCKMZ2K3ZKDETW54TFENFB34IJ67UFBI4R4RXUEY5PXKCDLBOXNIJH2B"},
 	}
 	for _, c := range cases {
 		t.Run(c.file, func(t *testing.T) {
@@ -83,15 +93,20 @@ func TestRouterUpgradeFixtures_addPool(t *testing.T) {
 			if !isAddPool(&e) {
 				t.Fatal("topic[0] is not the add_pool symbol")
 			}
-			got, err := decodeAnnouncedPool(&e)
+			got, poolType, err := decodeAnnouncedPool(&e)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if got != c.pool {
 				t.Errorf("announced pool = %s, want %s", got, c.pool)
 			}
+			// body[1] is Symbol("concentrated"): type 0x0f, length 12, at offsets 52-71 (audit doc byte table).
+			if poolType != "concentrated" {
+				t.Errorf("announced pool type = %q, want concentrated", poolType)
+			}
 
-			d := NewDecoder()
+			// Router trust root only: NewDecoder's in-code list already holds these pools.
+			d := &Decoder{reg: contractid.New(contractid.WithFactories([]string{MainnetRouter}))}
 			trade := events.Event{ContractID: c.pool, Topic: []string{TopicSymbolTrade, "x", "y", "z"}}
 			if d.Matches(trade) {
 				t.Fatal("pool matched before its add_pool")
@@ -104,6 +119,12 @@ func TestRouterUpgradeFixtures_addPool(t *testing.T) {
 			}
 			if !d.Matches(trade) {
 				t.Error("announced pool not admitted by the gate")
+			}
+			if got := d.reg.AttrsOf(c.pool)[AttrLiquidityLayout]; got != LayoutConcentrated {
+				t.Errorf("announced pool layout = %q, want %q", got, LayoutConcentrated)
+			}
+			if !slices.Contains(MainnetConcentratedPools, c.pool) {
+				t.Errorf("%s is not in MainnetConcentratedPools; its layout would be lost on restart", c.pool)
 			}
 		})
 	}

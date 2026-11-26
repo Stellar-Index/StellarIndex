@@ -1,0 +1,17 @@
+{
+  "contract_id": "CABOSWXYBLE2UJKYWITFRICR37D4UOB75CNXIH7VI5ZKKL526GFHXAUI",
+  "wasm_hash": "155a17b9929ffb1f9e84bd6ef5c00a4d613c1ab5f4ad4c502d84515250cc2907",
+  "ledger": 65678793,
+  "tx_hash": "fdcd61113af414c5f334989f3a5d57a3897c03d58129ceff4e05b99b3944f2ad",
+  "op_index": 0,
+  "event_index": 3,
+  "ledger_closed_at": "2026-11-26T08:00:30Z",
+  "topics": [
+    "AAAADwAAAAV0cmFkZQAAAA==",
+    "AAAAEgAAAAFknJEO6L6hakXbFSbe6ZW6bdZtDfgJsVRGw6ZHiVM5HQ==",
+    "AAAAEgAAAAEohS9owZhIjjRvsSEu1QKQU3Ycwk9FM5LjU5ggGwgl5w==",
+    "AAAAEgAAAAFgM7QlDnBOMU+wZJc9GF25IsrgvScrpb/xmqxXDxKsLw=="
+  ],
+  "value": "AAAAEAAAAAEAAAADAAAACgAAAAAAAAAAAAAAAAAAMVsAAAAKAAAAAAAAAAAAAAAAA40SowAAAAoAAAAAAAAAAAAAAAAAAAAN",
+  "event_name": "trade"
+}

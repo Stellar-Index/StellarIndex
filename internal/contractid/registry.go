@@ -166,6 +166,13 @@ func (r *Registry) SeedWithAttrs(childID, factoryID string, firstLedger uint32, 
 	}
 }
 
+// AttrsOf returns one child's retained attributes, nil when it has none; callers must not mutate the map.
+func (r *Registry) AttrsOf(childID string) Attrs {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.attrs[childID]
+}
+
 // AllAttrs returns a copy of every child's retained attributes.
 func (r *Registry) AllAttrs() map[string]Attrs {
 	r.mu.RLock()
