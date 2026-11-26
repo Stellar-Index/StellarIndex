@@ -159,7 +159,8 @@ func (lr legRef) quoteSurfaceRefusal(maxBps int) string {
 }
 
 // surfaceReading is one leg's quote-surface comparison: gap is the signed (proxy - own) / own (nil when a surface is empty or the
-// comparison failed), overlap the sub-buckets holding both surfaces, aligned whether gap is their median (else the whole-window compare).
+// comparison failed), overlap the above-floor shared sub-buckets, aligned whether gap is their reading alone (else the larger of it and
+// the whole-window gap).
 type surfaceReading struct {
 	gap          *big.Rat
 	overlap      int
@@ -196,23 +197,26 @@ func (o *Orchestrator) quoteSurfaces(
 	if len(own) == 0 {
 		return share, surfaceReading{}
 	}
-	gap, overlap, aligned, ok := o.alignedSurfaceGap(pair, trades, scaled, proxied, window, proxyBase, ownBase)
+	aligned, ok := o.alignedSurfaceGap(pair, trades, scaled, proxied, window, proxyBase, ownBase)
 	if !ok {
 		return share, surfaceReading{uncomputable: true}
 	}
-	if aligned {
-		return share, surfaceReading{gap: gap, overlap: overlap, aligned: true}
+	if aligned.replaces {
+		return share, surfaceReading{gap: aligned.gap, overlap: aligned.overlap, aligned: true}
 	}
-	// Too little overlap to align: the whole-window compare still judges. It can refuse a trend, never pass a de-peg, and a refused
-	// composite leaves the direct print serving.
+	// The aligned slots do not speak for the served prints: judge by the larger of the whole-window gap (the check as it was, which a
+	// trend can inflate or, against the basis's sign, shrink) and the aligned gap, so this is never weaker than the whole-window compare.
 	proxyVWAP, perr := o.computeNormalizedVWAP(proxy, pair)
 	ownVWAP, oerr := o.computeNormalizedVWAP(own, pair)
 	if perr != nil || oerr != nil || proxyVWAP.Sign() <= 0 || ownVWAP.Sign() <= 0 {
 		return share, surfaceReading{uncomputable: true}
 	}
-	gap = new(big.Rat).Sub(proxyVWAP, ownVWAP)
+	gap := new(big.Rat).Sub(proxyVWAP, ownVWAP)
 	gap.Quo(gap, ownVWAP)
-	return share, surfaceReading{gap: gap, overlap: overlap}
+	if aligned.gap != nil {
+		gap = largerMagnitude(gap, aligned.gap)
+	}
+	return share, surfaceReading{gap: gap, overlap: aligned.overlap}
 }
 
 // surfaceString renders the leg's surface reading for logs: `+12.3bps/aligned=20` or `-80.0bps/whole_window(overlap=1)`; "" when

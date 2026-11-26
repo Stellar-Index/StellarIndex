@@ -223,18 +223,18 @@ ssh root@136.243.90.96 "curl -s http://localhost:9465/metrics | grep -E 'stellar
 | `leg_quote_surface=uncomputable` | A surface VWAP could not be computed; the leg is refused, not skipped. |
 | `leg_not_refreshed`, `fx_*`, `no_chain` | Leg not published this tick, FX snap missing/stale, or no triangulation configured. |
 
-For `leg_quote_surface`, the log field `leg_quote_surface` reads `<leg>:<signed bps>/aligned=<n>` (median of `n` sub-buckets where both surfaces traded, plus the newest three) or `/whole_window(overlap=<n>)` (too little overlap to align, so the whole-window VWAPs were compared). `stellarindex_aggregator_quote_surface_bps{pair,window,leg}` carries the same signed value: positive means stablecoin prints sit above real-USD prints.
+For `leg_quote_surface`, the log field `leg_quote_surface` reads `<leg>:<signed bps>/aligned=<n>` (judged on the `n` sub-buckets where both surfaces traded above a dust floor, which hold at least 95% of each surface's volume) or `/whole_window(overlap=<n>)` (those sub-buckets do not speak for the served prints, so the larger of the whole-window and aligned gaps judged). `stellarindex_aggregator_quote_surface_bps{pair,window,leg}` carries the same signed value: positive means stablecoin prints sit above real-USD prints.
 
 ### Likely causes
 
 - A real stablecoin de-peg: the gap persists in every window (5m, 1h, 24h) with the same sign, and the stablecoin's own market (`USDC/fiat:USD`, `USDT/fiat:USD` prices on `/v1/price`, or the issuer's redemption status) shows the same move.
-- A trend artefact of the whole-window fallback: `whole_window(...)` on the 24h window during a strong move, while the 1h window's `quote_surface_bps` is inside the bound. The two surfaces trade at different times of day and the fallback cannot align them.
+- A trend artefact of the whole-window fallback: `whole_window(...)` on the 24h window during a strong move, while the 1h window's `quote_surface_bps` is inside the bound. The USD venues were quiet or thin for part of the window (more than 5% of a surface's volume outside shared sub-buckets, or no USD print in the newest stablecoin sub-bucket), so the check could not rely on alignment alone.
 - Thin legs or dispersed venues: `leg_sources` / `leg_dispersion` causes; see the composite-reference config in `[aggregate.composite_reference]`.
 
 ### Fix
 
 1. De-peg: no action on the aggregator; refusing the composite is the intended outcome. Track the stablecoin's peg and record it in the incident log.
-2. Trend artefact on `whole_window`: no action; it clears as the window rolls or once overlap reaches three sub-buckets holding half of each surface's volume. If it recurs on `aligned=` readings with a quiet 1h window, capture both windows' `quote_surface_bps` and the log lines and escalate as a defect in the surface check.
+2. Trend artefact on `whole_window`: no action; it clears as the window rolls past the quiet hours, once shared sub-buckets hold at least 95% of each surface's volume. If it recurs on `aligned=` readings with a quiet 1h window, capture both windows' `quote_surface_bps` and the log lines and escalate as a defect in the surface check.
 3. Do NOT raise `leg_dispersion_bps` or `tolerance_bps` to clear this alert: both also gate de-peg detection.
 
 ## Related
