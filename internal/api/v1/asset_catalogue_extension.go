@@ -50,7 +50,7 @@ func (s *Server) applyAssetExtensionFields(ctx context.Context, detail *AssetDet
 
 	row, rowErr := s.lookupAssetRow(cctx, asset, assetID)
 	results := s.fetchAssetExtensionResults(cctx, assetID)
-	detail.extensionStale = rep.stale.Load()
+	detail.extensionStale, detail.extensionLastGood = rep.stale.Load(), rep.degradedReason()
 
 	s.applyAssetRowToDetail(cctx, detail, asset, row, rowErr, assetID)
 	s.applyAssetExtensionResults(detail, asset, results)

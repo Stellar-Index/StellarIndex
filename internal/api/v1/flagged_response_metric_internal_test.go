@@ -26,7 +26,7 @@ func TestFlaggedResponses_countedByRoutePattern(t *testing.T) {
 		writeCachedAssetDetail(w, &assetDetailEntry{body: []byte("{}"), cachedAt: time.Now(), degraded: true})
 	})
 	mux.HandleFunc("GET /v1/flagtest/list/{id}", func(w http.ResponseWriter, _ *http.Request) {
-		writeCachedAssetList(w, []byte("{}"), true)
+		writeCachedAssetList(w, assetListHit{body: []byte("{}"), stale: true})
 	})
 	h := obs.HTTPMetrics(middleware.ETag(obs.CaptureRoute(mux)))
 

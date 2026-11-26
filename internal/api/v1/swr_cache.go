@@ -139,13 +139,28 @@ func (c *swrCache[V]) filled(key string) bool {
 	return ok && !e.at.IsZero()
 }
 
-// lastGood reports whether key's value is a last-good copy: its latest refresh failed, or one has run past budget. A value merely
-// past its TTL is not: an idle key refreshes on demand, so expiry alone says nothing about whether its refreshes work.
-func (c *swrCache[V]) lastGood(key string, budget time.Duration) bool {
+// lastGood names why key's value is a last-good copy ([lastGoodCause]), "" when it is not or key holds no value.
+func (c *swrCache[V]) lastGood(key string, budget time.Duration) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.entries[key]
-	return ok && !e.at.IsZero() && (e.refreshFailed || (e.flight != nil && c.now().Sub(e.flightAt) >= budget))
+	if !ok || e.at.IsZero() {
+		return ""
+	}
+	return lastGoodCause(e.refreshFailed, e.flight != nil, c.now().Sub(e.flightAt), budget)
+}
+
+// lastGoodCause names why a filled cache entry is a last-good copy, "" when it is not: its latest refresh failed, or the refresh
+// in flight has run past budget. A value merely past its TTL is not: an idle key refreshes on demand, so expiry alone says
+// nothing about whether its refreshes work.
+func lastGoodCause(refreshFailed, inFlight bool, flightAge, budget time.Duration) string {
+	switch {
+	case refreshFailed:
+		return obs.DegradedRefreshFailed
+	case inFlight && flightAge >= budget:
+		return obs.DegradedRefreshOverrun
+	}
+	return ""
 }
 
 // lookupResult is a filled value (entry nil) or the cold-fill entry to wait on. An expired value also carries its entry in

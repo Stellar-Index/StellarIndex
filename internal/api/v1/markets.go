@@ -72,8 +72,9 @@ type MarketsReader interface {
 	FirstTradeBatch(ctx context.Context, pairs [][2]string) (map[string]time.Time, error)
 }
 
-// marketsStaleReader is the optional CachedMarketsReader capability reporting observedAt (zero = as_of=now) and stale (a last-good
-// copy per [swrverdict.Stale]), so handleMarkets never stamps as_of=now over old rows while refresh keeps failing.
+// marketsStaleReader is the optional CachedMarketsReader capability reporting observedAt (zero = as_of=now) and stale (past its
+// bound per [swrverdict.Stale]), so handleMarkets never stamps as_of=now over old rows while refresh keeps failing. A last-good
+// copy is reported separately, through [reportDegradedRead].
 type marketsStaleReader interface {
 	DistinctPairsExtAt(ctx context.Context, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, time.Time, bool, error)
 	SourceMarketsAt(ctx context.Context, source, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, time.Time, bool, error)
@@ -236,7 +237,8 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 	// cache than a hung request that times out at the ingress.
 	pCtx, pCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer pCancel()
-	rows, next, observedAt, stale, err := allPools(pCtx, reader, filter, cursor, limit, order)
+	readCtx, reads := withReadReport(pCtx)
+	rows, next, observedAt, stale, err := allPools(readCtx, reader, filter, cursor, limit, order)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -270,7 +272,7 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 	if listingGateExpired(pCtx, w, r, "pools-timeout", "Pools query timed out") {
 		return
 	}
-	env := Envelope{Data: rows, Flags: Flags{Stale: stale, Degraded: stale}}
+	env := Envelope{Data: rows, Flags: Flags{Stale: stale, Degraded: reads.degradedReason() != ""}}
 	if !observedAt.IsZero() {
 		env.AsOf = WireTime(observedAt.UTC())
 	}
@@ -428,10 +430,12 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	// hypertable's 24h window and can take 10s+ cold, and prewarm covers only limit=25.
 	mCtx, mCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer mCancel()
+	// The market reads report a last-good copy or a failed leg here; a merely old page is only stale.
+	readCtx, reads := withReadReport(mCtx)
 	switch {
 	case source != "":
 		if staleAware {
-			rows, next, observedAt, stale, err = staleReader.SourceMarketsAt(mCtx, source, cursor, limit, order)
+			rows, next, observedAt, stale, err = staleReader.SourceMarketsAt(readCtx, source, cursor, limit, order)
 		} else {
 			rows, next, err = reader.SourceMarkets(mCtx, source, cursor, limit, order)
 		}
@@ -439,17 +443,17 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		// Slug expansion fans out one AssetMarkets query per asset_id and merges in memory. There
 		// is no pagination: each cursor is per-asset_id and no combined keyset exists, so callers
 		// wanting the full stream pass the canonical asset_id.
-		rows, observedAt, stale, truncated, err = s.fanOutAssetMarkets(mCtx, reader, expandedAssets, limit, order)
+		rows, observedAt, stale, truncated, err = s.fanOutAssetMarkets(readCtx, reader, expandedAssets, limit, order)
 		next = ""
 	case asset != "":
 		if staleAware {
-			rows, next, observedAt, stale, err = staleReader.AssetMarketsAt(mCtx, asset, cursor, limit, order)
+			rows, next, observedAt, stale, err = staleReader.AssetMarketsAt(readCtx, asset, cursor, limit, order)
 		} else {
 			rows, next, err = reader.AssetMarkets(mCtx, asset, cursor, limit, order)
 		}
 	default:
 		if staleAware {
-			rows, next, observedAt, stale, err = staleReader.DistinctPairsExtAt(mCtx, cursor, limit, order)
+			rows, next, observedAt, stale, err = staleReader.DistinctPairsExtAt(readCtx, cursor, limit, order)
 		} else {
 			rows, next, err = reader.DistinctPairsExt(mCtx, cursor, limit, order)
 		}
@@ -525,7 +529,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		var hErr error
 		if at, ok := reader.(sparklineStaleReader); ok {
 			var sparkStale bool
-			hist, sparkStale, hErr = at.GetPairsVolumeHistory24hBatchAt(mCtx, pairs)
+			hist, sparkStale, hErr = at.GetPairsVolumeHistory24hBatchAt(readCtx, pairs)
 			stale = stale || sparkStale
 		} else {
 			hist, hErr = reader.GetPairsVolumeHistory24hBatch(mCtx, pairs)
@@ -549,15 +553,15 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		}
 	}
 
-	// A cached serve stamps the data's actual observation time, never now(), and a last-good copy
-	// (failed or late refresh) stamps flags.stale. An uncached read leaves
-	// observedAt zero and writeEnvelope defaults as_of to now.
+	// A cached serve stamps the data's actual observation time, never now(), and a page past its
+	// bound stamps flags.stale; only a last-good copy or a missing read is degraded. An uncached
+	// read leaves observedAt zero and writeEnvelope defaults as_of to now.
 	if len(unread) > 0 {
-		obs.NoteDegradedCause(mCtx, obs.DegradedPartialRead)
+		reportDegradedRead(readCtx, obs.DegradedPartialRead)
 	}
 	env := Envelope{
 		Data:  rows,
-		Flags: Flags{Stale: stale, Degraded: stale || len(unread) > 0, Truncated: truncated, IncludesUnread: unread},
+		Flags: Flags{Stale: stale, Degraded: reads.degradedReason() != "", Truncated: truncated, IncludesUnread: unread},
 	}
 	if !observedAt.IsZero() {
 		env.AsOf = WireTime(observedAt.UTC())
@@ -663,7 +667,7 @@ func (s *Server) fanOutAssetMarkets(ctx context.Context, reader MarketsReader, a
 			}
 			// A failed leg's rows are missing: the list is a lower bound (truncated) as well as not current (stale).
 			stale, truncated = true, true
-			obs.NoteDegradedCause(ctx, obs.DegradedPartialRead)
+			reportDegradedRead(ctx, obs.DegradedPartialRead)
 			continue
 		}
 		// Oldest observed-at across legs; any stale leg makes the composite stale.
