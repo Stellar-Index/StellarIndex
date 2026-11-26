@@ -1,6 +1,7 @@
 package sushiswap_v3
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -78,7 +79,26 @@ func classifyManager(e *events.Event) string {
 	return kind
 }
 
-// ManagerFields is one decoded position-manager event. Owner is topic[1] of a mint / burn (the NFT holder); Recipient is
+// ErrUnrecognisedManagerEvent is a position-manager event outside the seven verified (topic, topic count) shapes. The
+// contract carries NFT transfer / approve code that has never emitted an event, so the first one surfaces as a counted
+// decode error naming its topic instead of being dropped unmatched.
+var ErrUnrecognisedManagerEvent = errors.New("sushiswap_v3: unrecognised position-manager event")
+
+// unrecognisedManager names an off-ABI manager event: topic[0]'s symbol when it is one, and the topic count.
+func unrecognisedManager(e *events.Event) error {
+	name := "<no topic>"
+	if len(e.Topic) > 0 {
+		name = "<non-symbol topic>"
+		if sv, err := scval.Parse(e.Topic[0]); err == nil {
+			if s, err := scval.AsSymbol(sv); err == nil {
+				name = s
+			}
+		}
+	}
+	return fmt.Errorf("%w: topic %q with %d topics", ErrUnrecognisedManagerEvent, name, len(e.Topic))
+}
+
+// ManagerFields is one decoded position-manager event. Owner is topic[1] of a mint / burn (the holder at that event); Recipient is
 // a collect's payee; Liquidity (HasLiquidity) is set for increase / decrease, Amount0 / Amount1 (HasAmounts) for increase /
 // decrease / collect. The Has flags say the field was on the wire: an absent field is NULL, never a zero.
 type ManagerFields struct {

@@ -55,12 +55,16 @@ tick_upper)`, not a reserve row) are the projected surface. `init`,
 
 The position manager (`MainnetPositionManager`, `manager.go`) is a second
 role in the same gate. It holds the positions it opens on pools, so the
-pool rows name it as `owner`; its own `mint` / `burn` (owner in topic[1]),
+pool rows name it as `owner`. Its own `mint` / `burn` (topic[1] is the holder
+at that event, not necessarily the current one: the NFT is transferable),
 `increase_liquidity`, `decrease_liquidity` and `collect` go to
 `sushiswap_v3_manager_events`, keyed by `token_id`. The role is checked
 before the pool role, because both emit `mint`, `burn` and `collect`. The
 body must match the exact verified field set (`managerShapes`); any other
-body fails closed. Fixtures are lines in `testdata/manager_events.txt`.
+body fails closed. Every manager event is claimed, so one outside the seven
+verified shapes, such as a first NFT `transfer`, is a counted decode error
+naming its topic, not a silent drop. Fixtures are lines in
+`testdata/manager_events.txt`.
 
 ## Replay
 

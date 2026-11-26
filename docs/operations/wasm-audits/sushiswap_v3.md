@@ -1,9 +1,9 @@
 ---
 title: SushiSwap V3 WASM audit
 last_verified: 2026-11-26
-status: string-checked — factory + 58 pools (4 hashes) + manager (2 hashes, amount-anchored)
+status: string-checked — factory + the first 58 of 81 announced pools (4 hashes, lineage to 64,700,224) + manager (2 hashes, amount-anchored); pools announced after 64,116,662 not covered
 source: sushiswap_v3
-backfill_safe: true
+backfill_safe: false
 ---
 
 # SushiSwap V3 WASM audit
@@ -30,7 +30,8 @@ instance change), so install ledgers are exact.
 | role | contract | how the set is known |
 | --- | --- | --- |
 | factory | `CD3KRKGDRVWPXVB3VXLUMQKMX6XZ6Q2H334IVZD4XXNAMKSRVQL5GLYF` | `sushiswap_v3` gated registry (`internal/pipeline/gated_registry.go`) |
-| pool | 58 contracts | every `pool_created` event the factory has emitted, ledgers 61,487,379 – 64,116,662 |
+| pool | 58 contracts | every `pool_created` event the factory had emitted by the audit, ledgers 61,487,379 – 64,116,662. The factory has announced 81 pools as of ledger 65,676,216 (lake census 2026-11-26). The 23 later ones are not in this log: their hashes are unaudited here. Two of them are pools the manager acts on (`CAOAVZOU…`, `CBTOQ7X7…`). |
+| position manager | `CARTUL5AWDZYBSN7HUUJZSKCAKCIAKM7M54Z76G6KRYCK4XPR3OHUQZ4` | curated instance in the gated registry (`MainnetPositionManagers`) |
 
 Upgrades are factory-driven (`wasm_approved` on the factory, then
 per-pool `upgraded` / `migrated`), so pools move between hashes in cohorts.
@@ -205,6 +206,36 @@ Literals checked: `mint`, `burn`, `collect`, `upgraded`, `migrated`,
 `recipient`, `amount0`, `amount1` (run 2026-11-26 on the lake). The byte
 counts are the decoded ledger-entry XDR, not the bare WASM.
 
+Whole-history topic census of the manager (lake, 2026-11-26, ledgers
+61,487,383 – 65,682,021):
+
+| topic | topic count | events |
+| --- | --- | --- |
+| `collect` | 1 | 3,263 |
+| `increase_liquidity` | 1 | 1,905 |
+| `mint` | 2 | 1,880 |
+| `decrease_liquidity` | 1 | 1,778 |
+| `burn` | 2 | 1,472 |
+| `upgraded` | 1 | 1 |
+| `migrated` | 1 | 1 |
+
+No other topic has ever been emitted; in particular, no `transfer` or
+`approve`. A second string check of both code entries (same query shape,
+2026-11-26) nonetheless finds `transfer`, `approve`, `approve_for_all`,
+`transfer_from` and `owner_of` in both hashes. `transfer` and `approve`
+alone could be token-client calls, but `approve_for_all` and `owner_of`
+are NFT surface. So the position NFT is transferable: either no transfer
+has happened, or a transfer emits no event, and the lake's events cannot
+tell which. Consequences:
+
+- `owner` in `sushiswap_v3_manager_events` is the holder at the `mint` /
+  `burn`, not necessarily the current holder.
+- Any manager event outside the seven shapes above is a counted decode
+  error naming its topic (`ErrUnrecognisedManagerEvent`,
+  `TestManagerDecode_OffABITopicFailsLoud`), not an unmatched drop. The
+  first transfer event would be seen the day it happens. Its body shape
+  is not guessed.
+
 Amount anchors:
 
 - `dae1af1c…`: the `decrease_liquidity` at 61,487,425 carries the same
@@ -275,11 +306,16 @@ Manifest entry for each hash (`internal/wasmaudit/audited_wasm.json`):
 The four pool and factory hashes, plus the manager's two, are the audited
 set for `sushiswap_v3` in `audited_wasm.json`. The registry policy has been
 `BackfillPerWASM` since #2354, so a replay is admitted only over a range
-where every active hash is listed. Every hash this log has found on a
-`sushiswap_v3` contract is now attested, so the front matter
-`backfill_safe` is `true`. The gate still checks each contract's hashes
-at replay time, against the lake: a hash that appeared after this log's
-lineage queries is refused, not admitted.
+where every active hash is listed.
+
+This log covers the factory, the first 58 pools (lineage to ledger
+64,700,224) and the manager. It does not cover the 23 pools announced
+after ledger 64,116,662, so the front matter `backfill_safe` stays
+`false`. What protects a replay is the gate, not this flag. The gate
+checks every active hash of every gated contract against the lake at run
+time, and refuses an unaudited one. Run `stellarindex-ops wasm-drift`
+first as the pre-check: a later pool on an unaudited hash shows up there
+before a replay refuses.
 
 Re-audit trigger: `wasm-drift` reports a `sushiswap_v3` contract on a
 hash not listed here — a new factory approval, a pool upgrade, or a

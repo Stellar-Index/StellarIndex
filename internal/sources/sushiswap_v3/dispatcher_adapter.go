@@ -2,7 +2,6 @@ package sushiswap_v3
 
 import (
 	"errors"
-	"fmt"
 	"slices"
 	"strconv"
 	"sync"
@@ -101,10 +100,10 @@ func (d *Decoder) isManager(contractID string) bool {
 	return ok
 }
 
-// Matches implements [dispatcher.Decoder], gating on contract identity, not topic bytes (ADR-0035), since topics are generic one-element Symbols and any contract may emit a Map under `swap`: `pool_created` matches only from [MainnetFactories] (else a contract could seed itself with chosen token identities), a position-manager topic only from a manager, every other event only from a registered pool; an un-seeded real pool fails closed into a visible gap.
+// Matches implements [dispatcher.Decoder], gating on contract identity, not topic bytes (ADR-0035), since topics are generic one-element Symbols and any contract may emit a Map under `swap`: `pool_created` matches only from [MainnetFactories] (else a contract could seed itself with chosen token identities), every manager event (an off-ABI one fails Decode loudly), every other event only from a registered pool; an un-seeded real pool fails closed into a visible gap.
 func (d *Decoder) Matches(ev events.Event) bool {
 	if d.isManager(ev.ContractID) {
-		return classifyManager(&ev) != ""
+		return true
 	}
 	kind := classify(&ev)
 	if kind == "" {
@@ -121,7 +120,7 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	if d.isManager(ev.ContractID) {
 		kind := classifyManager(&ev)
 		if kind == "" {
-			return nil, fmt.Errorf("%w: manager topic shape not recognised", ErrMalformedPayload)
+			return nil, unrecognisedManager(&ev)
 		}
 		return emitManager(ev, kind)
 	}

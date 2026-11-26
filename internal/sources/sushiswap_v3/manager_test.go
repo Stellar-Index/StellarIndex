@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -16,7 +17,9 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
+	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
 type managerFixture struct {
@@ -360,6 +363,42 @@ func TestManagerMatches_ForeignContractRejected(t *testing.T) {
 	}
 }
 
+// TestManagerDecode_OffABITopicFailsLoud: the manager's WASM carries NFT transfer / approve code that has never emitted an
+// event. The first such event (whatever its shape, which is not guessed here), or any other topic outside the verified
+// seven, is claimed and fails as a decode error naming its topic, which DecodeRow reports as matched-but-failed (counted
+// per source by the projector and dispatcher) rather than an unmatched event nobody sees.
+func TestManagerDecode_OffABITopicFailsLoud(t *testing.T) {
+	d := managerDecoder()
+	body := scMap(t, "token_id", scU32(7))
+	owner := "AAAAEgAAAAAAAAAAlc26trHUlkrHY5wXV1hadvxxhOch+B5n9PXGV9eNiYA="
+	for _, name := range []string{"transfer", "approve", "approve_for_all", "transfer_from", "set_approval_for_all"} {
+		for n := 1; n <= 3; n++ {
+			topics := []string{scval.MustEncodeSymbol(name)}
+			for len(topics) < n {
+				topics = append(topics, owner)
+			}
+			assertUnrecognisedManager(t, d, name, topics, body)
+		}
+	}
+	assertUnrecognisedManager(t, d, "<non-symbol topic>", []string{owner}, body)
+	assertUnrecognisedManager(t, d, "<no topic>", nil, body)
+}
+
+// assertUnrecognisedManager requires a manager event to be claimed, yield no row, and fail with ErrUnrecognisedManagerEvent
+// naming want, both from Decode and through dispatcher.DecodeRow (the path the projector counts).
+func assertUnrecognisedManager(t *testing.T, d *Decoder, want string, topics []string, body string) {
+	t.Helper()
+	ev := managerEvent(MainnetPositionManager, topics, body)
+	out, matched, err := dispatcher.DecodeRow(SourceName, d, ev, slog.New(slog.DiscardHandler))
+	if !matched || len(out) != 0 || !errors.Is(err, ErrUnrecognisedManagerEvent) {
+		t.Errorf("%s/%d topics: matched=%v out=%v err=%v, want a matched decode error", want, len(topics), matched, out, err)
+		return
+	}
+	if !strings.Contains(err.Error(), strconv.Quote(want)) {
+		t.Errorf("%s: error %q does not name the topic", want, err)
+	}
+}
+
 // TestManagerMatches_PoolAndManagerRolesDoNotCross: same-named topics are told apart by contract role, both ways, even when the
 // manager is also in the warmed registry (the curated-set warm puts it there).
 func TestManagerMatches_PoolAndManagerRolesDoNotCross(t *testing.T) {
@@ -368,19 +407,27 @@ func TestManagerMatches_PoolAndManagerRolesDoNotCross(t *testing.T) {
 	inc := scMap(t, "amount0", scU128(0, 5), "amount1", scU128(0, 6), "liquidity", scU128(0, 1), "token_id", scU32(7))
 
 	for name, ev := range map[string]events.Event{
-		"pool increase_liquidity":   managerEvent(mainPool, []string{TopicSymbolIncreaseLiquidity}, inc),
-		"pool decrease_liquidity":   managerEvent(mainPool, []string{TopicSymbolDecreaseLiquidity}, inc),
-		"pool two-topic mint":       managerEvent(mainPool, []string{TopicSymbolMint, owner}, scMap(t, "token_id", scU32(7))),
-		"manager one-topic mint":    managerEvent(MainnetPositionManager, []string{TopicSymbolMint}, goldenMint),
-		"manager one-topic burn":    managerEvent(MainnetPositionManager, []string{TopicSymbolBurn}, goldenBurn),
-		"manager swap":              managerEvent(MainnetPositionManager, []string{TopicSymbolSwap}, goldenSwapSellToken0),
-		"manager pool_created":      managerEvent(MainnetPositionManager, []string{TopicSymbolPoolCreated}, goldenPoolCreated),
-		"manager init":              managerEvent(MainnetPositionManager, []string{TopicSymbolInit}, goldenMint),
-		"manager two-topic collect": managerEvent(MainnetPositionManager, []string{TopicSymbolCollect, owner}, inc),
+		"pool increase_liquidity": managerEvent(mainPool, []string{TopicSymbolIncreaseLiquidity}, inc),
+		"pool decrease_liquidity": managerEvent(mainPool, []string{TopicSymbolDecreaseLiquidity}, inc),
+		"pool two-topic mint":     managerEvent(mainPool, []string{TopicSymbolMint, owner}, scMap(t, "token_id", scU32(7))),
 	} {
 		if d.Matches(ev) {
 			t.Errorf("%s was claimed", name)
 		}
+	}
+	// A pool-ABI topic, or a pool-shaped one, from the manager is not a pool event; it is an off-ABI manager event.
+	for _, tc := range []struct {
+		topic  string
+		topics []string
+	}{
+		{EventMint, []string{TopicSymbolMint}},
+		{EventBurn, []string{TopicSymbolBurn}},
+		{EventSwap, []string{TopicSymbolSwap}},
+		{EventPoolCreated, []string{TopicSymbolPoolCreated}},
+		{EventInit, []string{TopicSymbolInit}},
+		{EventCollect, []string{TopicSymbolCollect, owner}},
+	} {
+		assertUnrecognisedManager(t, d, tc.topic, tc.topics, inc)
 	}
 
 	var collect managerFixture

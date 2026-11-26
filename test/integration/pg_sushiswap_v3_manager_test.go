@@ -107,6 +107,60 @@ func TestSushiswapV3ManagerEvents_SinkRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSushiswapV3ManagerEvents_GenerationGuard: the same event re-delivered by a corrected gen-1 re-derive replaces the
+// live gen-0 row, and a later gen-0 replay of it cannot revert the correction.
+func TestSushiswapV3ManagerEvents_GenerationGuard(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	e := timescale.SushiswapV3ManagerEvent{
+		Manager: sushiswap_v3.MainnetPositionManager, Ledger: 65_682_016,
+		LedgerCloseTime: time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC),
+		TxHash:          mustHex(t, strings.Repeat("cd", 32)), EventIndex: 1, Kind: sushiswap_v3.EventDecreaseLiquidity,
+		TokenID: 1877, Liquidity: "197910588447585", Amount0: "1258588261737", Amount1: "1073002473137",
+	}
+	read := func() (string, int64) {
+		var a string
+		var g int64
+		if err := store.DB().QueryRowContext(ctx, `
+			SELECT amount_0::text, derive_generation FROM sushiswap_v3_manager_events
+			WHERE manager = $1 AND ledger = $2 AND event_index = $3`, e.Manager, e.Ledger, e.EventIndex).Scan(&a, &g); err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		return a, g
+	}
+
+	if err := store.InsertSushiswapV3ManagerEvent(ctx, e); err != nil {
+		t.Fatalf("gen0 insert: %v", err)
+	}
+	store.SetDeriveGeneration(1)
+	t.Cleanup(func() { store.SetDeriveGeneration(0) })
+	corrected := e
+	corrected.Amount0 = "999"
+	if err := store.InsertSushiswapV3ManagerEvent(ctx, corrected); err != nil {
+		t.Fatalf("gen1 insert: %v", err)
+	}
+	if a, g := read(); a != "999" || g != 1 {
+		t.Fatalf("after gen1 write amount_0/gen = %s/%d, want 999/1", a, g)
+	}
+
+	store.SetDeriveGeneration(0)
+	if err := store.InsertSushiswapV3ManagerEvent(ctx, e); err != nil {
+		t.Fatalf("gen0 replay: %v", err)
+	}
+	if a, g := read(); a != "999" || g != 1 {
+		t.Errorf("after gen0 replay amount_0/gen = %s/%d, want 999/1 — gen0 reverted the corrected row", a, g)
+	}
+}
+
 func mustHex(t *testing.T, s string) []byte {
 	t.Helper()
 	b, err := hex.DecodeString(s)
