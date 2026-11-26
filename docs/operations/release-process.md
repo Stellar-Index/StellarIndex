@@ -149,6 +149,8 @@ A failure found mid-release wastes a tag and forces a `.N+1` cut.
    considering rollback.
 4. **Rollback** if needed (next section): SEV-2 minimum and a postmortem
    in `docs/operations/postmortems/`.
+5. **Publish the docs**: `gh workflow run docs-deploy.yml --ref main`. It is
+   manual, and when it is skipped the public API reference drifts from the repo.
 
 ## Rollback
 

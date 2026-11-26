@@ -12,6 +12,7 @@ import {
   buildFetchData,
   buildFetchEnvelope,
   buildFetchPriceBatch,
+  buildWarmUp,
   failBuild,
 } from '@/lib/buildFetch';
 import {
@@ -63,7 +64,7 @@ import { ChartPanel } from './ChartPanel';
 import { LiveAssetPrice } from './LiveAssetPrice';
 import { PriceSparklines } from './PriceSparklines';
 import { IssuerPanel } from './IssuerPanel';
-import { LiquidityTabPanel } from './LiquidityTabPanel';
+import { LiquidityTabPanel, poolsForAssetPath } from './LiquidityTabPanel';
 import { HoldersTabPanel } from './HoldersTabPanel';
 import { TrustlineHistoryPanel } from './TrustlineHistoryPanel';
 import { AssetEntryChangesPanel } from './AssetEntryChangesPanel';
@@ -174,6 +175,7 @@ export async function generateStaticParams() {
       out.push({ slug: assetId });
     }
   }
+  await warmAssetReads(cache.byAssetId.keys());
   return out;
 }
 
@@ -565,10 +567,25 @@ async function resolveVerifiedListingCoin(
 export async function fetchAssetDetail(
   assetId: string,
 ): Promise<{ detail: AssetDetail | null; degraded: boolean }> {
-  const env = await buildFetchEnvelope<AssetDetail>(
-    `/v1/assets/${encodeURIComponent(assetId)}`,
-  );
+  const env = await buildFetchEnvelope<AssetDetail>(assetDetailPath(assetId));
   return { detail: env.data, degraded: env.degraded === true };
+}
+
+function assetDetailPath(assetId: string): string {
+  return `/v1/assets/${encodeURIComponent(assetId)}`;
+}
+
+// The API's per-asset response cache holds ≈580 assets' keys: warming more
+// would evict the first warmed answers before their pages render.
+const WARMUP_MAX_ASSETS = 500;
+
+// Ask each listed asset's detail and pools read once before the pages render,
+// so a cold answer is already filling when its page asks.
+async function warmAssetReads(assetIds: Iterable<string>): Promise<void> {
+  const ids = [...assetIds].slice(0, WARMUP_MAX_ASSETS);
+  await buildWarmUp(
+    ids.flatMap((id) => [assetDetailPath(id), poolsForAssetPath(id)]),
+  );
 }
 
 /**
