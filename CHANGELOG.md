@@ -20,6 +20,27 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.141.0] - 2026-11-26
+
+Tested against Stellar protocol 27. One additive migration, 0238 (schema version 238): the new table `sushiswap_v3_manager_events`, applied automatically by the deploy. No `pkg/*` break (no change under `pkg/`). ClickHouse DDL changed: `deploy/clickhouse/lending_interest.sql` adds the columns `default_loss`, `default_versions`, `interest_drawn`, `gulped` and `reconcile_backstop_loss` to `stellar.lending_interest_hourly` (`si-apply-scope: operator`). Operators: apply it on every host, test nets included, BEFORE the deploy, since a new binary against a table without the columns fails the whole insert and writes nothing. After the deploy, re-derive lending interest from ledger 51499541 and run the full proof (derive revision 4); rows of an older revision prove INCOMPLETE until then. Run the Sushi position-manager catch-up, `projected-rebuild -source sushiswap_v3 -from 61487383 -only-kinds sushiswap_v3.manager`, as a dry run first and then with `-write` and `-to` pinned to the dry run's value; until it runs, `sushiswap_v3` completeness drops and the manager target reports a leading gap. New ticket alert `stellarindex_lending_interest_unexplained_versions` fires while a proof run still counts versions no event explains, which includes the 8 Blend V2 `defaulted_debt` versions until the re-derive completes.
+
+### Added
+
+- **sushiswap_v3:** migration 0238 adds `sushiswap_v3_manager_events` (hypertable, compression, no retention): kind, token id, owner or recipient, liquidity and both amounts, with a check per kind. The position manager's `mint`, `burn`, `increase_liquidity`, `decrease_liquidity` and `collect` events decode into it, about 10,300 since ledger 61,487,383; `upgraded` and `migrated` are recognised and write nothing. The manager is a curated contract of the `sushiswap_v3` gate, matched by exact id before the pool registry, so a pool event and a manager event of the same name are told apart by contract identity. Any other topic or shape from the manager is a counted decode error naming the topic. The owner is the holder at mint or burn: both manager code hashes have transfer and approve functions, so it is not necessarily the current holder. The audit log covers 58 of the 81 announced pools (#4419).
+- **blend:** `blend.DefaultedBRate` reproduces a V2 `defaulted_debt` write-off exactly (accrue, then subtract `ceil(ceil(d_tokens * d_rate / S) * S / b_supply)` per event, floored at 0), matching all 8 production versions from lake XDR. `stellar.lending_interest_hourly` gains `default_loss` and `default_versions`; `supply_residual` minus `default_loss` is the unexplained supplier residual. Alert `stellarindex_lending_interest_unexplained_versions` is new (#4416).
+- **blend:** derive revision 4 stores each explained version's event amounts by cause in `interest_drawn` (at most 0), `gulped` (at least 0) and `reconcile_backstop_loss` (at most 0), in reserve base units, so `residual_explained` equals their sum exactly. An event whose sign its cause cannot produce explains nothing. Each column covers explained versions only and is a lower bound; attributed V1 fills, causes inside unexplained versions and events netting to zero in a reconciling version are not classified (#4422).
+
+### Changed
+
+- **blend:** a V2 `defaulted_debt` cut of the suppliers' `b_rate` is explained, and recorded as supplier loss outside interest, only when the stored `b_rate` equals accrual followed by the pool's write-off rule for a single ordered version whose transaction has no undecodable event. Anything else stays unexplained, as do BLNT `defaulted_debt` and V1 retroactive `bstop_rate`. The derive revision rises to 3 and then 4, and rows of an older revision prove INCOMPLETE rather than unexplained (#4416, #4422).
+- **aggregate:** the quote-surface check that refuses a pivot leg for triangulation and composite corroboration compares stablecoin and real-USD prints per time slot (window/24, at least 1 minute) rather than as two whole-window VWAPs, so a price trend under shifting volume no longer reads as a de-peg. It decides alone only when eligible slots hold at least 95 % of stablecoin volume and both surfaces clear the volume floors; otherwise the verdict is the larger of the aligned and whole-window gaps. Replayed over 697 rolling 24h production windows, false alarms fall from 34 to 7. All arithmetic is exact `big.Int`/`big.Rat`; `stellarindex_aggregator_quote_surface_bps` keeps its name and sign, and the `leg_quote_surface` log field gains the alignment and coverage (#4421).
+- **redstone:** the `earnUSDC_PPS_FUNDAMENTAL/USD` feed, published since 2026-10-30, is on a kept-raw list: it writes the same raw row as before, no longer counts as an unknown symbol, and never reaches VWAP, a pair leg or a supply key. `oracle_updates` has no feed dimension, so mapping it would interleave two prices of the earnUSDC vault share in one series (#4420).
+
+### Fixed
+
+- **storage:** a rollup partition holding more than one build is no longer served. After a restart inside `old_parts_lifetime` (480 s) of a `REPLACE PARTITION`, the replaced parts came back beside the new ones and `account_op_type_counts` partition 65 served doubled counts for about 35 minutes. The counts rollups (op types, movements) now read such a partition from the source with `FINAL`, and the job replaces it without `-shrink-ok`; a genuine shrink in a single build still refuses. The `contracts_census_daily` directory query takes one row per (day, contract) before summing. `ErrCountsShrink` no longer says the lake lost rows. The restart runbook gains a pre-restart and a post-restart check. Open: `asset_stats_daily` has the same exposure and no served reader (#4417).
+- **indexer:** `TestRecordHashdb_DurationExcludesMarshal` reads a fake clock instead of sleeping, so it no longer fails on a loaded machine (#4418).
+
 ## [v0.140.0] - 2026-11-26
 
 Tested against Stellar protocol 27. One additive migration, 0237 (schema version 237): the new empty table `aquarius_pools`, applied automatically by the deploy. No `pkg/*` break (no change under `pkg/`). No ClickHouse DDL change, so no operator DDL. Operators: the stored `aquarius_liquidity` rows for the 63 concentrated Aquarius pools (ledger 62,339,683 onward) keep their old, mis-ordered amounts until the liquidity-only `projected-rebuild -only-kinds aquarius.liquidity` procedure in `docs/operations/runbooks/projector.md` is run; the decoder fix alone does not rewrite them. No served route reads those amounts or shares, and pool reserves and TVL are unchanged.
@@ -109,22 +130,3 @@ Tested against Stellar protocol 27. No migrations (schema version stays 236). No
 - **api:** an old but healthy cached explorer page is flagged `stale` only, not `degraded`; `degraded` is set for a failed, refused or overrunning refresh, a provisional payload or a failed panel. This covers contract detail, holders, the contracts directory, contract stats and the operations directory; price, supply, market cap, TVL and balance caches are unchanged (#4382).
 - **lending:** a `lending_state` replay no longer lets a concurrent interest run seed a reserve from a row before the deleted range, which counted one hour's rate movement twice (#4377).
 - **lending:** the interest re-derive delete cutoff uses millisecond server time, matching `derived_at` (#4383).
-
-## [v0.136.0] - 2026-11-25
-
-Tested against Stellar protocol 27. No migrations (schema version stays 236). No `pkg/*` break. New ClickHouse table for operators on an EXISTING host: `deploy/clickhouse/lending_interest.sql` creates the empty `stellar.lending_interest_hourly`; nothing writes or reads it yet, so applying it can wait for the release that does.
-
-### Added
-
-- **blnt:** `DecodeProtocolFees` reads a pool's `ProtocolFees` entry and `AccrueBetween` recomputes the interest between two consecutive stored versions of a reserve including the protocol fee taken before the backstop share, in exact integers. The rule (fee rate 20000 at 7 decimals, floor with a carried remainder) is inferred from chain data, since the contract source is not public; it reproduces every stored version of the three mainnet pools except one transaction, which it reports as a residual. Nothing serves it yet (#4365).
-- **lake:** `stellar.lending_interest_hourly` holds per pool, asset and hour the gross interest, backstop share, supplier amounts and protocol fee as Int256 sums, with counts of versions that did not reconcile and their residuals. It is empty: no writer exists yet (#4368, #4369).
-
-### Changed
-
-- **explorer:** the static build prices `/convert` pages from one `/v1/price/batch` per quote instead of one request per page, reads a pair's 24h volume from the markets listing instead of calling `/v1/pairs` per pair page, and routes embed pages through the shared build fetch. On production the build's batch requests fell from about 1,280 per 20 minutes to 182 per build and its `/v1/pairs` calls from about 700 to 3. The build prints its request count per route after export (#4366).
-- **explorer:** the build sends `/v1/price/batch` requests one at a time. Four in flight put 64 row workers on a database pool of 25 shared with live price reads, and 14 of 182 took over 200 ms (#4372).
-
-### Fixed
-
-- **supply:** a second concentrated-liquidity pool (`CBFY4Q26…SSZ2OFQ`) is judged a non-token. Its one-topic `mint` and `burn` carry a u128 liquidity `amount`, which the supply classifier skipped under an alerting reason; the contract emits no transfer, so no token supply was lost (#4371).
-- **test:** the holders stale-bound test holds the refresh while it asserts the stale flag; an instant stub refresh could finish first and the fresh value was, correctly, served clean (#4367).

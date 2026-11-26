@@ -616,20 +616,22 @@ func TestPriceTipStream_StalledDivergenceLookupDoesNotDelayHeaders(t *testing.T)
 
 // TestPriceTipStream_DivergenceBudgetDiscriminatesAtItsEdge brackets [tipStreamDivergenceBudget] on a single-spelling
 // base: inside the budget the verdict reaches the wire; outside it the event goes out on time unchecked. Both halves
-// matter, or "always unchecked" / "never bound" would pass. Budget is 300ms with production margins (100ms in, 200ms out).
+// matter, or "always unchecked" / "never bound" would pass. The edge is asserted on the deadline the lookup is handed
+// (bounded by clock readings taken either side of its creation), not by racing a sleep against the budget, so a loaded
+// scheduler cannot move a case across the edge.
 func TestPriceTipStream_DivergenceBudgetDiscriminatesAtItsEdge(t *testing.T) {
 	const budget = 300 * time.Millisecond
 	for _, tc := range []struct {
 		name        string
-		delay       time.Duration
+		stall       bool
 		wantChecked bool
 		wantWarning bool
 	}{
-		{"inside the budget keeps the verdict", budget - 100*time.Millisecond, true, true},
-		{"outside the budget drops the verdict", budget + 200*time.Millisecond, false, false},
+		{"inside the budget keeps the verdict", false, true, true},
+		{"outside the budget drops the verdict", true, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			l := &timedLooker{delay: tc.delay, firing: true, checked: true}
+			l := &timedLooker{stall: tc.stall, firing: true, checked: true}
 			url := tipStreamServerWithLooker(t, l, budget)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -660,9 +662,13 @@ func TestPriceTipStream_DivergenceBudgetDiscriminatesAtItsEdge(t *testing.T) {
 				fmt.Sprintf(`"divergence_warning":%t`, tc.wantWarning),
 			} {
 				if !strings.Contains(data, want) {
-					t.Errorf("a %v lookup against a %v budget: event missing %q: %s",
-						tc.delay, budget, want, data)
+					t.Errorf("stall=%v against a %v budget: event missing %q: %s",
+						tc.stall, budget, want, data)
 				}
+			}
+			if ok, lo, hi, got := l.deadlineWithin(start, budget); !ok {
+				t.Errorf("lookup deadline %v outside [%v, %v] — the lookup was not bounded by exactly the %v budget",
+					got, lo, hi, budget)
 			}
 			if headers > 4*time.Second {
 				t.Errorf("headers took %v, want < 4s", headers)
@@ -1071,25 +1077,41 @@ func tipStreamServerWithLooker(t *testing.T, div v1.DivergenceLooker, budget tim
 // pre-flight path between the client's request and the response headers.
 const tipStreamURL = "/v1/price/tip/stream?asset=crypto:BTC&quote=fiat:USD&window_seconds=60"
 
-// timedLooker answers after a fixed delay, honouring its context, to probe the budget EDGE: a gate reporting
-// "unchecked" whenever the lookup is not instant would pass every stall test while discarding healthy-but-loaded reads.
+// timedLooker probes the budget EDGE without racing the wall clock: it answers at once, or (stall) blocks until its context
+// expires, and records the context deadline and its own entry time so the test can bound the applied budget exactly. A
+// gate reporting "unchecked" whenever the lookup is not instant would pass every stall test while discarding healthy reads.
 type timedLooker struct {
-	delay   time.Duration
+	stall   bool
 	firing  bool
 	checked bool
 	calls   atomic.Int32
+
+	mu       sync.Mutex
+	entered  time.Time
+	deadline time.Time
 }
 
 func (l *timedLooker) DivergenceFiringFor(ctx context.Context, _, _ canonical.Asset) (firing, checked bool, window time.Duration, err error) {
+	entered := time.Now()
+	deadline, _ := ctx.Deadline()
+	l.mu.Lock()
+	l.entered, l.deadline = entered, deadline
+	l.mu.Unlock()
 	l.calls.Add(1)
-	t := time.NewTimer(l.delay)
-	defer t.Stop()
-	select {
-	case <-t.C:
+	if !l.stall {
 		return l.firing, l.checked, 0, nil
-	case <-ctx.Done():
-		return false, false, 0, ctx.Err()
 	}
+	<-ctx.Done()
+	return false, false, 0, ctx.Err()
+}
+
+// deadlineWithin reports whether the lookup deadline sits in the interval it must: after reqStart+budget (the context was
+// created after the request began) and no later than the lookup's entry+budget (it was created before the call).
+func (l *timedLooker) deadlineWithin(reqStart time.Time, budget time.Duration) (ok bool, lo, hi, got time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	lo, hi, got = reqStart.Add(budget), l.entered.Add(budget), l.deadline
+	return !got.Before(lo) && !got.After(hi), lo, hi, got
 }
 
 // hubTipStreamServer wires the PRODUCTION shape: a Hub, so recurring frames come from the shared runSharedTipProducer
