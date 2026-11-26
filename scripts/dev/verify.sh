@@ -627,6 +627,7 @@ lane_d() { # everything else
     # Repo-gates self-tests need a verify.sh twin, or check-verify-parity
     # goes red on main for everyone.
     echo "=== Public-dataset drift decision-core self-test ===" && ./scripts/ci/check-public-dataset-test.sh
+    echo "=== Directory-pin age self-test ===" && ./scripts/ci/check-directory-pin-test.sh
     echo "=== Replay-plan tripwire self-test ===" && ./scripts/ci/lint-replay-plan-test.sh
     echo "=== Verdict helpers self-test (oneshot waits, sentinel gates) ===" && bash scripts/ops/ops-verdict-test.sh
     echo "=== ClickHouse maintenance + Phase-D failure-path self-test ===" && bash scripts/ops/ch-maintenance-fail-closed-test.sh
