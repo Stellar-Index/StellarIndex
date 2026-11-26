@@ -17,8 +17,8 @@ const MainnetPositionManager = "CARTUL5AWDZYBSN7HUUJZSKCAKCIAKM7M54Z76G6KRYCK4XP
 // PositionManagerGenesisLedger is the manager's first event (a `mint` + `increase_liquidity`).
 const PositionManagerGenesisLedger uint32 = 61_487_383
 
-// MainnetPositionManagers is the live manager-role set; empty until the manager's WASM hashes are audited.
-var MainnetPositionManagers []string
+// MainnetPositionManagers is the live manager-role set, also the gated registry's curated set for this source.
+var MainnetPositionManagers = []string{MainnetPositionManager}
 
 // Position-manager topic names beyond the pool set it shares (`mint`, `burn`, `collect`, `upgraded`, `migrated`).
 const (

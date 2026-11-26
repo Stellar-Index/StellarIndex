@@ -117,6 +117,13 @@ decoder identifies nothing — see "Gating" below.
 | pool | `swap` | `{amount0 i128, amount1 i128, liquidity u128, recipient, sender, sqrt_price_x96 u256, tick i32}` | **`trades`** |
 | pool | `mint`, `burn`, `collect` | position lifecycle | projected to `sushiswap_v3_position_events` |
 | pool | `init`, `upgraded`, `migrated` | pool lifecycle | recognized, projects zero rows |
+| position manager | `mint`, `burn` (topics: symbol, owner Address) | `{token_id u32}` | **`sushiswap_v3_manager_events`** |
+| position manager | `increase_liquidity`, `decrease_liquidity` | `{amount0 u128, amount1 u128, liquidity u128, token_id u32}` | **`sushiswap_v3_manager_events`** |
+| position manager | `collect` | `{amount0 u128, amount1 u128, recipient Address, token_id u32}` | **`sushiswap_v3_manager_events`** |
+| position manager | `upgraded`, `migrated` | lifecycle | recognized, projects zero rows |
+
+The position manager's `mint` and `burn` are the only two-element topics
+in the protocol; the second element is the position holder.
 
 Whole-history counts (ledgers 61,487,379 → 64,276,390, swept
 2026-09-05):
@@ -190,6 +197,11 @@ Per ADR-0035, `Matches()` therefore keys on contract identity only:
   This is the trust root. Without it any contract could announce a pool
   with token identities of its choosing, register itself, and have its
   own swaps recorded as real trades.
+- A position-manager topic is accepted **only** from
+  `sushiswap_v3.MainnetPositionManagers`, and that role is checked before
+  the pool role: the manager and the pools share `mint`, `burn` and
+  `collect`, so the emitter's role, not the topic, picks the body schema.
+  A manager is never decoded as a pool, nor a pool as a manager.
 - Every other event is accepted **only** from a registered pool.
 
 The registry is seeded four ways, all rooted at the factory:
@@ -237,6 +249,34 @@ amounts as `NUMERIC`; `collect` has no liquidity delta (NULL). Token
 identities come from the pool registry, and an unmapped pool fails
 closed like a swap. `init`, `upgraded` and `migrated` stay recognized
 and project zero rows.
+
+### Position manager
+
+`CARTUL5AWDZYBSN7HUUJZSKCAKCIAKM7M54Z76G6KRYCK4XPR3OHUQZ4` (first event
+ledger 61,487,383; upgraded at 61,594,920, migrated at 61,594,924) opens
+positions on the pools in its own name, so a pool-side
+`sushiswap_v3_position_events` row it drove has the manager as `owner`.
+Its own events go to `sushiswap_v3_manager_events` (migration 0238), one
+row per event, keyed by `token_id`:
+
+- `mint` / `burn` link a token id to its holder (`owner`, from topic[1]).
+- `increase_liquidity` / `decrease_liquidity` carry the liquidity delta and
+  both token amounts; `collect` carries the amounts and the `recipient`.
+- No manager body names the pool. The pool is the one whose
+  `sushiswap_v3_position_events` row shares the manager event's
+  `(ledger, tx_hash)` and has the manager as `owner`.
+- No manager event announces an NFT transfer, so a holder change after
+  `mint` is not visible here.
+
+The decoder takes only the exact field sets above (all from post-upgrade
+lake samples, `internal/sources/sushiswap_v3/testdata/manager_events.txt`).
+Any other body is a counted decode error, never a guessed row. The
+pre-upgrade shape (before 61,594,920) has not been verified yet.
+
+Nothing serves these rows yet. A per-position route would read
+`sushiswap_v3_manager_events` by `(manager, token_id)` for the holder
+and movements, and join `sushiswap_v3_position_events` on
+`(ledger, tx_hash)` for the pool and tick range.
 
 ## References
 

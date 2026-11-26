@@ -178,6 +178,48 @@ ledger:
 
 Every pool is on `003710b3…` at its last instance change.
 
+## Position manager — NOT YET AUDITED
+
+`CARTUL5AWDZYBSN7HUUJZSKCAKCIAKM7M54Z76G6KRYCK4XPR3OHUQZ4` (contract id
+`233a2fa0b0f380c9bf3d289cc942028480299f67799ff8de54702572ef8edc7a`) is
+gated as the `sushiswap_v3` position-manager role. It emitted `upgraded`
+at ledger 61,594,920 and `migrated` at 61,594,924, so at least two hashes
+are expected. None is in `audited_wasm.json` yet: `wasm-drift` reports the
+manager as unaudited, and a `sushiswap_v3` replay gate refuses, until they
+are.
+
+Lineage:
+
+```sql
+SELECT contract_hash, wasm_hash, min(ledger_seq), max(ledger_seq), count()
+FROM stellar.contract_instance_changes
+WHERE contract_hash = '233a2fa0b0f380c9bf3d289cc942028480299f67799ff8de54702572ef8edc7a'
+GROUP BY contract_hash, wasm_hash ORDER BY 3;
+```
+
+Literals to string-check per hash (query 4 above): `mint`, `burn`,
+`collect`, `upgraded`, `migrated`, `increase_liquidity`,
+`decrease_liquidity`, `token_id`, `liquidity`, `recipient`.
+
+| wasm_hash | role | first seen | last instance change | literals | body shape |
+| --- | --- | --- | --- | --- | --- |
+| _from the lineage query_ | position_manager | | | | pre-upgrade: unverified |
+| _from the lineage query_ | position_manager | | | | post-upgrade: verified from lake samples (`testdata/manager_events.txt`) |
+
+Manifest entry for each hash (`internal/wasmaudit/audited_wasm.json`):
+
+```json
+"<wasm_hash>": {
+  "sources": ["sushiswap_v3"],
+  "role": "position_manager",
+  "audited": "<YYYY-MM-DD>",
+  "doc": "docs/operations/wasm-audits/sushiswap_v3.md"
+}
+```
+
+Do not add the pre-upgrade hash until a body sampled below 61,594,920
+decodes under the verified shape, or the decoder is extended for it.
+
 ## Decision
 
 The four hashes above are the audited set for `sushiswap_v3` in

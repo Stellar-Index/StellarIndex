@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math/big"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -322,10 +323,18 @@ func TestManagerGatedContractSet(t *testing.T) {
 	}
 }
 
-// TestNewDecoder_ManagerNotLiveUntilAudited pins the shipped state: the manager role is empty, so production ignores it.
-func TestNewDecoder_ManagerNotLiveUntilAudited(t *testing.T) {
+// TestNewDecoder_ManagerIsLive: the production decoder gates the manager in, decodes its events and prefilters on it.
+func TestNewDecoder_ManagerIsLive(t *testing.T) {
+	d := NewDecoder()
 	fx := loadManagerFixtures(t)[0]
-	if NewDecoder().Matches(managerEvent(MainnetPositionManager, fx.topics, fx.data)) {
-		t.Fatal("the production decoder matched a manager event before its WASM hashes are audited")
+	ev := managerEvent(MainnetPositionManager, fx.topics, fx.data)
+	if !d.Matches(ev) {
+		t.Fatal("the production decoder does not match a position-manager event")
+	}
+	if out, err := d.Decode(ev); err != nil || len(out) != 1 {
+		t.Fatalf("Decode = %v, %v; want one ManagerEvent", out, err)
+	}
+	if !slices.Contains(d.GatedContractSet(), MainnetPositionManager) {
+		t.Fatal("the manager is missing from the lake prefilter set")
 	}
 }

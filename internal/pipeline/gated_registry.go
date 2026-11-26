@@ -96,9 +96,11 @@ var gatedSources = map[string]GatedMeta{
 	sushiswap_v3.SourceName: {
 		// Factory-anchored gate (ADR-0035 mechanism 1): pool_created announces each pool and its token identities.
 		// MainnetPools is the cold-start trust root; this entry adds the warm and live-upsert hook so later pools survive a restart.
+		// CuratedSet is the position manager, which no factory announces; the decoder gives it its own role by exact identity.
 		Factories:   sushiswap_v3.MainnetFactories,
 		CreationSym: sushiswap_v3.EventPoolCreated,
 		Genesis:     sushiswap_v3.FactoryGenesisLedger,
+		CuratedSet:  sushiswap_v3.MainnetPositionManagers,
 		NewDecoder: func(opts ...contractid.Option) dispatcher.Decoder {
 			return sushiswap_v3.NewDecoder(opts...)
 		},

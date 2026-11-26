@@ -95,6 +95,9 @@ func TestRegistration_GatedRegistryCarriesTheFactory(t *testing.T) {
 	if meta.Genesis != sushiswap_v3.FactoryGenesisLedger {
 		t.Errorf("genesis = %d, want %d", meta.Genesis, sushiswap_v3.FactoryGenesisLedger)
 	}
+	if !slices.Equal(meta.CuratedSet, sushiswap_v3.MainnetPositionManagers) || len(meta.CuratedSet) == 0 {
+		t.Errorf("curated set = %v, want the position managers %v", meta.CuratedSet, sushiswap_v3.MainnetPositionManagers)
+	}
 	if meta.NewDecoder == nil {
 		t.Fatal("no NewDecoder — the genesis-seed CLI cannot drive this source")
 	}

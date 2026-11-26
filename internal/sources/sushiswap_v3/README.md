@@ -53,6 +53,15 @@ carried; nothing floats them.
 tick_upper)`, not a reserve row) are the projected surface. `init`,
 `upgraded` and `migrated` are gated and recognized, and project zero rows.
 
+The position manager (`MainnetPositionManager`, `manager.go`) is a second
+role in the same gate. It holds the positions it opens on pools, so the
+pool rows name it as `owner`; its own `mint` / `burn` (owner in topic[1]),
+`increase_liquidity`, `decrease_liquidity` and `collect` go to
+`sushiswap_v3_manager_events`, keyed by `token_id`. The role is checked
+before the pool role, because both emit `mint`, `burn` and `collect`. The
+body must match the exact verified field set (`managerShapes`); any other
+body fails closed. Fixtures are lines in `testdata/manager_events.txt`.
+
 ## Replay
 
 Projected source (`internal/projector/registry.go` +
