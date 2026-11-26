@@ -337,6 +337,8 @@ type AssetDetail struct {
 	extensionUnread bool
 	// extensionStale: the catalogue row or an extension read answered from a cache entry its refresh has not kept up with.
 	extensionStale bool
+	// extensionLastGood names why such a read was a last-good copy ([lastGoodCause]); "" when it was merely past its TTL.
+	extensionLastGood string
 	// sep1Unread: the SEP-1 cache or fetch-state read errored, so sep1_status=not_fetched and the absent SEP-1 fields are ours.
 	sep1Unread bool
 	// priceUnread: the USD price read failed; a null price_usd is then not "no market".
@@ -2379,7 +2381,7 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 // assetDetailStale reports whether detail rests on a failed, cut-short or
 // carried-forward read.
 func assetDetailStale(detail *AssetDetail, homeDomainDegraded, ctxDead bool) bool {
-	return homeDomainDegraded || detail.DecimalsUnresolved || detail.decimalsLakeUnread || detail.SupplyStale || detail.f2ReadFailed || detail.extensionUnread || detail.extensionStale || detail.sep1Unread || ctxDead
+	return assetDetailCarried(detail, homeDomainDegraded, ctxDead) || detail.extensionStale
 }
 
 // transientlyDegraded reports whether detail rests on a read that failed or

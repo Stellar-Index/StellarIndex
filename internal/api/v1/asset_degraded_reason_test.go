@@ -90,8 +90,10 @@ func TestDetailDegradedReason(t *testing.T) {
 		{"dead context", AssetDetail{}, false, true, obs.DegradedRequestCanceled},
 		{"stale price", AssetDetail{priceStale: true}, false, false, obs.DegradedSourceStale},
 		{"stale supply", AssetDetail{SupplyStale: true}, false, false, obs.DegradedSourceStale},
-		{"aged catalogue value", AssetDetail{extensionStale: true}, false, false, obs.DegradedProvisional},
-		{"source_stale beats provisional", AssetDetail{extensionStale: true, SupplyStale: true}, false, false, obs.DegradedSourceStale},
+		{"aged catalogue value is not a cause", AssetDetail{extensionStale: true}, false, false, ""},
+		{"aged catalogue value under stale supply", AssetDetail{extensionStale: true, SupplyStale: true}, false, false, obs.DegradedSourceStale},
+		{"failed catalogue refresh", AssetDetail{extensionStale: true, extensionLastGood: obs.DegradedRefreshFailed}, false, false, obs.DegradedRefreshFailed},
+		{"overrun beats source_stale", AssetDetail{extensionLastGood: obs.DegradedRefreshOverrun, SupplyStale: true}, false, false, obs.DegradedRefreshOverrun},
 		{"decimals unresolved", AssetDetail{DecimalsUnresolved: true}, false, false, obs.DegradedPartialRead},
 		{"all three plus directory", AssetDetail{extensionStale: true, SupplyStale: true, issuerDirectoryUnchecked: true}, false, false, obs.DegradedCheckUnread},
 		{"nothing", AssetDetail{}, false, false, ""},
@@ -104,7 +106,7 @@ func TestDetailDegradedReason(t *testing.T) {
 	}
 }
 
-// A stored entry served by the real handler counts its stored reason, so the dominant aged-catalogue case is named on a hit.
+// A stored entry served by the real handler counts its stored reason, so a last-good catalogue value is named on a hit.
 func TestAssetDetailHit_replaysStoredReason(t *testing.T) {
 	s := New(Options{Assets: issuedAssetReader{}})
 	parsed := mustParseAsset(rtZED)
@@ -114,10 +116,10 @@ func TestAssetDetailHit_replaysStoredReason(t *testing.T) {
 	if got, total := degradedReasonOfGET(t, s.Handler(), "/v1/assets/{asset_id}", "/v1/assets/"+rtZED); got != obs.DegradedSourceStale || total != 1 {
 		t.Errorf("reason = %q (counted %v), want %q once", got, total, obs.DegradedSourceStale)
 	}
-	d = AssetDetail{AssetID: rtZED, Code: "ZED", extensionStale: true}
+	d = AssetDetail{AssetID: rtZED, Code: "ZED", extensionStale: true, extensionLastGood: obs.DegradedRefreshOverrun}
 	s.assetDetailCache.put(assetDetailCacheKey(parsed, false), newReasonedAssetDetailEntry(d, []byte("{}\n"), Flags{Stale: true, Degraded: true}, detailDegradedReason(&d, false, false)))
-	if got, total := degradedReasonOfGET(t, s.Handler(), "/v1/assets/{asset_id}", "/v1/assets/"+rtZED); got != obs.DegradedProvisional || total != 1 {
-		t.Errorf("reason = %q (counted %v), want %q once", got, total, obs.DegradedProvisional)
+	if got, total := degradedReasonOfGET(t, s.Handler(), "/v1/assets/{asset_id}", "/v1/assets/"+rtZED); got != obs.DegradedRefreshOverrun || total != 1 {
+		t.Errorf("reason = %q (counted %v), want %q once", got, total, obs.DegradedRefreshOverrun)
 	}
 }
 

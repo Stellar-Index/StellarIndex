@@ -246,6 +246,7 @@ func swr[T any](ctx context.Context, c *CachedAssetsReader, op, key string, upst
 	if stale {
 		reportStaleRead(ctx)
 	}
+	reportDegradedRead(ctx, c.single.lastGood(key, cacheFillBudget))
 	return v.(T), nil
 }
 

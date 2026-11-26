@@ -910,8 +910,15 @@ func usdMarketValue(amountStroops *big.Int, usdPriceStr string, decimals int) (s
 }
 
 // detailFreshness folds the detail's read outcomes into the envelope's stale and degraded flags. A price the reader called
-// stale marks the answer stale only: it is the newest price there is, so the answer stays cacheable.
+// stale marks the answer stale only: it is the newest price there is, so the answer stays cacheable. So does a catalogue
+// value merely past its TTL; one whose refresh failed or overran is a last-good copy, and degrades it.
 func detailFreshness(stale bool, detail *AssetDetail, homeDomainDegraded, ctxDead bool) (staleOut, degraded bool) {
-	stale = stale || assetDetailStale(detail, homeDomainDegraded, ctxDead)
-	return stale || detail.priceStale, stale || detail.issuerDirectoryUnchecked
+	degraded = stale || assetDetailCarried(detail, homeDomainDegraded, ctxDead) || detail.extensionLastGood != "" || detail.issuerDirectoryUnchecked
+	return stale || assetDetailStale(detail, homeDomainDegraded, ctxDead) || detail.priceStale, degraded
+}
+
+// assetDetailCarried reports whether detail rests on a failed, cut-short or carried-forward read, an extension value merely
+// past its TTL aside.
+func assetDetailCarried(detail *AssetDetail, homeDomainDegraded, ctxDead bool) bool {
+	return homeDomainDegraded || detail.DecimalsUnresolved || detail.decimalsLakeUnread || detail.SupplyStale || detail.f2ReadFailed || detail.extensionUnread || detail.sep1Unread || ctxDead
 }

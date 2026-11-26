@@ -19,7 +19,7 @@ func detailDegradedReason(d *AssetDetail, homeDomainDegraded, ctxDead bool) stri
 	add(d.extensionUnread, obs.DegradedSectionDropped)
 	add(d.f2ReadFailed || d.sep1Unread || d.decimalsLakeUnread || d.DecimalsUnresolved || homeDomainDegraded, obs.DegradedPartialRead)
 	add(d.SupplyStale || d.priceStale, obs.DegradedSourceStale)
-	add(d.extensionStale, obs.DegradedProvisional)
+	add(d.extensionLastGood != "", d.extensionLastGood)
 	add(ctxDead, obs.DegradedRequestCanceled)
 	return obs.HighestDegradedReason(causes...)
 }
