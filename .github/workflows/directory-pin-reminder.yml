@@ -1,0 +1,95 @@
+name: directory-pin-reminder
+
+# Weekly reminder that the directory-sync pin is going stale.
+#
+# configs/ansible/roles/archival-node/defaults/main.yml pins the
+# stellar-expert/public-directory archive at one reviewed commit; it must
+# never track a branch, so nothing bumps it. This compares the pin's commit
+# date with upstream's default-branch head via the public GitHub API and,
+# when the pin is more than 21 days behind and upstream has newer commits,
+# opens or updates ONE issue (found by label) with the bump recipe and the
+# review checklist. It opens no PR and downloads no upstream content: API
+# metadata only. The issue closes when the pin is current again.
+#
+# Decision core: scripts/ci/check-directory-pin.sh (fixture-tested offline by
+# scripts/ci/check-directory-pin-test.sh in ci.yml).
+
+on:
+  schedule:
+    - cron: "17 7 * * 1" # Mondays 07:17 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: directory-pin-reminder
+  cancel-in-progress: false
+
+env:
+  ISSUE_LABEL: directory-pin-stale
+
+jobs:
+  directory-pin-reminder:
+    name: directory-sync pin age
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Compare the pin with upstream head
+        id: verdict
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BODY_OUT: ${{ runner.temp }}/body.md
+        run: |
+          set -euo pipefail
+          parsed="$(./scripts/ci/check-directory-pin.sh parse)"
+          repo="$(sed -n 's/^repo=//p' <<<"$parsed")"
+          pin="$(sed -n 's/^pin=//p' <<<"$parsed")"
+          branch="$(gh api "repos/${repo}" --jq .default_branch)"
+          gh api "repos/${repo}/commits/${pin}" > "$RUNNER_TEMP/pin.json"
+          gh api "repos/${repo}/commits/${branch}" > "$RUNNER_TEMP/head.json"
+          head="$(jq -r .sha "$RUNNER_TEMP/head.json")"
+          gh api "repos/${repo}/compare/${pin}...${head}" > "$RUNNER_TEMP/cmp.json"
+          PIN_COMMIT_JSON="$RUNNER_TEMP/pin.json" HEAD_COMMIT_JSON="$RUNNER_TEMP/head.json" \
+            COMPARE_JSON="$RUNNER_TEMP/cmp.json" ./scripts/ci/check-directory-pin.sh verdict \
+            | tee -a "$GITHUB_OUTPUT"
+
+      - name: Open or update the tracking issue (pin stale)
+        if: steps.verdict.outputs.verdict == 'STALE'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DAYS: ${{ steps.verdict.outputs.days_behind }}
+          BODY_FILE: ${{ runner.temp }}/body.md
+        run: |
+          set -euo pipefail
+          gh label create "$ISSUE_LABEL" --color FBCA04 \
+            --description "directory-sync pin is behind upstream" 2>/dev/null || true
+          title="directory-sync pin is ${DAYS} days behind upstream"
+          existing="$(gh issue list --label "$ISSUE_LABEL" --state open \
+            --json number --jq '.[0].number' || true)"
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            gh issue edit "$existing" --title "$title" --body-file "$BODY_FILE"
+            echo "Updated existing directory-pin issue #$existing."
+          else
+            gh issue create --title "$title" --label "$ISSUE_LABEL" --body-file "$BODY_FILE"
+            echo "Opened new directory-pin issue."
+          fi
+
+      - name: Close the tracking issue (pin current)
+        if: steps.verdict.outputs.verdict == 'CURRENT'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for n in $(gh issue list --label "$ISSUE_LABEL" --state open \
+              --json number --jq '.[].number' || true); do
+            gh issue close "$n" --comment "directory-sync pin is within the threshold of upstream — directory-pin-reminder closing automatically."
+            echo "Closed directory-pin issue #$n."
+          done
