@@ -149,6 +149,7 @@ func TestManagerWasmFixtures(t *testing.T) {
 	}
 	rows := loadManagerFixtures(t)
 	d := managerDecoder()
+	lake := loadCrossCheck(t)
 	hashes := map[string]bool{}
 	for _, f := range files {
 		raw, err := os.ReadFile(f)
@@ -160,6 +161,8 @@ func TestManagerWasmFixtures(t *testing.T) {
 			WasmHash   string   `json:"wasm_hash"`
 			Ledger     uint32   `json:"ledger"`
 			TxHash     string   `json:"tx_hash"`
+			OpIndex    *int     `json:"op_index"`
+			EventIndex *int     `json:"event_index"`
 			Topics     []string `json:"topics"`
 			Value      string   `json:"value"`
 			EventName  string   `json:"event_name"`
@@ -178,14 +181,22 @@ func TestManagerWasmFixtures(t *testing.T) {
 			t.Errorf("%s: no byte-identical ok row in testdata/manager_events.txt", f)
 			continue
 		}
+		if capture.OpIndex == nil || capture.EventIndex == nil {
+			t.Fatalf("%s: op_index and event_index are required", f)
+		}
+		for _, r := range slices.Concat(lake...) {
+			if r.txHash == capture.TxHash && r.data == capture.Value && r.sym == capture.EventName && r.eventIndex != *capture.EventIndex {
+				t.Errorf("%s: event_index %d, the lake export says %d", f, *capture.EventIndex, r.eventIndex)
+			}
+		}
 		ev := managerEvent(capture.ContractID, capture.Topics, capture.Value)
-		ev.Ledger, ev.TxHash = capture.Ledger, capture.TxHash
+		ev.Ledger, ev.TxHash, ev.OperationIndex, ev.EventIndex = capture.Ledger, capture.TxHash, *capture.OpIndex, *capture.EventIndex
 		out, err := d.Decode(ev)
 		if err != nil || len(out) != 1 {
 			t.Fatalf("%s: Decode = %v, %v", f, out, err)
 		}
-		if got := out[0].(ManagerEvent); got.Kind != capture.EventName {
-			t.Errorf("%s: decoded %s", f, got.Kind)
+		if got := out[0].(ManagerEvent); got.Kind != capture.EventName || int(got.EventIndex) != *capture.EventIndex {
+			t.Errorf("%s: decoded %s at event %d", f, got.Kind, got.EventIndex)
 		}
 		hashes[capture.WasmHash] = true
 	}

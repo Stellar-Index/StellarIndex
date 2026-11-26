@@ -1,9 +1,9 @@
 ---
 title: SushiSwap V3 WASM audit
 last_verified: 2026-11-26
-status: string-checked — factory + 58 pools (4 hashes) + manager (2 hashes, 1 attested)
+status: string-checked — factory + 58 pools (4 hashes) + manager (2 hashes, amount-anchored)
 source: sushiswap_v3
-backfill_safe: false
+backfill_safe: true
 ---
 
 # SushiSwap V3 WASM audit
@@ -19,7 +19,7 @@ wasm-drift` checks every gated contract against
 **String-checked 2026-09-30.** Every WASM the factory and its 58 pools
 have ever run — four hashes — carries every topic literal the decoder
 routes on. The position manager's two hashes were string-checked
-2026-11-26; see "Position manager" for why only one is attested.
+2026-11-26 and attested; see "Position manager".
 
 No `stellarindex-ops wasm-history` walk was run; lineage comes from
 the lake's `stellar.contract_instance_changes` (executable on every
@@ -177,16 +177,14 @@ ledger:
 
 Every pool is on `003710b3…` at its last instance change.
 
-## Position manager — first hash attested, second pending an amount anchor
+## Position manager — both hashes attested
 
 `CARTUL5AWDZYBSN7HUUJZSKCAKCIAKM7M54Z76G6KRYCK4XPR3OHUQZ4` (contract id
 `233a2fa0b0f380c9bf3d289cc942028480299f67799ff8de54702572ef8edc7a`) is
 gated as the `sushiswap_v3` position-manager role. It has run two hashes
-(below). Both pass the string check. Only `dae1af1c…` is in
-`audited_wasm.json`. `be969de5…` decodes every sampled event, but has no
-amount anchor independent of its own u128s (README §3), so it stays
-unattested. Until it is attested, `wasm-drift` reports the manager, and the
-replay gate refuses any `sushiswap_v3` range at or after ledger 61,594,920.
+(below). Both pass the string check, both have captured events, and both
+have amounts anchored on evidence outside the manager. Both are in
+`audited_wasm.json`.
 
 Lineage (run 2026-11-26 on the lake):
 
@@ -212,16 +210,29 @@ Amount anchors:
 - `dae1af1c…`: the `decrease_liquidity` at 61,487,425 carries the same
   liquidity and amounts as the pool-side `burn` it drove
   (`TestManagerAmounts_MatchThePoolSide`).
-- `be969de5…`: none yet. The missing evidence is the pool-side `burn`
-  (owner = the manager) in tx `e7d02de5…` at ledger 65,682,016. Its
-  liquidity and amounts must equal that transaction's `decrease_liquidity`
-  row in `testdata/manager_events.txt` (liquidity 197,910,588,447,585;
-  amounts 1,258,588,261,737 / 1,073,002,473,137). Once it is pinned in a
-  test, add the hash to `audited_wasm.json`.
+- `be969de5…`: every event, in order, of six sampled transactions
+  (ledgers 65,680,196, 65,680,208, 65,682,016 ×2, 65,682,018, 65,682,021),
+  exported verbatim from the lake into `testdata/manager_crosscheck.tsv`
+  (run 2026-11-26). `TestManagerCrossCheck_PostUpgrade` asserts exact
+  equality on two independent sources:
+  - All 9 manager events against the pool event they drove: each
+    `decrease_liquidity` against a `burn`, each `collect` against a
+    `collect`, each `increase_liquidity` against a `mint`. Liquidity,
+    amount0, amount1 and recipient all match, and the pool's `owner` is
+    the manager.
+  - The 6 that move tokens against the two SEP-41 `transfer`s: for a
+    `collect`, pool to recipient; for an increase, payer to pool. The
+    rule is token0 first; each pool keeps the same token order across
+    every transaction.
+
+  All 15 pairs match exactly. Two pools appear: `CAOAVZOU…` and
+  `CBTOQ7X7…`. Neither is in the curated `MainnetPools` table; the manager
+  acts on both.
 
 Captured events per hash: `test/fixtures/sushiswap_v3/<wasm_hash>/`. Each
-file must be byte-identical to a `testdata/manager_events.txt` row, and
-decodes in `TestManagerWasmFixtures`.
+file must be byte-identical to a `testdata/manager_events.txt` row,
+carries its `op_index` / `event_index` (checked against the lake export
+where the transaction is in it), and decodes in `TestManagerWasmFixtures`.
 
 String check, one statement per hash (query 4 with the code entry's
 `LedgerKey`, `base64(0x00000007 || hash)`):
@@ -261,12 +272,14 @@ Manifest entry for each hash (`internal/wasmaudit/audited_wasm.json`):
 
 ## Decision
 
-The four pool and factory hashes, plus the manager's `dae1af1c…`, are the
-audited set for `sushiswap_v3` in `audited_wasm.json`. The registry policy
-has been `BackfillPerWASM` since #2354. A replay is admitted only over a
-range where every active hash is listed. With `be969de5…` unattested, that
-excludes everything from ledger 61,594,920 on. The front matter
-`backfill_safe` therefore stays `false`.
+The four pool and factory hashes, plus the manager's two, are the audited
+set for `sushiswap_v3` in `audited_wasm.json`. The registry policy has been
+`BackfillPerWASM` since #2354, so a replay is admitted only over a range
+where every active hash is listed. Every hash this log has found on a
+`sushiswap_v3` contract is now attested, so the front matter
+`backfill_safe` is `true`. The gate still checks each contract's hashes
+at replay time, against the lake: a hash that appeared after this log's
+lineage queries is refused, not admitted.
 
 Re-audit trigger: `wasm-drift` reports a `sushiswap_v3` contract on a
 hash not listed here — a new factory approval, a pool upgrade, or a

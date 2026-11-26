@@ -3,6 +3,8 @@
   "wasm_hash": "be969de545da89a04508e4952e94a53a77e76ecfa67d74b23fd56e0be42290d4",
   "ledger": 65682021,
   "tx_hash": "498ac9effaadbfa5ef5a5b0f8def9b08f19f586731ac401e9d3f3f48af52d687",
+  "op_index": 0,
+  "event_index": 3,
   "topics": [
     "AAAADwAAAARtaW50",
     "AAAAEgAAAAAAAAAAj8CWb317Rk6HI/oNpMqORIRIcdoE7OztzoDh+ZARhsM="
