@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"slices"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -103,6 +104,88 @@ func instantVolumes(group []canonical.Trade) (base, quote *big.Int, priced int) 
 		priced++
 	}
 	return base, quote, priced
+}
+
+// ClosedBucket is one closed 1-minute bucket for [TWAPFromBuckets]: its close time and its VWAP as exact decimal text (NUMERIC).
+type ClosedBucket struct {
+	Close time.Time
+	VWAP  string
+}
+
+// BucketTWAP is a [TWAPFromBuckets] result: the exact price, how many buckets carried weight, and the newest of them.
+type BucketTWAP struct {
+	Price   *big.Rat
+	Buckets int
+	Newest  time.Time
+}
+
+var (
+	// ErrDuplicateBucketClose is returned from [TWAPFromBuckets] when two buckets share a close time: one minute with two prices is ambiguous.
+	ErrDuplicateBucketClose = errors.New("aggregate: two buckets share a close time")
+	// ErrInvalidBucketVWAP is returned from [TWAPFromBuckets] for a VWAP that is not a strictly positive decimal.
+	ErrInvalidBucketVWAP = errors.New("aggregate: bucket VWAP is not a positive decimal")
+	// ErrInvalidTWAPWindow is returned from [TWAPFromBuckets] when end is not after start.
+	ErrInvalidTWAPWindow = errors.New("aggregate: TWAP window end is not after its start")
+)
+
+// TWAPFromBuckets time-weights closed buckets over [start, end]: each price holds from its close to the next close or end, the newest
+// bucket closing before start carries in from start, and weights are whole seconds. Input order is irrelevant (sorted internally).
+// ok=false with a nil error means no bucket covers any of the window: there is no value, not a zero price.
+func TWAPFromBuckets(buckets []ClosedBucket, start, end time.Time) (res BucketTWAP, ok bool, err error) {
+	if !end.After(start) {
+		return BucketTWAP{}, false, ErrInvalidTWAPWindow
+	}
+	sorted, prices, err := sortedBucketPrices(buckets)
+	if err != nil {
+		return BucketTWAP{}, false, err
+	}
+	weighted, total := new(big.Rat), new(big.Int)
+	for i := range sorted {
+		if sorted[i].Close.After(end) {
+			break
+		}
+		holdUntil := end
+		if i+1 < len(sorted) && sorted[i+1].Close.Before(end) {
+			holdUntil = sorted[i+1].Close
+		}
+		from := sorted[i].Close
+		if from.Before(start) {
+			from = start
+		}
+		secs := holdUntil.Unix() - from.Unix()
+		if secs <= 0 {
+			continue
+		}
+		w := big.NewInt(secs)
+		weighted.Add(weighted, new(big.Rat).Mul(prices[i], new(big.Rat).SetInt(w)))
+		total.Add(total, w)
+		res.Buckets++
+		res.Newest = sorted[i].Close
+	}
+	if total.Sign() == 0 {
+		return BucketTWAP{}, false, nil
+	}
+	res.Price = weighted.Quo(weighted, new(big.Rat).SetInt(total))
+	return res, true, nil
+}
+
+// sortedBucketPrices returns a close-ascending copy of buckets with each VWAP parsed, rejecting duplicate closes and non-positive or
+// unparseable prices.
+func sortedBucketPrices(buckets []ClosedBucket) ([]ClosedBucket, []*big.Rat, error) {
+	sorted := slices.Clone(buckets)
+	slices.SortFunc(sorted, func(a, b ClosedBucket) int { return a.Close.Compare(b.Close) })
+	prices := make([]*big.Rat, len(sorted))
+	for i := range sorted {
+		if i > 0 && sorted[i].Close.Equal(sorted[i-1].Close) {
+			return nil, nil, fmt.Errorf("%w: %s", ErrDuplicateBucketClose, sorted[i].Close.Format(time.RFC3339Nano))
+		}
+		p, ok := new(big.Rat).SetString(sorted[i].VWAP)
+		if !ok || p.Sign() <= 0 {
+			return nil, nil, fmt.Errorf("%w: %q at %s", ErrInvalidBucketVWAP, sorted[i].VWAP, sorted[i].Close.Format(time.RFC3339Nano))
+		}
+		prices[i] = p
+	}
+	return sorted, prices, nil
 }
 
 // accrueTWAPSlot adds one priced instant's slot: floor(quote × SCALE × Δt / base) to weightedSum and Δt ns to totalNanos; base/quote are the instant's
