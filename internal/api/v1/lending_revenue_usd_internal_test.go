@@ -45,15 +45,85 @@ func usdReserve(asset string, gross map[time.Time]int64) clickhouse.LendingReven
 	}
 	slices.SortFunc(keys, time.Time.Compare)
 	for _, at := range keys {
-		h := clickhouse.LendingRevenueBucket{Start: at, Sums: revenueSums(gross[at])}
-		res.Hours = append(res.Hours, h)
-		day := time.Date(at.Year(), at.Month(), at.Day(), 0, 0, 0, 0, time.UTC)
-		if n := len(res.Buckets); n == 0 || !res.Buckets[n-1].Start.Equal(day) {
-			res.Buckets = append(res.Buckets, clickhouse.LendingRevenueBucket{Start: day, Sums: clickhouse.NewLendingRevenueSums()})
-		}
-		res.Buckets[len(res.Buckets)-1].Sums.Add(h.Sums)
+		res.Hours = append(res.Hours, clickhouse.LendingRevenueBucket{Start: at, Sums: revenueSums(gross[at])})
 	}
+	res.Buckets = clickhouse.FoldLendingRevenueDays(res.Hours)
 	return res
+}
+
+// hoursReserve folds the given hour rows into days with the reader's own fold.
+func hoursReserve(asset string, hours ...clickhouse.LendingRevenueBucket) clickhouse.LendingRevenueReserve {
+	return clickhouse.LendingRevenueReserve{Asset: asset, Hours: hours, Buckets: clickhouse.FoldLendingRevenueDays(hours)}
+}
+
+// Draws and losses are stored ≤ 0 and valued as the magnitudes the base units serve.
+func TestRevenueUSD_DrawsAndLossesAreMagnitudes(t *testing.T) {
+	s := clickhouse.NewLendingRevenueSums()
+	s.InterestDrawn.SetInt64(-oneToken)
+	s.DefaultLoss.SetInt64(-oneToken)
+	rev := completeRevenue()
+	rev.Reserves = []clickhouse.LendingRevenueReserve{hoursReserve("CA", clickhouse.LendingRevenueBucket{Start: usdHour(1, 2), Sums: s})}
+	u := valuedRevenue(t, rev, usdSeries(map[time.Time]string{usdHour(1, 2): "1"})).Reserves[0].USD
+	if usdOf(u.BackstopDrawnUSD) != "1.00" || usdOf(u.DefaultLossUSD) != "1.00" || usdOf(u.InterestAccruedUSD) != "0.00" {
+		t.Fatalf("drawn %s loss %s accrued %s, want 1.00 1.00 0.00", usdOf(u.BackstopDrawnUSD), usdOf(u.DefaultLossUSD), usdOf(u.InterestAccruedUSD))
+	}
+}
+
+// A price exactly one hour old is not carried; two hours old is.
+func TestRevenueUSD_CarriedBoundary(t *testing.T) {
+	rev := completeRevenue()
+	rev.Reserves = []clickhouse.LendingRevenueReserve{usdReserve("CA", map[time.Time]int64{usdHour(1, 4): oneToken, usdHour(1, 5): oneToken})}
+	u := valuedRevenue(t, rev, usdSeries(map[time.Time]string{usdHour(1, 3): "1"})).Reserves[0].USD
+	if u.PricedHours != 2 || u.PriceCarriedHours != 1 {
+		t.Fatalf("priced %d carried %d, want 2 priced, only the 2-hour-old one carried", u.PricedHours, u.PriceCarriedHours)
+	}
+}
+
+// Nothing to value is not a gap: an unpriced hour whose valued amounts are all zero, or a withheld reserve with no
+// amounts, leaves the figures complete and names nothing.
+func TestRevenueUSD_NothingToValueIsNoLowerBound(t *testing.T) {
+	gulpOnly := clickhouse.NewLendingRevenueSums()
+	gulpOnly.Gulped.SetInt64(oneToken)
+	rev := completeRevenue()
+	priced := usdReserve("CA", map[time.Time]int64{usdHour(1, 2): oneToken})
+	priced.Hours = append(priced.Hours, clickhouse.LendingRevenueBucket{Start: usdHour(1, 20), Sums: gulpOnly})
+	priced.Buckets = clickhouse.FoldLendingRevenueDays(priced.Hours)
+	rev.Reserves = []clickhouse.LendingRevenueReserve{priced, hoursReserve("CB", clickhouse.LendingRevenueBucket{Start: usdHour(1, 3), Sums: gulpOnly})}
+	v := valuedRevenue(t, rev, usdSeries(map[time.Time]string{usdHour(1, 2): "1"}), reserveUSDSeries{reason: exclusionPriceWithheld})
+	a, b := v.Reserves[0].USD, v.Reserves[1].USD
+	if a.LowerBound || a.UnpricedHours != 0 || usdOf(a.InterestAccruedUSD) != "1.00" {
+		t.Errorf("reserve A = %+v, want complete 1.00", a)
+	}
+	if b.LowerBound || b.USDReason != nil || usdOf(b.InterestAccruedUSD) != "0.00" {
+		t.Errorf("withheld reserve with no amounts = %+v, want 0.00, complete", b)
+	}
+	if v.TotalsUSD.LowerBound || len(v.TotalsUSD.Excluded) != 0 || usdOf(v.TotalsUSD.InterestAccruedUSD) != "1.00" {
+		t.Errorf("totals_usd = %+v, want 1.00, complete, nothing named", v.TotalsUSD)
+	}
+}
+
+// The basis is disclosed as /history's: one basis when every priced hour shares it, hour counts when they mix.
+func TestRevenueUSD_PriceBasis(t *testing.T) {
+	hours := map[time.Time]int64{usdHour(1, 2): oneToken, usdHour(1, 3): oneToken}
+	prices := map[time.Time]string{usdHour(1, 2): "1", usdHour(1, 3): "1"}
+	rev := completeRevenue()
+	rev.Reserves = []clickhouse.LendingRevenueReserve{usdReserve("CA", hours), usdReserve("CB", hours), usdReserve("CC", hours)}
+	transitive, mixed := usdSeries(prices), usdSeries(prices)
+	transitive.basis = priceBasisTransitive
+	mixed.stableAt = map[time.Time]bool{usdHour(1, 3): true}
+	v := valuedRevenue(t, rev, usdSeries(prices), transitive, mixed)
+	if u := v.Reserves[0].USD; u.PriceBasis != "" || u.PriceBasisHours != nil {
+		t.Errorf("fiat reserve basis = %q %v, want none", u.PriceBasis, u.PriceBasisHours)
+	}
+	if u := v.Reserves[1].USD; u.PriceBasis != priceBasisTransitive || u.PriceBasisHours != nil {
+		t.Errorf("transitive reserve basis = %q %v", u.PriceBasis, u.PriceBasisHours)
+	}
+	if u := v.Reserves[2].USD; u.PriceBasis != "" || u.PriceBasisHours[priceBasisStablecoinProxy] != 1 || len(u.PriceBasisHours) != 1 {
+		t.Errorf("mixed reserve basis = %q %v, want {stablecoin_proxy: 1}", u.PriceBasis, u.PriceBasisHours)
+	}
+	if v.TotalsUSD.PriceBasis != "" || v.TotalsUSD.PriceBasisHours != nil {
+		t.Errorf("totals_usd carries a basis: %+v", v.TotalsUSD)
+	}
 }
 
 func usdSeries(prices map[time.Time]string) reserveUSDSeries {
@@ -204,51 +274,109 @@ func TestRevenueUSD_TotalsAreExactSumsOfHourValues(t *testing.T) {
 		rev := completeRevenue()
 		rev.Reserves = nil
 		var series []reserveUSDSeries
-		want := make([]*big.Rat, 0)
+		var wants []propertyWant
 		for r := 0; r < 1+rng.IntN(4); r++ {
-			gross, prices := map[time.Time]int64{}, map[time.Time]string{}
-			exact := new(big.Rat)
-			for h := 0; h < 48; h++ {
-				at := usdHour(1, 0).Add(time.Duration(h) * time.Hour)
-				if rng.IntN(3) == 0 {
-					continue
-				}
-				g := rng.Int64N(1 << 50)
-				p := strconv.Itoa(rng.IntN(100_000)) + "." + strconv.Itoa(rng.IntN(1_000_000))
-				gross[at], prices[at] = g, p
-				pr, _ := new(big.Rat).SetString(p)
-				exact.Add(exact, new(big.Rat).Quo(new(big.Rat).Mul(new(big.Rat).SetInt64(g), pr), big.NewRat(oneToken, 1)))
-			}
-			rev.Reserves = append(rev.Reserves, usdReserve("C"+strconv.Itoa(r), gross))
-			series = append(series, usdSeries(prices))
-			want = append(want, exact)
+			res, u, w := randomValuedReserve(rng, "C"+strconv.Itoa(r))
+			rev.Reserves, series, wants = append(rev.Reserves, res), append(series, u), append(wants, w)
 		}
 		v := revenueView("CPOOL", "blend", "1d", revenueTestQuery, rev)
 		pool, reserves := valueRevenueView(&v, rev, series)
-		sumReserves := new(big.Rat)
-		for i, t0 := range reserves {
+		sumReserves := zeroRats()
+		for i, got := range reserves {
+			w := wants[i]
+			if got.priced != w.priced || got.unpriced != w.unpriced || got.carried != w.carried {
+				t.Fatalf("iter %d reserve %d: priced/unpriced/carried %d/%d/%d, want %d/%d/%d", iter, i, got.priced, got.unpriced, got.carried, w.priced, w.unpriced, w.carried)
+			}
 			_, buckets := valueRevenueReserve(&v.Reserves[i], rev.Reserves[i], series[i], 24*time.Hour)
-			sumBuckets := new(big.Rat)
+			sumBuckets := zeroRats()
 			for _, b := range buckets {
-				if b.v[0] != nil {
-					sumBuckets.Add(sumBuckets, b.v[0])
+				addRats(&sumBuckets, b.v)
+			}
+			total := zeroRats()
+			addRats(&total, got.v)
+			for leg := range total {
+				if total[leg].Cmp(sumBuckets[leg]) != 0 || total[leg].Cmp(w.value[leg]) != 0 {
+					t.Fatalf("iter %d reserve %d leg %d: total %s, Σ buckets %s, Σ hours at own price %s",
+						iter, i, leg, total[leg].RatString(), sumBuckets[leg].RatString(), w.value[leg].RatString())
 				}
 			}
-			got := t0.v[0]
-			if got == nil {
-				got = new(big.Rat)
+			if got.priced > 0 {
+				addRats(&sumReserves, got.v)
 			}
-			if got.Cmp(sumBuckets) != 0 || got.Cmp(want[i]) != 0 {
-				t.Fatalf("iter %d reserve %d: total %s, buckets %s, hours at own price %s", iter, i, got.RatString(), sumBuckets.RatString(), want[i].RatString())
+		}
+		poolTotal := zeroRats()
+		addRats(&poolTotal, pool.v)
+		for leg := range poolTotal {
+			if poolTotal[leg].Cmp(sumReserves[leg]) != 0 {
+				t.Fatalf("iter %d leg %d: pool %s != Σ valued reserves %s", iter, leg, poolTotal[leg].RatString(), sumReserves[leg].RatString())
 			}
-			sumReserves.Add(sumReserves, got)
-		}
-		poolGot := pool.v[0]
-		if poolGot == nil {
-			poolGot = new(big.Rat)
-		}
-		if poolGot.Cmp(sumReserves) != 0 {
-			t.Fatalf("iter %d: pool %s != Σ reserves %s", iter, poolGot.RatString(), sumReserves.RatString())
 		}
 	}
+}
+
+type propertyWant struct {
+	value                     [revenueUSDLegCount]*big.Rat
+	priced, unpriced, carried int
+}
+
+func zeroRats() [revenueUSDLegCount]*big.Rat {
+	var out [revenueUSDLegCount]*big.Rat
+	for i := range out {
+		out[i] = new(big.Rat)
+	}
+	return out
+}
+
+func addRats(dst *[revenueUSDLegCount]*big.Rat, src [revenueUSDLegCount]*big.Rat) {
+	for i, x := range src {
+		if x != nil {
+			dst[i].Add(dst[i], x)
+		}
+	}
+}
+
+// randomValuedReserve is two days of random hours, several signed legs, prices on a random subset of hours (so others
+// carry an older price or go unpriced), folded by the reader's own fold; want is computed independently of priceAt.
+func randomValuedReserve(rng *rand.Rand, asset string) (clickhouse.LendingRevenueReserve, reserveUSDSeries, propertyWant) {
+	prices := map[time.Time]string{}
+	var hours []clickhouse.LendingRevenueBucket
+	for h := 0; h < 48; h++ {
+		at := usdHour(1, 0).Add(time.Duration(h) * time.Hour)
+		if rng.IntN(4) == 0 {
+			prices[at] = strconv.Itoa(rng.IntN(100_000)) + "." + strconv.Itoa(rng.IntN(1_000_000))
+		}
+		if rng.IntN(3) == 0 {
+			continue
+		}
+		s := clickhouse.NewLendingRevenueSums()
+		s.Gross.SetInt64(rng.Int64N(1 << 50))
+		s.Backstop.SetInt64(rng.Int64N(1 << 40))
+		s.SupplierRealised.SetInt64(rng.Int64N(1<<40) - 1<<39)
+		s.InterestDrawn.SetInt64(-rng.Int64N(1 << 30))
+		hours = append(hours, clickhouse.LendingRevenueBucket{Start: at, Sums: s})
+	}
+	w := propertyWant{value: zeroRats()}
+	for _, h := range hours {
+		var priceAt time.Time
+		found := false
+		for back := 0; back <= 6; back++ {
+			if _, ok := prices[h.Start.Add(-time.Duration(back)*time.Hour)]; ok {
+				priceAt, found = h.Start.Add(-time.Duration(back)*time.Hour), true
+				break
+			}
+		}
+		if !found {
+			w.unpriced++
+			continue
+		}
+		w.priced++
+		if h.Start.Sub(priceAt) > time.Hour {
+			w.carried++
+		}
+		p, _ := new(big.Rat).SetString(prices[priceAt])
+		for leg, a := range revenueUSDLegs(h.Sums) {
+			w.value[leg].Add(w.value[leg], new(big.Rat).Quo(new(big.Rat).Mul(new(big.Rat).SetInt(a), p), big.NewRat(oneToken, 1)))
+		}
+	}
+	return hoursReserve(asset, hours...), usdSeries(prices), w
 }

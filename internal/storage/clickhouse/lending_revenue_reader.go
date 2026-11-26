@@ -222,7 +222,7 @@ func (r *ExplorerReader) lendingRevenueRows(ctx context.Context, pool, asset str
 	for i := range out {
 		out[i].Buckets = out[i].Hours
 		if q.Daily {
-			out[i].Buckets = foldRevenueDays(out[i].Hours)
+			out[i].Buckets = FoldLendingRevenueDays(out[i].Hours)
 		}
 		if len(out[i].Buckets) > q.MaxPoints {
 			return nil, ErrLendingHistoryTooManyPoints
@@ -231,8 +231,8 @@ func (r *ExplorerReader) lendingRevenueRows(ctx context.Context, pool, asset str
 	return out, nil
 }
 
-// foldRevenueDays sums ascending hour rows into UTC days, exactly.
-func foldRevenueDays(hours []LendingRevenueBucket) []LendingRevenueBucket {
+// FoldLendingRevenueDays sums ascending hour rows into UTC days, exactly.
+func FoldLendingRevenueDays(hours []LendingRevenueBucket) []LendingRevenueBucket {
 	var out []LendingRevenueBucket
 	for _, h := range hours {
 		day := time.Date(h.Start.Year(), h.Start.Month(), h.Start.Day(), 0, 0, 0, 0, time.UTC)

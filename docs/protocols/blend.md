@@ -37,13 +37,16 @@ whenever `excluded` names anything left out; a reserve whose summed part is noth
 
 **USD.** Each hour's amounts are valued at that hour's price: the newest hourly price at or before the hour, at most six
 hours old (`price_max_age_hours`), never a later one and never today's. A daily bucket is the sum of its hours valued
-one by one, not the day's total at one price. The sums are exact and rounded to cents once, when served. Prices come
+one by one, not the day's total at one price. The sums are exact and rounded to cents once, when served; each point
+and each total is rounded on its own, so rounded points need not add up to the rounded total. A reserve's
+`price_basis` (or `price_basis_hours` when hours mix) says when prices were crossed through XLM or taken from a
+stablecoin-quoted book, as on `/history`. In `totals_usd` the hour counts are reserve-hours. Prices come
 from the same series `/history` values reserves with, under the same gates: a token with no USD market, unknown
 decimals, a scam-flagged issuer or a thin market (whose price is display-only) is not valued at all (`usd_reason`).
 
 `totals_usd` adds the reserves together in USD, the one unit in which they can be added. An hour with an amount but no
 price is left out and counted (`unpriced_hours`), so the sum is a lower bound (`lower_bound`, and `totals_usd.excluded`
-names the reserve with `price_missing`). A reserve with no price at all is null, never `"0.00"`, and is named and left
+names the reserve with `price_missing`). A reserve with amounts but no price at all is null, never `"0.00"`, and is named and left
 out of `totals_usd`. Anything the base-unit sums leave out is missing from the USD sums too, so `totals_usd` is a lower
 bound whenever the response's `lower_bound` is.
 

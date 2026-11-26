@@ -1,8 +1,11 @@
 package v1_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,6 +24,79 @@ func rawObject(t *testing.T, raw json.RawMessage) map[string]json.RawMessage {
 		t.Fatalf("not an object: %s", raw)
 	}
 	return m
+}
+
+type priceRead struct {
+	pair     string
+	from, to time.Time
+}
+
+// rangeRecordingHistory records every price range the walk asks for.
+type rangeRecordingHistory struct {
+	*lockedHistoryReader
+	mu    sync.Mutex
+	reads []priceRead
+}
+
+func (r *rangeRecordingHistory) HistoryPointsInRange(ctx context.Context, p canonical.Pair, g string, from, to time.Time, limit int) ([]v1.HistoryPoint, error) {
+	r.mu.Lock()
+	r.reads = append(r.reads, priceRead{pair: p.String(), from: from, to: to})
+	r.mu.Unlock()
+	return r.lockedHistoryReader.HistoryPointsInRange(ctx, p, g, from, to, limit)
+}
+
+// The price walk spans a reserve's own data, not the requested window: a window opening years earlier reads prices
+// only from six hours before the first hour with an amount to one hour past the last, and a reserve with no amount
+// reads none.
+func TestLendingPoolRevenue_PriceWalkIsBoundedByTheData(t *testing.T) {
+	pool, xlm, idle := mkCStrkey(t, 1), canonical.NativeSACContractID(), mkCStrkey(t, 6)
+	idleAsset, err := canonical.ParseAsset(idle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := func(n int) time.Time { return time.Date(2027, 3, 1, n, 0, 0, 0, time.UTC) }
+	var active []clickhouse.LendingRevenueBucket
+	for _, n := range []int{1, 5} {
+		s := clickhouse.NewLendingRevenueSums()
+		s.Gross.SetInt64(10_000_000)
+		active = append(active, clickhouse.LendingRevenueBucket{Start: h(n), Sums: s})
+	}
+	gulp := clickhouse.NewLendingRevenueSums()
+	gulp.Gulped.SetInt64(10_000_000) // not a valued amount
+	idleHours := []clickhouse.LendingRevenueBucket{{Start: h(3), Sums: gulp}}
+	from := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	hist := &rangeRecordingHistory{lockedHistoryReader: xlmUSDPrices(map[time.Time]string{h(1): "1"})}
+	v2 := blend.PoolV2
+	srv := v1.New(v1.Options{
+		Explorer: &stubRevenueExplorer{stubExplorerReader: &stubExplorerReader{}, rev: clickhouse.LendingRevenue{
+			Covered: true, FloorLedger: 1, FloorTime: from.Add(-time.Hour), ThroughLedger: 50, ThroughHour: h(23), From: from, Before: h(24),
+			Reserves: []clickhouse.LendingRevenueReserve{
+				{Asset: xlm, Hours: active, Buckets: clickhouse.FoldLendingRevenueDays(active)},
+				{Asset: idle, Hours: idleHours, Buckets: clickhouse.FoldLendingRevenueDays(idleHours)},
+			},
+		}},
+		Lending: &stubLendingReader{version: &v2}, History: hist, TokenDecimals: &lockstepDecStub{d: 7, found: true},
+	})
+	rec := getLendingHistory(t, srv, "/v1/lending/pools/"+pool+"/revenue?from=2024-01-01T00:00:00Z&to=2027-03-02T00:00:00Z")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	if len(hist.reads) == 0 {
+		t.Fatal("no price read for the reserve with amounts")
+	}
+	lo, hi := h(1).Add(-6*time.Hour), h(6)
+	for _, r := range hist.reads {
+		if r.from.Before(lo) || r.to.After(hi) {
+			t.Errorf("price read %s [%s, %s), want inside [%s, %s)", r.pair, r.from, r.to, lo, hi)
+		}
+		if strings.Contains(r.pair, idleAsset.String()) {
+			t.Errorf("price read for the reserve with no valued amount: %s", r.pair)
+		}
+	}
+	idleUSD := rawObject(t, reserveNamed(t, lendingUSDData(t, rec.Body.Bytes())["reserves"], idle)["usd"])
+	if string(idleUSD["interest_accrued_usd"]) != `"0.00"` || string(idleUSD["lower_bound"]) != "false" {
+		t.Errorf("idle reserve usd = %s / %s, want 0.00 complete", idleUSD["interest_accrued_usd"], idleUSD["lower_bound"])
+	}
 }
 
 // An operator source exclusion over an hour's price leaves that hour unvalued: counted, named, and the sum a lower bound.

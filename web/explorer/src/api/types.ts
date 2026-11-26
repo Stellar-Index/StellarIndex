@@ -2276,8 +2276,10 @@ export interface paths {
          *     hour at each hour's own price (`LendingRevenueUSD`, daily buckets
          *     included), and `totals_usd` adds the valued reserves across the
          *     pool; an hour with no price is left out and counted, so the sum is
-         *     a lower bound, and a reserve with no price at all is null, never
-         *     `"0.00"`.
+         *     a lower bound, and a reserve with amounts but no price at all is
+         *     null, never `"0.00"`. A reserve with no valued amount is `"0.00"`
+         *     and reads no prices; prices are read only over the hours a reserve
+         *     has amounts in.
          *
          *     Interest is booked when the reserve is next touched on chain, so it
          *     lands in the hour of that touch, not spread over the hours it
@@ -7240,8 +7242,12 @@ export interface components {
          * @description Amounts valued in USD hour by hour: each hour's amounts at that
          *     hour's price (the newest hourly VWAP at or before it, at most
          *     `price_max_age_hours` old, never a later one), summed exactly and
-         *     rounded once to cents. Every `*_usd` figure is null together, with
-         *     `usd_reason`, when nothing could be valued.
+         *     rounded once to cents. Each point, each reserve total and the pool
+         *     total is rounded on its own from the exact sum, so rounded points
+         *     need not add up to the rounded total. Every `*_usd` figure is null
+         *     together, with `usd_reason`, when nothing could be valued. On
+         *     `totals_usd` the hour counts are reserve-hours: an hour counts once
+         *     per reserve.
          */
         LendingRevenueUSD: {
             interest_accrued_usd: string | null;
@@ -7260,6 +7266,15 @@ export interface components {
             unpriced_hours: number;
             /** @description Valued hours whose price is more than one hour older than the hour. */
             price_carried_hours: number;
+            /**
+             * @description Buckets and reserves: set when every valued hour's price has this basis, as on `/history` (`transitive`: crossed through XLM; `stablecoin_proxy`: from a stablecoin-quoted book). Omitted when traded against fiat:USD, when bases mix, and on `totals_usd`.
+             * @enum {string}
+             */
+            price_basis?: "transitive" | "stablecoin_proxy";
+            /** @description Buckets and reserves: when the valued hours' bases mix, the count of valued hours per non-fiat basis; the rest were traded against fiat:USD. Omitted otherwise. */
+            price_basis_hours?: {
+                [key: string]: number;
+            };
             /** @description Some amount is left out: an unpriced hour, or (reserve and pool) a base-unit exclusion. */
             lower_bound: boolean;
             /**
