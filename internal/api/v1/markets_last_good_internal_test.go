@@ -28,8 +28,9 @@ func serveCountingReasons(t *testing.T, h http.Handler, route, path string) (swr
 }
 
 // A page past its hard bound whose refresh this ask starts is stale only: nothing has failed or overrun, so it keeps the route's
-// Cache-Control and is not counted degraded. It becomes degraded, named, once that refresh runs past its budget or fails.
-func TestMarketsLastGood_DegradedOnlyForFailedOrOverrunRefresh(t *testing.T) {
+// Cache-Control and is not counted degraded. It becomes degraded, named, once that refresh runs past its budget or fails, or
+// when no slot was free to start one.
+func TestMarketsLastGood_DegradedOnlyForFailedOverrunOrRefusedRefresh(t *testing.T) {
 	const ttl = 30 * time.Second
 	for _, tc := range []struct{ path, route string }{
 		{"/v1/markets?include=sparkline", "/v1/markets"},
@@ -67,6 +68,24 @@ func TestMarketsLastGood_DegradedOnlyForFailedOrOverrunRefresh(t *testing.T) {
 			up.hold()
 			want("the last refresh failed", obs.DegradedRefreshFailed)
 			up.release(false)
+			waitMarketsIdle(t, cache)
+
+			// The same old page with every refresh slot busy: nothing is refreshing it.
+			clk.add(2*ttl + time.Second)
+			var held []chan struct{}
+			for _, head := range []bool{true, false} {
+				slots := cache.refreshSlots(head)
+				for len(slots) < cap(slots) {
+					slots <- struct{}{}
+				}
+				held = append(held, slots)
+			}
+			want("old and its refresh refused", obs.DegradedRefreshRefused)
+			for _, slots := range held {
+				for len(slots) > 0 {
+					<-slots
+				}
+			}
 			waitMarketsIdle(t, cache)
 		})
 	}

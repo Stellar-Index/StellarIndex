@@ -87,10 +87,14 @@ type marketsCacheEntry struct {
 }
 
 // marketsServedStaleLocked is the flags.stale verdict for a filled entry served past ttl: [swrverdict.Stale], or no refresh in
-// flight (every slot was busy). Only a failed or overrun refresh makes it a last-good copy, reported on ctx through
-// [reportDegradedRead]. Caller holds c.mu.
+// flight (every slot was busy). A failed, overrun or refused refresh makes it a last-good copy, reported on ctx through
+// [reportDegradedRead]; a refresh this ask started or one in flight within budget leaves it stale only. Caller holds c.mu.
 func (c *CachedMarketsReader) marketsServedStaleLocked(ctx context.Context, e *marketsCacheEntry) bool {
-	reportDegradedRead(ctx, lastGoodCause(e.refreshFailed, e.flight != nil, c.now().Sub(e.flightAt), marketsRefreshBudget))
+	cause := lastGoodCause(e.refreshFailed, e.flight != nil, c.now().Sub(e.flightAt), marketsRefreshBudget)
+	if cause == "" && e.flight == nil {
+		cause = obs.DegradedRefreshRefused // no slot was free, so nothing is refreshing this copy
+	}
+	reportDegradedRead(ctx, cause)
 	return e.refreshFailed || e.flight == nil || swrverdict.Stale(c.now().Sub(e.at), c.ttl, marketsRefreshBudget, false)
 }
 

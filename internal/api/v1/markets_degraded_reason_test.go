@@ -73,10 +73,10 @@ func TestPoolsDegradedReason_healthyRecordsNone(t *testing.T) {
 	}
 }
 
-// A copy served unrefreshed because every slot was busy is stale, not degraded: no refresh of it has failed or overrun.
-func TestPoolsDegradedReason_refusedRefreshIsStaleOnly(t *testing.T) {
+func TestPoolsDegradedReason_refreshRefusedWhenNoSlot(t *testing.T) {
 	c := NewCachedMarketsReader(&swrPoolsUpstream{fakeMarketsReader: &fakeMarketsReader{}}, time.Minute)
 	warmPools(t, c)
+	// Within ttl+budget, so only the missing refresh makes the copy stale.
 	c.mu.Lock()
 	for _, e := range c.entries {
 		e.at = e.at.Add(-time.Minute - time.Second)
@@ -85,8 +85,8 @@ func TestPoolsDegradedReason_refusedRefreshIsStaleOnly(t *testing.T) {
 	for range marketsHeadRefreshSlots {
 		c.refreshes <- struct{}{}
 	}
-	if got := poolsDegradedReason(t, "/t/pools-refused", c); got != "" {
-		t.Errorf("reason = %q, want none", got)
+	if got := poolsDegradedReason(t, "/t/pools-refused", c); got != obs.DegradedRefreshRefused {
+		t.Errorf("reason = %q, want %q", got, obs.DegradedRefreshRefused)
 	}
 }
 
