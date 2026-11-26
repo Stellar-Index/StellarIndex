@@ -154,6 +154,11 @@ func checkInvariant(t testing.TB, rows []HourRow) {
 				r.ExplainedVersions, r.AttributedVersions, r.UnexplainedVersions, r.UnreconciledVersions, r.ResidualExplained,
 				r.ResidualAttributed, r.ResidualUnexplained, r.BackstopResidual, r.ResidualLedgers)
 		}
+		parts := new(big.Int).Add(new(big.Int).Add(r.InterestDrawn, r.Gulped), r.ReconcileBackstopLoss)
+		if parts.Cmp(r.ResidualExplained) != 0 || r.InterestDrawn.Sign() > 0 || r.Gulped.Sign() < 0 || r.ReconcileBackstopLoss.Sign() > 0 {
+			t.Errorf("%s %s %s: residual_explained %s, by cause drawn %s + gulped %s + reconcile %s", r.Pool, r.Asset, r.Hour,
+				r.ResidualExplained, r.InterestDrawn, r.Gulped, r.ReconcileBackstopLoss)
+		}
 		if len(r.ErrorSamples) > maxErrorSamples || len(r.ErrorSamples) > int(r.AccrualErrors) {
 			t.Errorf("%s %s: %d samples for %d errors", r.Asset, r.Hour, len(r.ErrorSamples), r.AccrualErrors)
 		}

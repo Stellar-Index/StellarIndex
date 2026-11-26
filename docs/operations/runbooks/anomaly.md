@@ -202,6 +202,63 @@ Verify `stellarindex_anomaly_freeze_recovered_total` resumes climbing within 60 
 
 Escalate: record stall duration, max backlog, and which transport failed.
 
+## stellarindex_aggregator_composite_corroboration_unavailable
+
+P3 (ticket). Expr: `stellarindex_aggregator_composite_corroboration{verdict="unavailable"} == 1`, `for: 6h`. No served price is wrong: the composite reference could not judge, so a phase-2 fire on `pair` freezes with no corroboration path (the direct print and the freeze serve as if the reference did not exist).
+
+### Check
+
+The cause is the `unavailable=<reason>` field of the aggregator INFO line `composite reference unavailable` (logged once per change of cause; also in `freeze_events.detail->>'reason'` after `composite_unavailable:`):
+
+```sh
+ssh root@136.243.90.96 "journalctl -u stellarindex-aggregator --since '6 hours ago' --no-pager | grep 'composite reference unavailable' | tail -5"
+ssh root@136.243.90.96 "curl -s http://localhost:9465/metrics | grep -E 'stellarindex_aggregator_(quote_surface_bps|composite_reference_leg_(sources|dispersion_bps))'"
+```
+
+| `unavailable=` | Meaning |
+|---|---|
+| `leg_sources=N` | A priced leg had fewer than `min_leg_sources` venues. |
+| `leg_dispersion=Xbps` | The leg's venues disagree by more than `leg_dispersion_bps`. |
+| `leg_quote_surface=Xbps` | The leg's stablecoin-quoted prints (taken at par) and its real-USD prints disagree by more than `leg_dispersion_bps`: two different USDs. |
+| `leg_quote_surface=uncomputable` | A surface VWAP could not be computed; the leg is refused, not skipped. |
+| `leg_not_refreshed`, `fx_*`, `no_chain` | Leg not published this tick, FX snap missing/stale, or no triangulation configured. |
+
+How the quote-surface check judges a leg: the window is cut into window/24 slots (minimum 1 minute: 5m→1m, 1h→2m, 24h→1h). A USD venue counts in a slot only when it carries at least 1/10 of the slot's USD base volume and at least 10,000 quote units an hour; the venues that count are the slot's reference, and the rest are ignored for eligibility, agreement and the slot's USD price. So a venue under 10% no longer vetoes agreement: an attacker supplying over 90% of a slot's USD base on two venues is not blocked by a small honest third venue, which is no worse than the whole-window compare, where that volume moves the USD VWAP the same way. A slot is eligible when it holds stablecoin prints and a reference of at least two venues whose own VWAPs agree within `leg_dispersion_bps`, the reference's base volume is at least 1/3 of the stablecoin base volume, both sides carry at least 150,000 XLM, and the stablecoin side and the reference each carry at least 25,000 quote units. Floors are per hour of slot length (a partial first or last slot must still clear the full-length floor). The quote floors are in quote units, so they are weaker on a weak-currency leg such as MXN; the base floor is in XLM, so a leg whose base is not XLM has no eligible slot and is judged by the whole-window compare. The aligned gap is the mean of every stablecoin-bearing slot's gap `(stablecoin VWAP − USD VWAP) / USD VWAP`, weighted by that slot's stablecoin base volume and divided by the window's total stablecoin base volume: the average disagreement of all the prints the par rewrite vouches for. An eligible slot is compared with its reference's USD VWAP; an ineligible one with the whole-window USD VWAP, so no print inside an ineligible slot can move its reading. The aligned gap `r` decides alone only when eligible slots hold a share `c` of at least 95% of the window's stablecoin volume, each side's whole-window quote volume is at least 50,000 quote units per hour of window, AND it passes the guard band `|r| + (1 − c) × R̂ × (1 + |r|) ≤ leg_dispersion_bps`. `R̂ = max / min − 1` (a ratio; ×10,000 for bps) over the VWAP of every slot in the window on either surface: each slot's stablecoin VWAP and each slot's USD VWAP (all venues), eligible or not, so the ineligible slots a trend could hide in are inside it. Otherwise the leg is judged by the larger of `r` and the whole-window VWAP gap (the whole-window gap alone with no eligible slot), so thin evidence is never judged more leniently than the whole-window compare.
+
+Why the band bounds a hidden de-peg: `r` counts every stablecoin slot in full; an ineligible slot `s` is compared with the whole-window USD VWAP `O`, so it reads `g_s = p_s(1 + d_s)/O − 1` where `p_s` is the true price and `d_s` the true de-peg there, and `d_s − g_s = (1 + d_s)(1 − p_s/O)`. `O` and every observed slot VWAP lie in `[min, max]`; if `p_s` does too, `|1 − p_s/O| ≤ R̂`, so the true proxy-weighted de-peg `D` satisfies `|D| ≤ |r| + (1 − c)(1 + d)R̂`, `d` the largest slot de-peg. The band then gives `|D| ≤ leg_dispersion_bps + ρ`, with residual `ρ = (1 − c)[R̂ × max(0, d − |r|) + (1 + d)(1 + R̂)E]`, where `E` is how far a USD-silent slot's true price lies outside the observed envelope (a slot with USD prints is inside it by construction). Worst case: a monotone trend with USD-silent slots at the leading edge, so `E` is the move across those slots: 15% a day with one silent hour gives `E ≈ 0.6%` and `ρ ≈ 3 bps` at `c = 95%`; with de-pegs up to 300 bps the `d` term adds at most `(1 − c)R̂ × 3% ≤ 2.3 bps`. Generated continuous trends (1–15%, 1–3 ineligible slots at either edge or mid-window, de-pegs to 300 bps) stayed within the bound, largest residual 2.8 bps. Eligible slots are assumed to price their stablecoin prints' instants (price motion inside one slot adds to `ρ`). Not covered: a true price spike inside a USD-silent slot, which no same-time evidence can separate from a de-peg.
+
+The price of that conservatism: under a pure trend, ineligible slots read their distance from the window's USD VWAP, so past the band the whole-window gap joins the verdict (with the old trend artefact when volume shifts during the day), and the leg refuses outright when ineligible share × that distance exceeds `leg_dispersion_bps` (one ineligible end hour of 24 at uniform volume: a move of ~46% over the window). Over 697 rolling 24h windows of 30 days of hourly production trades the band never bound: false alarms 34 for the whole-window compare, 7 with the floors below (571 windows decided alone).
+
+The floors, from 720 production hours of XLM/USD (USD venues coinbase, kraken, bitstamp; stablecoin binance USDT), per hour:
+
+| Measure | p1 | p5 | p25 | p50 | Floor |
+|---|---|---|---|---|---|
+| USD base (XLM) | 509k | 914k | 1.7M | 2.6M | 150k |
+| Stablecoin base (XLM) | 426k | 562k | 992k | 1.5M | 150k |
+| USD quote | 85k | 140k | 250k | 383k | 25k |
+| Stablecoin quote | 62k | 82k | 146k | 223k | 25k |
+| USD / stablecoin base | 0.46 | 0.69 | 1.16 | 1.62 | 1/3 |
+| Venue share: kraken / bitstamp | 8% / 2% | 11% / 3% | 18% / 6% | 27% / 9% | 10% |
+| Venue quote: kraken / bitstamp | 13.7k / 6.9k | 23k / 9.4k | 59k / 19k | 113k / 33k | 10k |
+
+Every floor sits under the observed p1 except the venue rules, which drop bitstamp in most hours by design. The USD:stablecoin base ratio trades false alarms against attack cost: at 1/4, 4 false alarms and 607 windows decided alone; at 1/3, 7 and 571; at 1/1, 39 (above the whole-window compare) and 130, since 5% of hours carry less USD than stablecoin volume. The values are constants in `internal/aggregate/orchestrator/quote_surface.go`.
+
+What a false pass buys, and what it costs. The check only decides whether a pivot leg whose prints are partly stablecoin-quoted (taken at par) may stand for USD. A leg that passes is used twice: `refuseProxyPivot` lets the triangulated composite be published to the chain target's VWAP cache key in place of the direct price, and the composite reference uses the leg to corroborate or refute an anomaly freeze of a single-venue target (it never enters that target's VWAP). Since the leg's price is the VWAP of all its prints, a hidden de-peg `d` on stablecoin share `s` moves it, and the composite priced through it, by about `s × d`. Masking a 2% de-peg on 30 days of XLM/USD 24h windows costs at least $5.9M of USD-venue prints at the stablecoin price (127% of the window's honest USD volume; the whole-window compare: $7.0M, 170%). In the synthetic thin-slot case (16 h of heavy stablecoin volume against thin USD) it costs 29% of stablecoin volume, 54% of honest USD volume (whole-window compare: 95%, 177%). Forcing a false refusal costs at least $12.9k (whole-window compare: $48k), and a refusal only falls back to the direct price. These figures come from a static model: the attacker's off-price prints are assumed to stand for the whole window with no reaction. On a real order book an off-price print has to trade through resting liquidity and arbitrageurs re-price it, so the attacker loses the spread on every unit and must keep paying for the whole window: the figures are a lower bound on cost, not an estimate of it.
+
+The log field `leg_quote_surface` reads `<leg>:<signed bps>/aligned=<n>,cover=<p>%` (decided alone on `n` eligible slots holding `p`% of stablecoin volume) or `/whole_window(overlap=<n>,cover=<p>%)` (coverage under 95%, either side's window quote volume under 50,000 an hour, or the reading outside the guard band, so the larger of the whole-window and aligned gaps judged; a refusing reading is always outside the band, so a refusal reads `whole_window` even at full coverage). Coverage is a share of the stablecoin volume that was fetched: when the window's trade read was capped, it says nothing about prints beyond the cap. `stellarindex_aggregator_quote_surface_bps{pair,window,leg}` carries the same signed value: positive means stablecoin prints sit above real-USD prints. A refusal means that value exceeded `leg_dispersion_bps`: the stablecoin prints and same-time real-USD prints disagree, or the evidence was too thin to tell and the whole-window compare refused.
+
+### Likely causes
+
+- A real stablecoin de-peg: the gap persists in every window (5m, 1h, 24h) with the same sign, and the stablecoin's own market (`USDC/fiat:USD`, `USDT/fiat:USD` prices on `/v1/price`, or the issuer's redemption status) shows the same move.
+- A trend artefact of the whole-window fallback: `whole_window(...)` on the 24h window during a strong move, while the 1h window's `quote_surface_bps` is inside the bound. More than 5% of stablecoin volume fell in ineligible slots (under two USD venues over the venue floor, those venues disagreeing, their volume under 1/3 of stablecoin volume, or either side under its base or quote floor), so the check could not rely on alignment alone; or the window as a whole carried under 50,000 quote units an hour on either side. `cover=` says how much was eligible.
+- Thin legs or dispersed venues: `leg_sources` / `leg_dispersion` causes; see the composite-reference config in `[aggregate.composite_reference]`.
+
+### Fix
+
+1. De-peg: no action on the aggregator; refusing the composite is the intended outcome. Track the stablecoin's peg and record it in the incident log.
+2. Trend artefact on `whole_window`: no action; it clears as the window rolls past the thin hours, once eligible slots hold at least 95% of stablecoin volume. If it recurs on `aligned=` readings with a quiet 1h window, capture both windows' `quote_surface_bps` and the log lines and escalate as a defect in the surface check.
+3. Do NOT raise `leg_dispersion_bps` or `tolerance_bps` to clear this alert: both also gate de-peg detection.
+
 ## Related
 
 - [Alerts catalogue](../alerts-catalog.md)

@@ -155,6 +155,27 @@ func TestProveInterest_Mismatches(t *testing.T) {
 			"default versions", func(p *proofFixture) { p.stored[1].Row.DefaultVersions = 1 },
 			"mismatch CPOOL CASSET " + h1 + " default_versions: stored 1, recomputed 0",
 		},
+		// The per-cause split: one column moved alone also breaks residual_explained's sum, so the stored
+		// values fail the in-line identity as well as the column compare.
+		{
+			"interest drawn", func(p *proofFixture) { p.stored[1].Row.InterestDrawn = big.NewInt(-7) },
+			"mismatch CPOOL CASSET " + h1 + " interest_drawn: stored -7, recomputed 0",
+		},
+		{
+			"gulped", func(p *proofFixture) { p.stored[1].Row.Gulped = big.NewInt(7) },
+			"mismatch CPOOL CASSET " + h1 + " gulped: stored 7, recomputed 0",
+		},
+		{
+			"reconcile backstop loss", func(p *proofFixture) { p.stored[1].Row.ReconcileBackstopLoss = big.NewInt(-7) },
+			"explained by cause: interest drawn 0 (≤ 0) + gulped 0 (≥ 0) + reconcile backstop loss -7 (≤ 0)",
+		},
+		// A split moved between causes keeps the sum, so only the column compare catches it.
+		{
+			"split moved between causes", func(p *proofFixture) {
+				p.stored[1].Row.InterestDrawn, p.stored[1].Row.Gulped = big.NewInt(-7), big.NewInt(7)
+			},
+			"mismatch CPOOL CASSET " + h1 + " gulped: stored 7, recomputed 0",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := newProofFixture(t)
@@ -176,7 +197,7 @@ func TestProveInterest_StaleRevisionIsIncomplete(t *testing.T) {
 	p.stored[2].Row.UnreconciledVersions++ // nor is its unclassified version an unexplained one
 	out, gauge, err := p.prove(t, lendingRun{})
 	if err == nil || !strings.Contains(err.Error(), "INCOMPLETE") || gauge != "0" || !strings.Contains(out, "unexplained versions 4\n") || // the other three rows' alone
-		!strings.Contains(out, "derive_rev 1, this binary derives 3") || !strings.Contains(out, "3 hours proved, 0 mismatched, 1 INCOMPLETE") {
+		!strings.Contains(out, "derive_rev 1, this binary derives 4") || !strings.Contains(out, "3 hours proved, 0 mismatched, 1 INCOMPLETE") {
 		t.Fatalf("err %v gauge %s:\n%s", err, gauge, out)
 	}
 }

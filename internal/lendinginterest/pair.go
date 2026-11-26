@@ -604,6 +604,7 @@ func (st *state) row(proto Protocol, v Version) *HourRow {
 		SupplierRealised: new(big.Int), BackstopCreditDelta: new(big.Int), BackstopResidual: new(big.Int),
 		SupplyResidual: new(big.Int), DefaultLoss: new(big.Int), FeeCreditResidual: new(big.Int), ExcludedCreditDelta: new(big.Int),
 		ResidualExplained: new(big.Int), ResidualAttributed: new(big.Int), ResidualUnexplained: new(big.Int),
+		InterestDrawn: new(big.Int), Gulped: new(big.Int), ReconcileBackstopLoss: new(big.Int),
 		FeeOnlyCreditDelta: new(big.Int), FeeOnlyCarryDelta: new(big.Int),
 	}
 	st.rows[k] = r
