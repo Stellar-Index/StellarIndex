@@ -14,9 +14,11 @@ const surfaceTol = 75
 
 // surfaceOracle is the quote-surface reading recomputed here from raw sums, independently of the code under test: whole is the
 // whole-window gap; gaps every proxy-bearing slot's gap (eligible: vs its own-quote VWAP; else vs the whole-window own VWAP); aligned their proxy-weighted mean (nil with no eligible slot); coverage the eligible share of
-// proxy volume; decides whether it is >= 95 %; verdict the gap the leg is judged by.
+// proxy volume; lo/hi/rng the envelope of every slot's proxy and own VWAP and its relative range R̂; decides whether coverage is
+// >= 95 % and the guard band holds; verdict the gap the leg is judged by.
 type surfaceOracle struct {
 	whole, aligned, coverage, verdict *big.Rat
+	lo, hi, rng                       *big.Rat
 	gaps                              []*big.Rat
 	eligible                          int
 	decides                           bool
@@ -98,6 +100,17 @@ func surfaceOracleFor(trades []canonical.Trade, proxied map[string]struct{}, slo
 	out := surfaceOracle{whole: relGap(proxy.price(), own.price())}
 	weighted, covered := new(big.Rat), new(big.Int)
 	for _, s := range slots {
+		for _, side := range []sums{s.proxy, s.own} {
+			if side.base != nil {
+				p := side.price()
+				if out.lo == nil || p.Cmp(out.lo) < 0 {
+					out.lo = p
+				}
+				if out.hi == nil || p.Cmp(out.hi) > 0 {
+					out.hi = p
+				}
+			}
+		}
 		if s.proxy.base == nil {
 			continue
 		}
@@ -112,10 +125,15 @@ func surfaceOracleFor(trades []canonical.Trade, proxied map[string]struct{}, slo
 		weighted.Add(weighted, new(big.Rat).Mul(g, new(big.Rat).SetInt(s.proxy.base)))
 	}
 	out.coverage = new(big.Rat).SetFrac(covered, proxy.base)
-	out.decides = out.coverage.Cmp(big.NewRat(19, 20)) >= 0
+	out.rng = new(big.Rat).Sub(new(big.Rat).Quo(out.hi, out.lo), big.NewRat(1, 1))
 	out.verdict = out.whole
 	if out.eligible > 0 {
 		out.aligned = weighted.Quo(weighted, new(big.Rat).SetInt(proxy.base))
+		// Guard band: |r| + (1-c)·R̂·(1+|r|) <= tolerance.
+		abs := new(big.Rat).Abs(out.aligned)
+		band := new(big.Rat).Sub(big.NewRat(1, 1), out.coverage)
+		band.Mul(band, out.rng).Mul(band, new(big.Rat).Add(big.NewRat(1, 1), abs)).Add(band, abs)
+		out.decides = out.coverage.Cmp(big.NewRat(19, 20)) >= 0 && band.Cmp(big.NewRat(surfaceTol, 10_000)) <= 0
 		out.verdict = out.aligned
 		if !out.decides && new(big.Rat).Abs(out.whole).Cmp(new(big.Rat).Abs(out.aligned)) > 0 {
 			out.verdict = out.whole
@@ -206,8 +224,8 @@ func TestQuoteSurface_ExtraVenueCannotMaskADepegCheaperThanWholeWindow(t *testin
 	agreeing := func(off time.Duration) *big.Rat { return new(big.Rat).Mul(flat(off), big.NewRat(10_000, 10_074)) }
 	for _, k := range []int64{100, 1000, 10_000} {
 		trades, proxied := build(k, agreeing)
-		if lr := readSurface(t, window, trades, proxied); lr.quoteSurfaceRefusal(surfaceTol) == "" || !lr.surfaceAligned {
-			t.Errorf("agreeing attacker at %d %%: gap %.1f bps aligned=%v, want refused on the aligned reading", k, gapBps(lr), lr.surfaceAligned)
+		if lr := readSurface(t, window, trades, proxied); lr.quoteSurfaceRefusal(surfaceTol) == "" || gapBps(lr) > -125 {
+			t.Errorf("agreeing attacker at %d %%: gap %.1f bps, want refused at <= -125 bps", k, gapBps(lr))
 		}
 	}
 }
@@ -519,21 +537,22 @@ func TestQuoteSurface_IneligibleSlotPrintCannotCancelADepeg(t *testing.T) {
 		return tk
 	})
 	lr := readSurface(t, 24*time.Hour, trades, proxied)
-	if lr.quoteSurfaceRefusal(surfaceTol) == "" || gapBps(lr) < 99 || !lr.surfaceAligned {
-		t.Errorf("gap %.1f bps aligned=%v, want ~+100 bps refused on the aligned reading", gapBps(lr), lr.surfaceAligned)
+	if lr.quoteSurfaceRefusal(surfaceTol) == "" || gapBps(lr) < 99 {
+		t.Errorf("gap %.1f bps aligned=%v, want ~+100 bps refused", gapBps(lr), lr.surfaceAligned)
 	}
 }
 
 // The cost of judging ineligible slots against the whole-window reference: under a pure trend an
 // ineligible slot reads its price's distance from the window's USD VWAP. One ineligible end hour (4.2 % of proxy volume, so the
-// aligned reading still decides) sits ~0.48m/(1+m/2) above the VWAP of a linear move m: a 6 %, 30 % or 40 % move passes (~+12, ~+53,
-// ~+67 bps), a 50 % move refuses (~+80 bps; the threshold is ~46 %). In general a pure trend refuses only when ineligible share x
-// distance from the window VWAP > 75 bps.
+// coverage is 95.8 %) sits ~0.48m/(1+m/2) above the VWAP of a linear move m, reading r ~ 1/24 of that. The guard band lets r decide
+// alone while |r| + (1/24)·R̂·(1+|r|) <= 75 bps, R̂ ~ m: up to m ~ 12 % (6 %: r ~ +12, band ~ +37 bps). Beyond it the whole-window gap
+// joins; with volume uniform across the day that gap is ~0, so 15 % and 40 % still pass (~+28, ~+67 bps) and 50 % refuses (~+80 bps,
+// threshold ~46 %). Under shifted volume the whole-window gap is the old trend artefact, so past the band the old false alarm returns.
 func TestQuoteSurface_TrendWithIneligibleSlotsPassesWhileTheirShareIsSmall(t *testing.T) {
 	for _, tc := range []struct {
-		movePct int64
-		refused bool
-	}{{6, false}, {30, false}, {40, false}, {50, true}} {
+		movePct        int64
+		refused, alone bool
+	}{{6, false, true}, {15, false, false}, {40, false, false}, {50, true, false}} {
 		price := func(off time.Duration) *big.Rat {
 			frac := new(big.Rat).SetFrac64(int64(off), int64(24*time.Hour))
 			return new(big.Rat).Mul(big.NewRat(12, 100), frac.Mul(frac, big.NewRat(tc.movePct, 100)).Add(frac, big.NewRat(1, 1)))
@@ -545,9 +564,9 @@ func TestQuoteSurface_TrendWithIneligibleSlotsPassesWhileTheirShareIsSmall(t *te
 			}
 		})
 		lr := readSurface(t, 24*time.Hour, trades, proxied)
-		if got := lr.quoteSurfaceRefusal(surfaceTol) != ""; got != tc.refused || !lr.surfaceAligned || lr.surfaceOverlap != 23 {
-			t.Errorf("%d %% move, last hour ineligible: refused=%v gap %.1f bps aligned=%v overlap=%d, want refused=%v decided alone",
-				tc.movePct, got, gapBps(lr), lr.surfaceAligned, lr.surfaceOverlap, tc.refused)
+		if got := lr.quoteSurfaceRefusal(surfaceTol) != ""; got != tc.refused || lr.surfaceAligned != tc.alone || lr.surfaceOverlap != 23 {
+			t.Errorf("%d %% move, last hour ineligible: refused=%v gap %.1f bps aligned=%v overlap=%d, want refused=%v aligned=%v",
+				tc.movePct, got, gapBps(lr), lr.surfaceAligned, lr.surfaceOverlap, tc.refused, tc.alone)
 		}
 	}
 }

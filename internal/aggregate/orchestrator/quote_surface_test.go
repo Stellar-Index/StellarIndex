@@ -154,8 +154,9 @@ func TestQuoteSurface_PersistentBasisIsRefused(t *testing.T) {
 		if lr.quoteSurfaceRefusal(surfaceTol) == "" {
 			t.Errorf("%s: not refused (gap %.1f bps), want a -100 bps basis refused", name, gapBps(lr))
 		}
-		if g := gapBps(lr); g < -101 || g > -99 || !lr.surfaceAligned {
-			t.Errorf("%s: gap %.1f bps aligned=%v, want ~-100 decided alone", name, g, lr.surfaceAligned)
+		// A refusing reading is outside the guard band, so the verdict is the larger of it and the whole-window gap.
+		if g := gapBps(lr); g > -99 {
+			t.Errorf("%s: gap %.1f bps, want <= ~-100", name, g)
 		}
 	}
 }
@@ -184,8 +185,8 @@ func TestQuoteSurface_PartialDepegIsJudgedByItsWeightedMean(t *testing.T) {
 			return surfaceTick{proxyPrice: proxy, ownPrice: ramp(off), proxyBase: xlm(100), ownBase: xlm(100)}
 		})
 		lr := readSurface(t, tc.window, trades, proxied)
-		if got := lr.quoteSurfaceRefusal(surfaceTol) != ""; got != tc.refused || !lr.surfaceAligned {
-			t.Errorf("window %v, %+d bps over the last %v: refused=%v aligned=%v (gap %.1f bps), want refused=%v aligned",
+		if got := lr.quoteSurfaceRefusal(surfaceTol) != ""; got != tc.refused || lr.surfaceAligned == tc.refused {
+			t.Errorf("window %v, %+d bps over the last %v: refused=%v aligned=%v (gap %.1f bps), want refused=%v, aligned iff passing",
 				tc.window, tc.bps, tc.last, got, lr.surfaceAligned, gapBps(lr), tc.refused)
 		}
 	}
@@ -270,20 +271,28 @@ func TestQuoteSurface_DeterministicUnderShuffle(t *testing.T) {
 	}
 }
 
-// Single-print slots above 2^100 stay exact: an exact 0.8 % basis reads exactly 1/125.
+// Single-print slots above 2^100 stay exact: an exact 0.4 % basis reads exactly 1/250 on the aligned reading, and an exact 0.8 %
+// basis exactly 1/125.
 func TestQuoteSurface_ExactAboveTwoToTheHundred(t *testing.T) {
 	huge := new(big.Int).Lsh(big.NewInt(1), 101)
-	trades, proxied := buildSurface(t, 5*time.Minute, time.Minute, func(off time.Duration) surfaceTick {
-		base := new(big.Int).Add(huge, big.NewInt(int64(off/time.Minute)))
-		base.Mul(base, big.NewInt(1_000_000))
-		return surfaceTick{proxyPrice: basis(flat(off), 80), ownPrice: flat(off), proxyBase: base, ownBase: base}
-	})
-	lr := readSurface(t, 5*time.Minute, trades, proxied)
-	if lr.surfaceGap == nil || lr.surfaceGap.Cmp(big.NewRat(1, 125)) != 0 || !lr.surfaceAligned {
-		t.Fatalf("gap = %v aligned=%v, want exactly 1/125 aligned", lr.surfaceGap, lr.surfaceAligned)
-	}
-	if lr.quoteSurfaceRefusal(surfaceTol) == "" {
-		t.Error("an exact 80 bps basis was not refused")
+	for _, tc := range []struct {
+		bps     int64
+		want    *big.Rat
+		refused bool
+	}{{40, big.NewRat(1, 250), false}, {80, big.NewRat(1, 125), true}} {
+		trades, proxied := buildSurface(t, 5*time.Minute, time.Minute, func(off time.Duration) surfaceTick {
+			base := new(big.Int).Add(huge, big.NewInt(int64(off/time.Minute)))
+			base.Mul(base, big.NewInt(1_000_000))
+			return surfaceTick{proxyPrice: basis(flat(off), tc.bps), ownPrice: flat(off), proxyBase: base, ownBase: base}
+		})
+		lr := readSurface(t, 5*time.Minute, trades, proxied)
+		if lr.surfaceGap == nil || lr.surfaceGap.Cmp(tc.want) != 0 || lr.surfaceAligned == tc.refused {
+			t.Errorf("%d bps: gap = %v aligned=%v, want exactly %s, aligned iff passing", tc.bps, lr.surfaceGap, lr.surfaceAligned,
+				tc.want.RatString())
+		}
+		if got := lr.quoteSurfaceRefusal(surfaceTol) != ""; got != tc.refused {
+			t.Errorf("%d bps: refused=%v, want %v", tc.bps, got, tc.refused)
+		}
 	}
 }
 
