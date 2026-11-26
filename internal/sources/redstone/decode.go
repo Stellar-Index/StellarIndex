@@ -157,7 +157,7 @@ func orientedPrice(entry feedEntry, raw canonical.Amount) (price canonical.Amoun
 
 // resolveFeedEntry returns feedID's registry entry, else its raw:<feed_id> entry. Capture-totality:
 // skipping unregistered feeds lost ~5,600 events after the ledger-63624934 relayer expansion until a
-// replay; a raw row lands now and is promoted in place by a later registry entry. Misses are counted.
+// replay; a raw row lands now and is promoted in place by a later registry entry. Misses are counted unless kept raw by design.
 func resolveFeedEntry(feedID string) (feedEntry, error) {
 	if entry, ok := lookupFeed(feedID); ok {
 		return entry, nil
@@ -166,7 +166,9 @@ func resolveFeedEntry(feedID string) (feedEntry, error) {
 	if err != nil {
 		return feedEntry{}, err
 	}
-	obs.SourceUnknownSymbolsTotal.WithLabelValues("redstone").Inc()
+	if _, kept := keptRawFeeds[feedID]; !kept {
+		obs.SourceUnknownSymbolsTotal.WithLabelValues("redstone").Inc()
+	}
 	return entry, nil
 }
 

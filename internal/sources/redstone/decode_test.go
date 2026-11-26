@@ -423,6 +423,58 @@ func TestFeedRegistry_UniquePairs(t *testing.T) {
 	}
 }
 
+// A kept-raw feed_id is off-registry by definition: registering it would map it, so being in both is a contradiction.
+// Every entry carries its reason.
+func TestKeptRawFeeds_DisjointFromRegistry(t *testing.T) {
+	for feedID, reason := range keptRawFeeds {
+		if _, mapped := feedRegistry[feedID]; mapped {
+			t.Errorf("feed %q is in both feedRegistry and keptRawFeeds", feedID)
+		}
+		if strings.TrimSpace(reason) == "" {
+			t.Errorf("keptRawFeeds[%q] has no reason", feedID)
+		}
+		if _, err := rawFeedEntry(feedID); err != nil {
+			t.Errorf("keptRawFeeds[%q] is unrepresentable as raw (it would be dropped, not kept): %v", feedID, err)
+		}
+	}
+}
+
+// A kept-raw feed writes the same raw row as any unregistered feed but is not a mapping gap, so the unknown counter stays put;
+// an unlisted unknown feed in the same batch still counts.
+func TestDecode_KeptRawFeed_RecordedRawButNotCountedUnknown(t *testing.T) {
+	const pps = "earnUSDC_PPS_FUNDAMENTAL/USD"
+	recorded := obs.SourceUnknownSymbolsTotal.WithLabelValues(SourceName)
+
+	before := testutil.ToFloat64(recorded)
+	updates := decodeBatch(t, []string{"BTC", pps}, []int64{oneBTCAt8, 1_02120604})
+	if got := testutil.ToFloat64(recorded) - before; got != 0 {
+		t.Errorf("unknown_symbols_total rose by %v for kept-raw %q, want 0", got, pps)
+	}
+	if len(updates) != 2 {
+		t.Fatalf("expected 2 updates (BTC + raw PPS), got %d", len(updates))
+	}
+	wantBase, _ := canonical.NewOracleRawAsset(pps)
+	u := updates[1]
+	if !u.Asset.Equal(wantBase) || u.Asset.IsMapped() {
+		t.Errorf("Asset = %s, want %s (unmapped)", u.Asset, wantBase)
+	}
+	if !u.Quote.Equal(quoteUSD) {
+		t.Errorf("Quote = %s, want fiat:USD", u.Quote)
+	}
+	if u.Price.BigInt().Cmp(big.NewInt(1_02120604)) != 0 || u.PublishedPrice != nil {
+		t.Errorf("Price = %s PublishedPrice = %v, want 102120604 verbatim and no published override", u.Price, u.PublishedPrice)
+	}
+	if u.OpIndex != 1 {
+		t.Errorf("OpIndex = %d, want 1 (its own vector slot)", u.OpIndex)
+	}
+
+	before = testutil.ToFloat64(recorded)
+	decodeBatch(t, []string{pps, "NOTAFEED"}, []int64{1_02120604, 9_000_000})
+	if got := testutil.ToFloat64(recorded) - before; got != 1 {
+		t.Errorf("unknown_symbols_total rose by %v, want 1 (only the unlisted NOTAFEED)", got)
+	}
+}
+
 // The relayer expansion (ledger 63624934) published 11 feed_ids outside the
 // original registry; an all-new batch must decode, not fail whole with ErrEmptyUpdates.
 // Mapping verified live (see feeds.go).

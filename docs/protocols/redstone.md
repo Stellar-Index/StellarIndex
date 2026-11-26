@@ -137,6 +137,38 @@ suffixes. Two correctness consequences:
   byte outside printable ASCII) IS dropped, on its own counter
   `stellarindex_source_unrepresentable_symbols_total` and its own
   `ticket`-severity alert.
+- **A feed_id in `keptRawFeeds`** (`feeds.go`) is known and
+  deliberately left unmapped. It writes the same `raw:<feed_id>` row
+  as any unregistered feed but does not count on the unknown-symbols
+  counter, because it is not a mapping gap. Matching is exact; each
+  entry carries its reason, and `TestKeptRawFeeds_DisjointFromRegistry`
+  fails if an id is in both maps. The raw row is visible on
+  `/v1/oracle/streams?include_unmapped=true`.
+
+### `earnUSDC_PPS_FUNDAMENTAL/USD` (kept raw)
+
+Published since 2026-10-30, about twice a day, at 8 decimals. Its
+value is the earnUSDC vault share price in the same range as the
+mapped `earnUSDC_FUNDAMENTAL/USD`, but not equal to it: 1.02120604 on
+2026-11-26 09:52Z against 1.02170661 (`/USD`) and 1.02188183 (USDC)
+at 14:20Z. A gap that size is far more than a few hours of vault
+yield.
+
+What "PPS" means to RedStone, and how it differs from
+`_FUNDAMENTAL`, is not documented anywhere we have; treat it as
+unknown. Mapping it onto the vault contract would need a quote no
+earnUSDC feed already uses, and both `crypto:USDC` and `fiat:USD` are
+taken. `oracle_updates` and every reader key a stream on
+`(source, asset, quote)` with no feed dimension, so a shared pair
+would interleave the two series: the served latest would flip
+between them and the daily `last_price` would be whichever came last.
+`TestFeedRegistry_UniquePairs` refuses that. A separate crypto code
+would key the vault share on a ticker instead of its contract.
+
+So it stays raw. The real fix is a feed dimension on
+`oracle_updates` and its readers; with that, it can map to the vault
+as its own stream, and a re-derive promotes the raw rows in place
+(the PK does not include `asset`).
 
 ### 2026-07-24 relayer expansion (ledger 63624934)
 
