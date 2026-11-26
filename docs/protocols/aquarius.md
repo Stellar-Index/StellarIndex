@@ -229,25 +229,34 @@ family is caught only by re-running that audit.
 ### Concentrated-liquidity pools
 
 The router's `add_pool` body is `Vec[Address(pool), Symbol(pool_type), …]`.
-Three `add_pool` events after router ledger 65,663,788 announce pools of
-type `concentrated` (the first two, at 65,675,280 and 65,675,307, announce
-`CBQ6AGQYE5HCDK7VIDUH6756IFPBTLF2HNQH57DAFMOHK3CVDH4CAMXO` and
-`CABOSWXYBLE2UJKYWITFRICR37D4UOB75CNXIH7VI5ZKKL526GFHXAUI`). On
-`CABOSWXY…` their `trade` and `update_reserves` bodies have the classic
-shape, but `deposit_liquidity` (3 topics, 3×i128, the same arity as a
-two-token classic pool) is ordered `[liquidity, amount0, amount1]`, not
-`[amount0, amount1, shares]`: the same-tx `update_reserves` grows by
-`amount0`/`amount1` and `position_update` carries `liquidity`.
+Every `add_pool` body seen so far names type `concentrated`: the three after
+router ledger 65,663,788 (65,675,280 / 65,675,307 / 65,675,330:
+`CBQ6AGQYE5HCDK7VIDUH6756IFPBTLF2HNQH57DAFMOHK3CVDH4CAMXO`,
+`CABOSWXYBLE2UJKYWITFRICR37D4UOB75CNXIH7VI5ZKKL526GFHXAUI`,
+`CCKMZ2K3ZKDETW54TFENFB34IJ67UFBI4R4RXUEY5PXKCDLBOXNIJH2B`) and the three
+most recent before the router upgrade (65,509,880 – 65,513,391:
+`CCGTSQ3AR4OUYET5WEIGLL5BNYMDFRNTWVCDO2BSW5Q4SYZLRFYSD2BU`,
+`CBN5TT6BUFISJTSST2TXPD2H37H7I7KHFUX6MLQVGUK2PMX6VO6B24B4`,
+`CANVVFXNIB7JKXLO2QB74BPQIBOSE73G7ABAQDU5FJQ4XOYTGVUOVDVN`). No classic type
+name has been seen in `add_pool` bytes.
+
+On `CABOSWXY…` and `CBQ6AGQY…` (both on pool WASM `155a17b9…`), `trade` and
+`update_reserves` have the classic shape, but `deposit_liquidity` (3 topics,
+3×i128, the same arity as a two-token classic pool) is ordered
+`[liquidity, amount0, amount1]`, not `[amount0, amount1, shares]`: in every
+deposit transaction `update_reserves` equals the running sums of `amount0` /
+`amount1` and `position_update`'s delta equals `liquidity`.
 `withdraw_liquidity` has not been observed on a concentrated pool.
 
 The decoder keeps a per-pool liquidity layout in the gate. A pool is
-`concentrated` when its `add_pool` says so or it is in
-`aquarius.MainnetConcentratedPools`; it is shares-last when it is in
-`MainnetPools` or the router announced it at or before ledger 65,663,788
-(`protocol_contracts.first_ledger` after a restart). Any other pool's
-liquidity events are refused (`ErrUnknownLiquidityLayout`), as is a
-concentrated `withdraw_liquidity` (`ErrUnverifiedLiquidityLayout`); both
-count as projector `decode_error`. A concentrated deposit's
+`concentrated` when its `add_pool` names that type or it is in
+`aquarius.MainnetConcentratedPools` (the three post-upgrade pools); it is
+shares-last when it is in `MainnetPools`. Any other pool's liquidity events
+are refused (`ErrUnknownLiquidityLayout`), as is a concentrated
+`withdraw_liquidity` (`ErrUnverifiedLiquidityLayout`); both count as
+projector `decode_error`, and the decode-failed log line carries the error.
+The three pre-upgrade concentrated pools are deliberately not listed: their
+pool WASM and deposit order are not yet checked. A concentrated deposit's
 `aquarius_liquidity` rows carry the two token amounts and `shares` NULL:
 the pool mints no LP shares, and its liquidity is in the
 `position_update` row of `aquarius_rewards_events`.

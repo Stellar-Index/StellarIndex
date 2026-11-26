@@ -432,6 +432,31 @@ same change in the pool and router together, and it is not a token transfer.
 This is a string, shape and six-event decode check only; the decoder was not
 re-run against a replay. The hash is in `audited_wasm.json`.
 
+## Event-shape check — concentrated pools on `155a17b9…`, 2026-11-26
+
+`155a17b9929ffb1f9e84bd6ef5c00a4d613c1ab5f4ad4c502d84515250cc2907` was already
+in `audited_wasm.json` from the 2026-10-08 string check (41 contracts then).
+The concentrated pools `CABOSWXY…XAUI` and `CBQ6AGQY…CAMXO` run it at every
+ledger their events were captured at (`stellar.contract_instance_changes`).
+No new byte search was run for this entry; it rests on event shape only.
+
+Fixtures: `test/fixtures/aquarius/155a17b9…/` holds every `deposit_liquidity`
+the two pools emitted (four), each with the same-transaction
+`update_reserves`, `position_update` and `pool_state`, and `CABOSWXY…`'s one
+`trade` with its `update_reserves` and `pool_state`; the router's third
+concentrated `add_pool` (65,675,330) is under `2f8e7d7f…/`.
+`TestConcentratedDeposit_fixturesCrossCheckAgainstSameTxEvents` asserts, per
+deposit transaction, that body[0] equals the `position_update` delta and that
+`update_reserves` equals the running sums of body[1] and body[2];
+`TestConcentratedTrade_reserveMovesByBoughtAmount` asserts the trade lowers
+reserve[0] by exactly the bought amount. The trade (fee 13 on 12,635 sold, the
+pool's `add_pool` announcing 10 bps) is too small to tell the gross and net fee
+conventions apart, so it is not in the fee census.
+
+Not established: whether the other contracts on this hash are concentrated
+pools, the `withdraw_liquidity` order, and the order on the three
+pre-upgrade concentrated pools.
+
 ## Caveats
 
 - **Per-pool WASM history walked end-to-end as of 2026-04-30.**
