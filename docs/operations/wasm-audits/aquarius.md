@@ -1,6 +1,6 @@
 ---
 title: Aquarius WASM-history audit
-last_verified: 2026-10-08
+last_verified: 2026-11-26
 status: ratified — v2 per-cohort walk complete
 source: aquarius
 backfill_safe: true
@@ -322,6 +322,85 @@ reserve rows for their windows; nothing is misread.
 
 A string check does not see topic order or body shape. All 22 are in
 `audited_wasm.json`.
+
+## Per-hash check — router upgrade, 2026-11-26
+
+The router (`CBQDHNBF…`) was upgraded in place to a new build, which the daily
+`stellarindex-ops wasm-drift` run reported as drift. Same method as the
+2026-10-08 check above, read-only against the production lake.
+
+| hash | role | contracts | first ledger |
+| --- | --- | --- | --- |
+| `2f8e7d7f…` | router | 1 | 65,663,788 |
+
+`first ledger` is the ledger the router began running the build, here its
+`apply_upgrade` event. The contract_code entry was created earlier, at ledger
+65,526,037 (2026-11-17), and the router emitted `commit_upgrade` at ledger
+65,560,332.
+
+- Bytes: the blob in `stellar.ledger_entries_current` (`entry_type =
+  'contract_code'`, base64 length 67,804) was byte-searched for the router
+  literals the decoder watches: `config_rewards` and `set_rewards_config` are
+  both present.
+- Shapes: every event the router emitted over ledgers 65,500,000 – 65,678,466,
+  a window spanning the upgrade, has exactly one (topic count, body length)
+  shape per topic, so no shape changed across the upgrade.
+
+| topic | topics | body length | events |
+| --- | --- | --- | --- |
+| `swap` | 3 | 232 | 62,896 |
+| `claim` | 3 | 152 | 322 |
+| `deposit` | 3 | 168 | 191 |
+| `withdraw` | 3 | 168 | 37 |
+| `config_rewards` | 2 | 112 | 1,082 |
+| `add_pool` | 2 | 188 | 6 |
+| `commit_upgrade` | 1 | 72 | 1 |
+| `apply_upgrade` | 1 | 72 | 1 |
+
+A second byte-search of the same blob for the other router literals
+`add_pool`, `apply_upgrade`, `commit_upgrade`, `pool_gauge_switch_token`,
+`set_privileged_addrs`, `commit_transfer_ownership`,
+`apply_transfer_ownership` and `emergency` found all of them present.
+
+Fixtures: `test/fixtures/aquarius/2f8e7d7f…/` holds four router events emitted
+after `apply_upgrade`: two `add_pool` (ledgers 65,675,280 and 65,675,307) and
+two `config_rewards` (ledger 65,667,281, event indexes 1 and 3).
+`TestRouterUpgradeFixtures_addPool` and `TestRouterUpgradeFixtures_configRewards`
+(`internal/sources/aquarius/router_upgrade_fixture_test.go`) run the decoder
+over them and compare against values hand-decoded from the raw XDR, listed
+below, so the expected values do not come from the decoder.
+
+Byte offsets in the base64-decoded XDR (big-endian words):
+
+| event | field | offset | hand-decoded value |
+| --- | --- | --- | --- |
+| `add_pool` 65,675,280 | body Vec header: type `0x10`, present, count | 0 – 11 | count 4 |
+| | body[0] pool address (type `0x12`, kind 1, 32 bytes) | 12 – 51 | `CBQ6AGQYE5HCDK7VIDUH6756IFPBTLF2HNQH57DAFMOHK3CVDH4CAMXO` |
+| | body[1] symbol | after address | `concentrated` |
+| | topic[1] Vec of 2 addresses | 12, 52 | `CAUIKL3IYGMERDRUN6YSCLWVAKIFG5Q4YJHUKM4S4NJZQIA3BAS6OJPK`, `CB3YA656OYIHU57657I5KGSBRHE5I3OZU4VFC22PYAOANFZHEWNYGAGP` |
+| `add_pool` 65,675,307 | body[0] pool address | 12 – 51 | `CABOSWXYBLE2UJKYWITFRICR37D4UOB75CNXIH7VI5ZKKL526GFHXAUI` |
+| | body[1] symbol | after address | `concentrated` |
+| | topic[1] Vec of 2 addresses | 12, 52 | `CAUIKL3IYGMERDRUN6YSCLWVAKIFG5Q4YJHUKM4S4NJZQIA3BAS6OJPK`, `CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF` |
+| `config_rewards` index 3 | body[0] pool address | 12 – 51 | `CDRRS2SLIP7THFGUZVB4QL2RAM2ZHSDMAD2GL5GEXTKK5AY3DQUX3Y7N` |
+| | body[1] u128 (type 9, hi at 56, lo at 64) | 52 – 71 | hi 0, lo 3,316,077 |
+| | body[2] u64 (type 5, value at 76) | 72 – 83 | 1,795,666,520 |
+| `config_rewards` index 1 | body[0] pool address | 12 – 51 | `CAAJYIESEIKI7KZV67MBSXPCRGKH5WY354WUS55H4UNBD35OSKYPZA7Q` |
+| | body[1] u128 | 52 – 71 | hi 0, lo 3,831,913 |
+| | body[2] u64 | 72 – 83 | 1,795,666,520 |
+
+The two `add_pool` events announce pools of type `concentrated`; the decoder
+registers each announced address in its contract-identity gate and emits no
+event, and does not branch on pool type. The two announced pools are not
+`CBTOQ7X7TLDBRHJW4UYUDR7WR4NAYESZA7FYUZVLAN2JLQG5ZXWJJIG6`.
+
+Limit of the amount check: the `config_rewards` amounts are compared with
+values read from the same event's bytes. There is no same-transaction token
+transfer or pool-side `set_rewards_config` event in the fixtures to cross-check
+the scale or sign of the u128, so a scale change in the amount is not ruled out
+by this fixture. The `add_pool` events carry no amount.
+
+This is a string, shape and four-event decode check only; the decoder was not
+re-run against a replay. The hash is in `audited_wasm.json`.
 
 ## Caveats
 

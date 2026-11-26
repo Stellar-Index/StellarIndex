@@ -51,6 +51,10 @@ func TestEndToEndRouting_withRealFixtures(t *testing.T) {
 	for _, source := range []string{"reflector", "aquarius", "soroswap", "phoenix", "comet"} {
 		files := orderedFixturesForReplay(t, source, findFixtures(t, source))
 		for _, fixPath := range files {
+			// Non-trade aquarius fixtures (add_pool, config_rewards) are covered by the aquarius package's own tests.
+			if source == "aquarius" && !strings.HasPrefix(filepath.Base(fixPath), "trade_") {
+				continue
+			}
 			evs := loadEventsFromFixture(t, source, fixPath)
 			eventsSeen[source] += len(evs)
 			for _, ev := range evs {
