@@ -22,6 +22,14 @@ Interest per reserve of a Blend V1, Blend V2 or BLNT pool, per hour or day, in t
 its value in USD beside it. It is summed from the derived hourly interest record (`lending_interest_hourly`); hours that record does not cover, or
 that a pending re-derive will rewrite, are left out and named.
 
+This endpoint prices over the window you ask for: one price walk covers the whole window, and each hour takes that walk's
+price. The daily totals the rollup stores (`lending_revenue_usd_daily`) are priced day by day instead: each hour takes the
+price a walk of its own UTC day gives. The two agree exactly, except for a market that trades on some days and not on
+others. There, a walk over a long window finds the market's own prices and leaves the quiet days unpriced, while a walk of
+one quiet day finds none and may fall back to the price derived through XLM. That day is then priced in the daily totals
+and not on this endpoint. A day whose walk failed or was cut short is not stored, and neither is a reserve refused by a
+current verdict (a scam issuer, a thin latest market, an operator withholding). Readers count those days as not valued.
+
 | Field | What it means |
 |---|---|
 | `interest_accrued` | Interest borrowers owe. It is booked when the reserve is next touched on chain, so it lands in the hour of that touch, not spread over the hours it built up in. |

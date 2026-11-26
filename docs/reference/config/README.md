@@ -308,6 +308,12 @@ the `env:` column.
 | --- | ---- | ------- | ------------ | ----------- |
 | `price_alerts.enabled` | `bool` | `false` | — | Start the price-alert evaluator loop in the aggregator. Off by default. |
 
+### `[lending_revenue_rollup]`
+
+| Key | Type | Default | Env override | Description |
+| --- | ---- | ------- | ------------ | ----------- |
+| `lending_revenue_rollup.enabled` | `bool` | `false` | — | Start the lending revenue USD rollup in the API binary: it values each pool reserve's interest per UTC day into lending_revenue_usd_daily, one writer under an advisory lock. Off by default. The archival-node ansible role renders it from the stellarindex_lending_revenue_rollup_enabled inventory variable, itself default false. |
+
 ### `[signup_reaper]`
 
 | Key | Type | Default | Env override | Description |

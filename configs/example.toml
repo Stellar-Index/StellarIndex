@@ -913,6 +913,14 @@ enabled          = false
 enabled              = true
 
 # ──────────────────────────────────────────────────────────────────
+# Lending revenue USD rollup (migration 0239): values each pool reserve's
+# interest per UTC day into lending_revenue_usd_daily, in the API binary.
+# One writer under an advisory lock. Off by default.
+# ──────────────────────────────────────────────────────────────────
+[lending_revenue_rollup]
+enabled              = false
+
+# ──────────────────────────────────────────────────────────────────
 # HashDB — ADR-0016 drift detector. The indexer's live LCM read loop
 # appends sha256(LCM) per ledger; a periodic sweep re-reads a recent
 # window from the same bucket and compares, catching upstream

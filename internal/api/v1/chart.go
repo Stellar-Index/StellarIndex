@@ -768,6 +768,15 @@ type chartWindow struct {
 	gran string
 	// servedAs are the pairs a derived series' legs are served under, so an exclusion stored there judges each leg bucket too.
 	servedAs []canonical.Pair
+	// budget replaces [chartWalkBudget] for a background walk that must not be cut short; zero keeps the request budget.
+	budget time.Duration
+}
+
+func (w chartWindow) walkBudget() time.Duration {
+	if w.budget > 0 {
+		return w.budget
+	}
+	return chartWalkBudget
 }
 
 // covered reports whether `m` already holds EVERY bucket the reader can return, so the walk may stop identically to the full
@@ -1090,7 +1099,7 @@ func (w *chartWalk) fill(ctx context.Context, sp canonical.Pair, spans []chartSp
 func (w *chartWalk) readSpan(
 	ctx context.Context, sp canonical.Pair, span chartSpan, limit int,
 ) (points []HistoryPoint, cont, ok bool) {
-	remaining := chartWalkBudget - w.spent
+	remaining := w.win.walkBudget() - w.spent
 	if remaining <= 0 {
 		w.res.degraded = true
 		return nil, false, false
