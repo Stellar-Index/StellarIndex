@@ -93,6 +93,32 @@ func (s *Server) resolveBatchRow(ctx context.Context, r *http.Request, raw strin
 			detail: "price of an asset in itself is always 1; " + raw + " matches the quote",
 		}}
 	}
+	row, _, _ := walkQuoteAliases(asset, quote, func(q canonical.Asset) (batchRowResult, *ThinAdmission) {
+		return s.readBatchRowThin(ctx, r, asset, q), nil
+	}, batchRowResult.answersWalk)
+	if !row.ok {
+		return row
+	}
+	row.snap.Quote = quote.String()
+	// No derived change from a thin price (ADR-0018); computed on the final (possibly held) snapshot.
+	if !row.thin {
+		anchor := row.changeAnchor
+		if anchor.IsZero() {
+			anchor = asset
+		}
+		row.snap.Change24hPct = s.batchChange24h(ctx, anchor, quote, row.snap.Price)
+	}
+	return row
+}
+
+// answersWalk is [priceServe.answersWalk] for a row: anything but a plain miss ends the quote walk.
+func (r batchRowResult) answersWalk() bool {
+	return !r.skip || r.withheld || r.readFailed
+}
+
+// readBatchRowThin is one quote spelling's two-pass read: the default pass, then (only if it ended withheld on a measured thin
+// leg and the request opted in) again with that leg admitted, as [Server.resolvePriceServeThin].
+func (s *Server) readBatchRowThin(ctx context.Context, r *http.Request, asset, quote canonical.Asset) batchRowResult {
 	offCtx, off := WithThinAdmission(ctx, asset, quote, false)
 	row := s.readBatchRow(offCtx, r, asset, quote)
 	if row.withheld && includeThinRequested(r) && off.ThinWithheld(row.withheldReason) {
@@ -102,14 +128,6 @@ func (s *Server) resolveBatchRow(ctx context.Context, r *http.Request, raw strin
 			thin.thin = on.Admitted()
 			row = thin
 		}
-	}
-	// No derived change from a thin price (ADR-0018); computed on the final (possibly held) snapshot.
-	if row.ok && !row.thin {
-		anchor := row.changeAnchor
-		if anchor.IsZero() {
-			anchor = asset
-		}
-		row.snap.Change24hPct = s.batchChange24h(ctx, anchor, quote, row.snap.Price)
 	}
 	return row
 }

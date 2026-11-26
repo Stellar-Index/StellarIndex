@@ -30,7 +30,7 @@ var thinAdmissionSites = map[string]map[string]bool{
 	},
 	"WithThinAdmission": {
 		v1ChokepointDir + ":resolvePriceServeThin":      true,
-		v1ChokepointDir + ":resolveBatchRow":            true,
+		v1ChokepointDir + ":readBatchRowThin":           true,
 		v1ChokepointDir + ":handlePriceAt":              true,
 		v1ChokepointDir + ":priceChangeCurrentThin":     true,
 		v1ChokepointDir + ":priceChangeHorizonThin":     true,

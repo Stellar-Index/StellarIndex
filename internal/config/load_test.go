@@ -277,61 +277,26 @@ func TestLoad_ExampleConfigValid(t *testing.T) {
 	}
 }
 
-// Pins the r1 template's fiat-peg stanza through the real decoder and validator; nothing else parses the jinja template.
-// The extractor drops jinja control lines to rebuild the r1 render. Pins AUDD -> AUD and, via the AUDD<->AUDR par
-// corridor, AUDR -> AUD.
+// Pins the pubnet USD and fiat pegs and watched classic assets through the real decoder and validator. The template renders them from role
+// defaults by loop, so this reads the real ansible render of those defaults, which
+// scripts/ci/ansible-usd-peg-network-gate-test.sh holds byte-equal to testdata/ansible-pubnet-pegs.toml. Pins AUDD -> AUD
+// and, via the AUDD<->AUDR par corridor, AUDR -> AUD.
 func TestAnsibleFiatPegStanza_ValidAndComplete(t *testing.T) {
-	wd, err := os.Getwd()
+	const path = "testdata/ansible-pubnet-pegs.toml"
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(wd, "..", "..", "configs", "ansible", "roles",
-		"archival-node", "templates", "stellarindex.toml.j2")
-	raw, err := os.ReadFile(path)
+	c, err := cfg.LoadReader(strings.NewReader(string(raw)), path)
 	if err != nil {
-		t.Skipf("ansible template not at %s: %v", path, err)
+		t.Fatalf("deployed peg stanzas do not load: %v", err)
 	}
-	// Extract the [pricing_guard] table (incl. its sub-tables) — the
-	// rest of the file carries jinja substitutions and can't round-trip
-	// the decoder whole.
-	var out []string
-	inStanza := false
-	inJinjaComment := false // inside a multi-line {# ... #} block
-	for _, line := range strings.Split(string(raw), "\n") {
-		trimmed := strings.TrimSpace(line)
-		// Skip the body of a multi-line jinja comment opened below.
-		if inJinjaComment {
-			if strings.Contains(line, "#}") {
-				inJinjaComment = false
-			}
-			continue
-		}
-		if strings.HasPrefix(trimmed, "[") {
-			inStanza = trimmed == "[pricing_guard]" ||
-				strings.HasPrefix(trimmed, "[pricing_guard.")
-		}
-		if !inStanza {
-			continue
-		}
-		// Drop jinja control lines and (possibly multi-line) jinja comments so the r1 render (run_aggregator on) parses as TOML.
-		// Safe only because the stanza has no {% else %} branch.
-		if strings.HasPrefix(trimmed, "{%") {
-			continue
-		}
-		if strings.HasPrefix(trimmed, "{#") {
-			if !strings.Contains(trimmed, "#}") {
-				inJinjaComment = true // closes on a later line
-			}
-			continue
-		}
-		out = append(out, line)
+	wantUSD := []string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"}
+	if !reflect.DeepEqual(c.Trades.USDPeggedClassicAssets, wantUSD) {
+		t.Errorf("deployed usd_pegged_classic_assets = %v, want %v", c.Trades.USDPeggedClassicAssets, wantUSD)
 	}
-	if len(out) == 0 {
-		t.Fatalf("no [pricing_guard] stanza in %s", path)
-	}
-	c, err := cfg.LoadReader(strings.NewReader(strings.Join(out, "\n")), "stellarindex.toml.j2:pricing_guard")
-	if err != nil {
-		t.Fatalf("deployed pricing_guard stanza does not load: %v", err)
+	if got := c.Supply.WatchedClassicAssets; len(got) != 9 || got[0] != wantUSD[0] {
+		t.Errorf("deployed watched_classic_assets = %v, want the 9 pubnet defaults led by %s", got, wantUSD[0])
 	}
 	pegs := c.PricingGuard.FiatPeggedClassicAssets
 	want := map[string]string{
