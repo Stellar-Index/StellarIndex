@@ -18,18 +18,22 @@ type LendingInterestDay struct {
 	StaleRows   uint64
 }
 
-// LendingInterestChangedDaysQuery finds the days a derive wrote after a watermark. No FINAL: max(derived_at) over every
-// part is the newest derive's either way, so the scan reads derived_at and the key columns only.
+// LendingInterestChangedDaysQuery pages through the days by (newest derived_at, contract_id, asset, day), after a cursor,
+// so one derive writing more days than a page still moves the cursor. No FINAL: max(derived_at) over every part is the
+// newest derive's either way, so the scan reads derived_at and the key columns only.
 const LendingInterestChangedDaysQuery = `SELECT contract_id, asset, toDate(hour) AS day, max(derived_at) AS newest
 	FROM stellar.lending_interest_hourly
-	WHERE derived_at > fromUnixTimestamp64Milli(?)
+	WHERE derived_at >= fromUnixTimestamp64Milli(?)
 	GROUP BY contract_id, asset, day
+	HAVING (newest, contract_id, asset, day) > (fromUnixTimestamp64Milli(?), ?, ?, toDate(?))
 	ORDER BY newest, contract_id, asset, day
 	LIMIT ?`
 
-// LendingInterestChangedDays reads at most limit days whose newest derive is after since, oldest derive first.
-func (r *ExplorerReader) LendingInterestChangedDays(ctx context.Context, since time.Time, limit int) ([]LendingInterestDay, error) {
-	rows, err := r.conn.Query(ctx, LendingInterestChangedDaysQuery, since.UnixMilli(), limit)
+// LendingInterestChangedDays reads at most limit days ordered after the cursor after (its DerivedAt, Pool, Asset, Day;
+// derived_at is stored in ms), oldest derive first.
+func (r *ExplorerReader) LendingInterestChangedDays(ctx context.Context, after LendingInterestDay, limit int) ([]LendingInterestDay, error) {
+	at := after.DerivedAt.UnixMilli()
+	rows, err := r.conn.Query(ctx, LendingInterestChangedDaysQuery, at, at, after.Pool, after.Asset, after.Day.UTC().Format(time.DateOnly), limit)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: lending interest changed days: %w", err)
 	}

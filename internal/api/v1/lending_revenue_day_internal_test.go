@@ -29,8 +29,8 @@ func TestValueRevenueDay_RefusalKinds(t *testing.T) {
 		outcome revenueDayOutcome
 		reason  string
 	}{
-		{"scam issuer or operator withholding", reserveUSDRead{series: reserveUSDSeries{reason: exclusionPriceWithheld}, verdict: true}, revenueDayRefused, ""},
-		{"thin latest market", reserveUSDRead{series: reserveUSDSeries{reason: exclusionPriceWithheld}, verdict: true}, revenueDayRefused, ""},
+		{"scam issuer or operator withholding", reserveUSDRead{series: reserveUSDSeries{reason: exclusionPriceWithheld}, verdict: true}, revenueDayRefused, exclusionPriceWithheld},
+		{"thin latest market", reserveUSDRead{series: reserveUSDSeries{reason: exclusionPriceWithheld}, verdict: true}, revenueDayRefused, exclusionPriceWithheld},
 		{"exclusion list unread", reserveUSDRead{series: reserveUSDSeries{reason: exclusionPriceReadFailed, degraded: true}}, revenueDayDegraded, ""},
 		{"walk cut short at its budget", reserveUSDRead{series: func() reserveUSDSeries { s := priced; s.degraded = true; return s }()}, revenueDayDegraded, ""},
 		{"no market", reserveUSDRead{series: reserveUSDSeries{reason: backstopUSDUnpriced}}, revenueDayValued, backstopUSDUnpriced},

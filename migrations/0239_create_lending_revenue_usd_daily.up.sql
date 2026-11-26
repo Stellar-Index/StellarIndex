@@ -11,9 +11,14 @@
 -- hour carrying an amount was priced (a day with nothing to value is 0);
 -- walk_reason then says why when the price
 -- data itself answers (unpriced, decimals_unknown, price_scale_mismatch).
--- A day whose walk failed, was cut short, or was refused by a read-time
--- verdict (scam issuer, thin latest market, operator withholding) has no
--- row: verdicts are never stored, and readers count the missing days.
+-- A day a read-time verdict refused (scam issuer, thin latest market,
+-- operator withholding) is stored with its legs NULL, every hour carrying
+-- an amount unpriced and walk_reason 'withheld' (never 0), and the daily
+-- sweep re-checks it. A day whose walk failed or was cut short has no row
+-- and is retried; coverage stops before the first such day the self-fill
+-- meets, so inside coverage a missing row means the day had no interest.
+-- A re-derive that only deletes an hour's superseded rows writes no newer
+-- derived_at; the daily sweep is what catches it.
 --
 -- interest_derived_at is the newest derived_at of the day's interest hour
 -- rows, read before them, so a later re-derive is always seen as newer.
@@ -94,8 +99,9 @@ CREATE TABLE lending_revenue_usd_coverage (
 
 COMMENT ON TABLE lending_revenue_usd_coverage IS
     'Per pool, the UTC days the rollup has processed: [floor_day, '
-    'through_day], the first wholly derived day through the last one the '
-    'interest coverage closes; days from redo_from_day are suspect until a '
+    'through_day], from the first wholly derived day through the day before '
+    'the first one the rollup could not value; inside it a missing daily row '
+    'means no interest that day. Days from redo_from_day are suspect until a '
     'pending re-derive rewrites them. Migration 0239.';
 
 CREATE OR REPLACE FUNCTION apply_api_role_grants() RETURNS void
@@ -106,8 +112,7 @@ AS $$
 DECLARE
     rw_tables CONSTANT regclass[] := ARRAY[
         'accounts', 'api_keys', 'api_usage_events', 'customer_webhooks',
-        'fx_fixings', 'fx_quotes', 'invites', 'lending_revenue_usd_coverage',
-        'lending_revenue_usd_daily', 'login_code_lockouts',
+        'fx_fixings', 'fx_quotes', 'invites', 'login_code_lockouts',
         'magic_link_tokens', 'price_alerts', 'sessions', 'source_entry_counts',
         'status_notices', 'usage_daily', 'users', 'webauthn_credentials',
         'webhook_deliveries'
@@ -131,6 +136,8 @@ BEGIN
     END LOOP;
     GRANT INSERT, UPDATE ON audit_log TO stellarindex_api;
     GRANT INSERT ON erased_account_slugs TO stellarindex_api;
+    -- The rollup worker upserts and never deletes.
+    GRANT INSERT, UPDATE ON lending_revenue_usd_daily, lending_revenue_usd_coverage TO stellarindex_api;
 
     FOR seq IN
         SELECT DISTINCT d.objid::regclass
@@ -145,6 +152,11 @@ BEGIN
     END LOOP;
 END;
 $$;
+
+COMMENT ON FUNCTION apply_api_role_grants() IS
+    'Converges role stellarindex_api on SELECT everywhere in public plus '
+    'the writes the API process makes, table by table. No-op '
+    'while the role does not exist. Migrations 0213 and 0239.';
 
 SELECT apply_api_role_grants();
 

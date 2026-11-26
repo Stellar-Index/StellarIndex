@@ -23,8 +23,13 @@ type revenueDayOutcome int
 const (
 	revenueDayValued   revenueDayOutcome = iota
 	revenueDayDegraded                   // a read failed or was cut short: nothing stored, retried
-	revenueDayRefused                    // a read-time verdict refused the reserve: nothing stored
+	revenueDayRefused                    // a read-time verdict refused the reserve: stored unpriced, walk_reason withheld
 )
+
+// revenueDayRefusedRow reports whether row records a verdict refusal; only a verdict gives the withheld reason.
+func revenueDayRefusedRow(row timescale.LendingRevenueUSDDay) bool {
+	return row.WalkReason != nil && *row.WalkReason == exclusionPriceWithheld
+}
 
 // revenueDay is one reserve's USD for one UTC day: each hour at the price a walk of that UTC day gives. reason is the
 // price data's own reason no hour could be valued (unpriced, decimals_unknown, price_scale_mismatch).
@@ -44,18 +49,21 @@ func (s *Server) revenueDayRead(ctx context.Context, assetC string, day time.Tim
 // to value is zero without a read; walk is called only when one is needed.
 func valueRevenueDay(day time.Time, hours []clickhouse.LendingRevenueBucket, walk func() reserveUSDRead) revenueDay {
 	b := clickhouse.LendingRevenueBucket{Start: day, Sums: clickhouse.NewLendingRevenueSums()}
-	valued := false
+	amountHours := 0
 	for _, h := range hours {
 		b.Sums.Add(h.Sums)
-		valued = valued || legsNonZero(revenueUSDLegs(h.Sums))
+		if legsNonZero(revenueUSDLegs(h.Sums)) {
+			amountHours++
+		}
 	}
-	if !valued {
+	if amountHours == 0 {
 		return revenueDay{}
 	}
 	r := walk()
 	switch {
 	case r.verdict:
-		return revenueDay{outcome: revenueDayRefused}
+		// Every hour carrying an amount is unpriced, so the stored row's legs are NULL: a refusal is never a zero.
+		return revenueDay{outcome: revenueDayRefused, reason: r.series.reason, sum: revenueUSDSum{unpriced: amountHours}}
 	case r.series.degraded || r.series.reason == exclusionPriceReadFailed:
 		return revenueDay{outcome: revenueDayDegraded}
 	}

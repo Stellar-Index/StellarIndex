@@ -56,6 +56,11 @@ BEGIN
 END;
 $$;
 
+COMMENT ON FUNCTION apply_api_role_grants() IS
+    'Converges role stellarindex_api on SELECT everywhere in public plus '
+    'the writes the API process makes, table by table. No-op '
+    'while the role does not exist. Migration 0213.';
+
 SELECT apply_api_role_grants();
 
 COMMIT;

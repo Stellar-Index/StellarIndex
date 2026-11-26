@@ -27,8 +27,11 @@ price. The daily totals the rollup stores (`lending_revenue_usd_daily`) are pric
 price a walk of its own UTC day gives. The two agree exactly, except for a market that trades on some days and not on
 others. There, a walk over a long window finds the market's own prices and leaves the quiet days unpriced, while a walk of
 one quiet day finds none and may fall back to the price derived through XLM. That day is then priced in the daily totals
-and not on this endpoint. A day whose walk failed or was cut short is not stored, and neither is a reserve refused by a
-current verdict (a scam issuer, a thin latest market, an operator withholding). Readers count those days as not valued.
+and not on this endpoint. A day whose walk failed or was cut short is not stored and is retried, and the rollup's coverage
+stops before the first such day it meets, so inside coverage a missing day means no interest. A reserve refused by a
+current verdict (a scam issuer, a thin latest market, an operator withholding) is stored unpriced with the reason
+`withheld`, never as zero, and the daily sweep re-checks it. A re-derive that only deletes an hour's superseded rows
+leaves no newer `derived_at`, so the rollup sees it at the daily sweep, not within a cycle.
 
 | Field | What it means |
 |---|---|
