@@ -717,6 +717,36 @@ func TestDeriveCap67MovementsWindow_ForeignContractU32IsNotTokenShaped(t *testin
 	}
 }
 
+// A pool's one-topic `mint` (mainnet lake bytes) is no token's event whatever its u128 body; the same body under ["mint", to] still alerts.
+func TestDeriveCap67MovementsWindow_OneTopicPoolMintIsNotTokenShaped(t *testing.T) {
+	canonical.InstallNetworkPassphrase("")
+	orig := streamCap67TransferEvents
+	t.Cleanup(func() { streamCap67TransferEvents = orig })
+	const poolMintBody = "AAAAEQAAAAEAAAAHAAAADwAAAAZhbW91bnQAAAAAAAkAAAAAAAAAAAAAAAaxNSylAAAADwAAAAdhbW91bnQwAAAAAAkAAAAAAAAAAAAAAACVAvkAAAAADwAAAAdhbW91bnQxAAAAAAkAAAAAAAAAAAAAAACVAvkAAAAADwAAAAVvd25lcgAAAAAAABIAAAABIzovoLDzgMm/PSicyUIChIApn2d5n/jeVHAlcu+O3HoAAAAPAAAABnNlbmRlcgAAAAAAEgAAAAAAAAAAPa6rGLzKsyuoU7E15VjCjVHRpqEcWgmvccDyP2KM39QAAAAPAAAACnRpY2tfbG93ZXIAAAAAAAT///jkAAAADwAAAAp0aWNrX3VwcGVyAAAAAAAEAAAHHA=="
+	void := xdr.ScVal{Type: xdr.ScValTypeScvVoid}
+	pool := cap67SupplyEvent(t, sep41supply.SymbolMint, "CBTOQ7X7TLDBRHJW4UYUDR7WR4NAYESZA7FYUZVLAN2JLQG5ZXWJJIG6", "", void)
+	pool.Topic = []string{"AAAADwAAAARtaW50"}
+	pool.Value = poolMintBody
+	tokenShaped := cap67SupplyEvent(t, sep41supply.SymbolMint, cap67Holder, "", void)
+	tokenShaped.Value = poolMintBody
+	streamCap67TransferEvents = func(_ context.Context, _ string, _, _ uint32, _, _, _ []string, _, _, _, _ bool, fn func(events.Event) error) error {
+		for _, ev := range []events.Event{pool, tokenShaped} {
+			if err := fn(ev); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	rows, skips, err := deriveCap67MovementsWindow(context.Background(), "ch", 63_000_000, 63_000_000, true)
+	if err != nil || rows != 0 {
+		t.Fatalf("derive: rows=%d err=%v, want 0 rows and nil", rows, err)
+	}
+	if skips[clickhouse.SupplySkipNotTokenShaped] != 1 || skips[clickhouse.SupplySkipAmountNotI128] != 1 || skips.actionable() != 1 {
+		t.Fatalf("skips = %v actionable=%d, want not_token_shaped=1, amount_not_i128=1, actionable 1", map[string]uint64(skips), skips.actionable())
+	}
+}
+
 // A judged contract's skip is relabelled and not actionable; an unjudged one with the same body alerts, and the window's line names
 // it so the ticket needs no lake search.
 func TestDeriveCap67MovementsWindow_JudgedAndNamedSkips(t *testing.T) {

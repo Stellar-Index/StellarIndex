@@ -29,6 +29,12 @@ func i128Body(t *testing.T, lo uint64) string {
 	return b
 }
 
+// tokenBurnTopics is a token-shaped ["burn", from]: a judgement covers the body, so the topics must not decide first.
+func tokenBurnTopics(t *testing.T) []string {
+	t.Helper()
+	return b64All(t, symScVal("burn"), accountAddrScVal(4))
+}
+
 func TestClassifySupplyEventXDR_Judged(t *testing.T) {
 	for _, tc := range []struct {
 		name, contract, body, want string
@@ -39,11 +45,11 @@ func TestClassifySupplyEventXDR_Judged(t *testing.T) {
 		{"unlisted contract, second pool's body", unjudgedContract, secondJudgedPoolBurnBody, SupplySkipAmountNotI128},
 		{"listed contract, other failure", judgedPool, "not-base64-xdr!", SupplySkipBodyUnparseable},
 	} {
-		if amt, skip := ClassifySupplyEventXDR(tc.contract, tc.body); skip != tc.want || amt != nil {
+		if amt, skip := ClassifySupplyEventXDR(tc.contract, tokenBurnTopics(t), tc.body); skip != tc.want || amt != nil {
 			t.Errorf("%s: skip=%q amt=%v, want %q and no amount", tc.name, skip, amt, tc.want)
 		}
 	}
-	amt, skip := ClassifySupplyEventXDR(judgedPool, i128Body(t, 1234))
+	amt, skip := ClassifySupplyEventXDR(judgedPool, tokenBurnTopics(t), i128Body(t, 1234))
 	if skip != "" || amt == nil || amt.Int64() != 1234 {
 		t.Errorf("listed contract, i128 body: skip=%q amt=%v, want amount 1234", skip, amt)
 	}
@@ -74,7 +80,7 @@ func TestRecordSupplyFlow_SamplesAlertingSkipContracts(t *testing.T) {
 	ext := &LedgerExtract{}
 	at := time.Unix(0, 0)
 	rec := func(contract, body string) {
-		recordSupplyFlow(ext, ContractEventRow{ContractID: contract, Topic0Sym: "burn", DataXDR: body}, 1, at, "tx")
+		recordSupplyFlow(ext, ContractEventRow{ContractID: contract, Topic0Sym: "burn", TopicsXDR: tokenBurnTopics(t), DataXDR: body}, 1, at, "tx")
 	}
 	rec(judgedPool, judgedPoolBurnBody)
 	rec(unjudgedContract, judgedPoolBurnBody)

@@ -21,30 +21,8 @@ func IsSupplyFlowSym(sym string) bool {
 	}
 }
 
-// DecodeSupplyAmount extracts the positive magnitude from a mint/burn/clawback data body (bare i128 or the SEP-41/CAP-67 map) as a *big.Int (ADR-0003); ok=false with a reason when undecodable.
-func DecodeSupplyAmount(sv xdr.ScVal) (*big.Int, string, bool) {
-	if amt, err := scval.AsAmountFromI128(sv); err == nil {
-		return amt.BigInt(), "", true
-	}
-	if sv.Type == xdr.ScValTypeScvMap {
-		entries, merr := scval.AsMap(sv)
-		if merr != nil {
-			return nil, "map-parse-error", false
-		}
-		amtVal, ok := scval.MapField(entries, "amount")
-		if !ok {
-			return nil, "map-no-amount", false
-		}
-		if amt, aerr := scval.AsAmountFromI128(amtVal); aerr == nil {
-			return amt.BigInt(), "", true
-		}
-		return nil, "map-amount-not-i128", false
-	}
-	return nil, sv.Type.String(), false
-}
-
 // Supply-flow skip reasons. Only SupplySkipNotTokenShaped is expected traffic: topic[0] alone does not identify a token, so any contract
-// (an NFT's `mint` with a u32 id, say) can emit one, and a contract with no supply loses nothing.
+// (an NFT's `mint` with a u32 id, a pool's one-topic `mint`, say) can emit one, and a contract with no supply loses nothing.
 const (
 	SupplySkipNotTokenShaped  = "not_token_shaped"
 	SupplySkipAmountNotI128   = "amount_not_i128"
@@ -93,11 +71,34 @@ func ClassifySupplyBodyXDR(dataXDR string) (amount *big.Int, skip string) {
 	return amt.BigInt(), ""
 }
 
-// DecodeSupplyAmountXDR is DecodeSupplyAmount for a base64 scval data body, the form the CH-reading supply tools use.
-func DecodeSupplyAmountXDR(dataXDR string) (*big.Int, string, bool) {
-	sv, err := scval.Parse(dataXDR)
-	if err != nil {
-		return nil, "parse-error", false
+// supplyTopicsSkip applies the SEP-41/CAP-67 topic shape before any body is read: a transfer is ["transfer", from, to, (asset)]; a mint,
+// burn or clawback has an Address at topic[1] (["mint", to, (asset)], legacy ["mint", admin, to, (asset)]). "" when token-shaped.
+func supplyTopicsSkip(topicsXDR []string) string {
+	addrTopics := 1
+	if len(topicsXDR) > 0 {
+		if t0, err := scval.Parse(topicsXDR[0]); err == nil && topicName(t0) == "transfer" {
+			addrTopics = 2
+		}
 	}
-	return DecodeSupplyAmount(sv)
+	if len(topicsXDR) < 1+addrTopics {
+		return SupplySkipNotTokenShaped
+	}
+	for _, t := range topicsXDR[1 : 1+addrTopics] {
+		sv, err := scval.Parse(t)
+		if err != nil {
+			return SupplySkipBodyUnparseable
+		}
+		if sv.Type != xdr.ScValTypeScvAddress {
+			return SupplySkipNotTokenShaped
+		}
+	}
+	return ""
+}
+
+func topicName(sv xdr.ScVal) string {
+	if s, err := scval.AsSymbol(sv); err == nil {
+		return s
+	}
+	s, _ := scval.AsString(sv)
+	return s
 }
