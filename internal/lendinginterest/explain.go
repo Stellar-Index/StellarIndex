@@ -237,7 +237,8 @@ func (st *state) explain(row *HourRow, nexts []Version, residual *big.Int, onlyB
 	if onlyBackstop && byEvents && oneTx(nexts) && !st.used[used] && !st.poisoned[txRef{v.Pool, v.TxHash, v.Ledger}] {
 		row.ResidualLedgers = appendLedger(row.ResidualLedgers, v.Ledger)
 		class = explained
-		if residual.Sign() != 0 {
+		// A default's zero residual still classifies its asset's amounts: a fill and a gulp may net to it.
+		if residual.Sign() != 0 || hasAmounts(st.events[k], v.Asset) {
 			class = classify(st.events[k], v.Asset, residual)
 		}
 	}
@@ -245,11 +246,9 @@ func (st *state) explain(row *HourRow, nexts []Version, residual *big.Int, onlyB
 	case explained:
 		row.ExplainedVersions++
 		row.ResidualExplained.Add(row.ResidualExplained, residual)
-		if residual.Sign() != 0 {
-			for _, e := range st.events[k] {
-				if c, ok := causeColumns[e.Cause]; ok && e.Asset == v.Asset {
-					c.col(row).Add(c.col(row), e.Amount)
-				}
+		for _, e := range st.events[k] {
+			if c, ok := causeColumns[e.Cause]; ok && e.Asset == v.Asset {
+				c.col(row).Add(c.col(row), e.Amount)
 			}
 		}
 	case attributed:
@@ -304,17 +303,26 @@ var causeColumns = map[Cause]causeColumn{
 	CauseReconcileLoss: {func(r *HourRow) *big.Int { return r.ReconcileBackstopLoss }, -1},
 }
 
+func hasAmounts(es []Event, asset string) bool {
+	for _, e := range es {
+		if e.Amount != nil && e.Asset == asset {
+			return true
+		}
+	}
+	return false
+}
+
 func classify(es []Event, asset string, residual *big.Int) residualClass {
 	sum, checkable, uncheckable := new(big.Int), false, false
 	for _, e := range es {
-		c, ok := causeColumns[e.Cause]
+		// checkEvent admits an amount only on a Checkable cause, each of which has a column (the lockstep test).
+		c := causeColumns[e.Cause]
 		switch {
 		case e.Cause == CauseDefaultedDebt:
 		case e.Amount == nil:
 			uncheckable = true
-		case e.Asset == asset && (!ok || e.Amount.Sign() == -c.sign):
-			// No column, or a sign its rule cannot produce: it explains nothing, and residual_explained stays split.
-			return unexplained
+		case e.Asset == asset && e.Amount.Sign() == -c.sign:
+			return unexplained // a sign its rule cannot produce explains nothing
 		case e.Asset == asset:
 			checkable = true
 			sum.Add(sum, e.Amount)

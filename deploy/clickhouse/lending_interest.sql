@@ -88,8 +88,12 @@
 -- default_loss and the version in default_versions, if it is classified.
 -- supply_residual − default_loss is what no event explains. residual_explained
 -- is exactly interest_drawn + gulped + reconcile_backstop_loss, each the sum of
--- its cause's event amounts; interest_drawn misses Blend V1 fills (attributed),
--- so it is a lower bound of the backstop's draw on a V1 pool. A BLNT fee
+-- its cause's event amounts over EXPLAINED versions only. Each is a lower bound
+-- on every pool: a Blend V1 fill is attributed, a cause inside an unexplained
+-- version is left out, and events netting to zero in a version whose
+-- backstop_credit reconciles with accrual (no residual, no default) are never
+-- classified, so not split. A served total of any of them sets lower_bound and
+-- names those exclusions (attributed and unexplained versions). A BLNT fee
 -- withdrawal or protocol_credit_loss moves the fee entry, not backstop_credit,
 -- and has no column. The pass reads the pools' contract_events
 -- for each window and refuses it unless every ledger holding a version it
@@ -146,7 +150,7 @@ CREATE TABLE IF NOT EXISTS stellar.lending_interest_hourly
     residual_attributed   Int256,                  -- same-tx event whose amount cannot be checked
     explained_versions    UInt32,
     attributed_versions   UInt32,
-    interest_drawn          Int256 DEFAULT 0,      -- ≤ 0: explained interest-fill lots (Blend V2, BLNT); V1 fills are attributed, so a lower bound there
+    interest_drawn          Int256 DEFAULT 0,      -- ≤ 0: explained interest-fill lots; a lower bound on every pool (V1 fills are attributed)
     gulped                  Int256 DEFAULT 0,      -- ≥ 0: explained gulp token_delta
     reconcile_backstop_loss Int256 DEFAULT 0,      -- ≤ 0: explained BLNT reconcile_loss backstop_credit_loss; residual_explained = the three
     unordered_versions    UInt32,                  -- predecessor order unknown: counted, not summed

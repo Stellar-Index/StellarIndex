@@ -104,6 +104,29 @@ func TestFold_DefaultedDebtWithInterestFill(t *testing.T) {
 	}
 }
 
+// A default whose transaction also fills an interest auction (lot 5) and gulps 5 for the asset: backstop_credit
+// nets to accrual's, but the split records both. A lone lot the credit does not show contradicts it, so the
+// version stays unexplained and its loss is not recorded. Synthetic events on the golden mainnet default.
+func TestFold_DefaultedDebtWithCancellingFillAndGulp(t *testing.T) {
+	d := blendtest.DefaultedDebt[3]
+	ev := func(i uint32, c Cause, amount int64) Event {
+		return Event{
+			Pool: d.Pool, Ledger: d.Ledger, TxHash: d.Tx, EventIndex: i, CloseTime: unix(d.Next.LastTime), Cause: c,
+			Asset: d.Asset, Amount: big.NewInt(amount),
+		}
+	}
+	r := defaultFold(t, []blendtest.Default{d}, nil, true, ev(1, CauseInterestFill, -5), ev(2, CauseGulp, 5))[0]
+	if r.ExplainedVersions != 1 || r.ResidualExplained.Sign() != 0 || r.InterestDrawn.String() != "-5" || r.Gulped.String() != "5" ||
+		r.DefaultLoss.String() != d.SupplyResidual {
+		t.Errorf("fill and gulp: explained %d %s, drawn %s, gulped %s, default loss %s", r.ExplainedVersions, r.ResidualExplained,
+			r.InterestDrawn, r.Gulped, r.DefaultLoss)
+	}
+	r = defaultFold(t, []blendtest.Default{d}, nil, true, ev(1, CauseInterestFill, -5))[0]
+	if r.UnexplainedVersions != 1 || r.InterestDrawn.Sign() != 0 || r.DefaultVersions != 0 || r.DefaultLoss.Sign() != 0 {
+		t.Errorf("lone lot: unexplained %d, drawn %s, default %d %s", r.UnexplainedVersions, r.InterestDrawn, r.DefaultVersions, r.DefaultLoss)
+	}
+}
+
 // The cut divides by the pre-transaction b_supply: a supply after it (mainnet 61341315's USDC reserve) leaves the
 // version explained, but a b_rate cut over a b_supply the transaction had already moved does not match and stays
 // unexplained.

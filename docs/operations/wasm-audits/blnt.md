@@ -146,7 +146,7 @@ that binary.
   integer move, so a residual equal to the transaction's sum of them is
   explained, and its amounts land by cause in `interest_drawn` (≤ 0),
   `gulped` (≥ 0) and `reconcile_backstop_loss` (≤ 0), which sum to
-  `residual_explained`; an event of the wrong sign for its cause explains
+  `residual_explained` (each a lower bound, as in `blend.md`); an event of the wrong sign for its cause explains
   nothing. A `reconcile_loss` with a supplier or protocol-credit leg also
   moves b_rate (`fixed_div_ceil`) or the fee entry, and that version stays
   unexplained. The same source confirms the 20000 fee rate and the
