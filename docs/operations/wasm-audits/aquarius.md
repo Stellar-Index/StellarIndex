@@ -436,10 +436,31 @@ re-run against a replay. The hash is in `audited_wasm.json`.
 in `audited_wasm.json` from the 2026-10-08 string check (41 contracts then).
 On 2026-11-26 it runs on 79 contracts (`stellar.contract_instance_changes`):
 all 63 router-announced concentrated pools plus 16 the router never
-announced. No concentrated pool runs another hash. The lake's first
-instance change to this hash is at ledger 64,578,395, so concentrated
-events before that ran an earlier, unidentified hash; the withdraw
-fixtures below are from that period and show the same body order.
+announced. No concentrated pool runs another hash today. Over the 63 pools'
+instance history they ran four builds, all in `audited_wasm.json`:
+
+| hash | pools | first – last instance change |
+| --- | ---: | --- |
+| `8875f0c7…` | 9 | 62,339,683 – 62,475,443 |
+| `1d728cc0…` | 13 | 62,433,116 – 62,877,765 |
+| `12fca5a7…` | 37 | 62,875,836 – 64,799,639 |
+| `155a17b9…` | 63 | 64,736,662 – 65,680,336 |
+
+All four emit the concentrated body order: 400 deposit transactions sampled
+from 62,341,446 – 64,577,704 (the three earlier builds) have body[0] equal
+to the same-tx `position_update` delta, and 300 withdraws from
+62,341,437 – 62,413,470 have body[0] equal to minus it.
+
+**Correction, 2026-11-26.** The 2026-04-29 sign-off of `8875f0c7…`
+("rewards-enhanced variant", "matches current decoder", Per-hash review
+findings above) and the 2026-10-08 string check of `1d728cc0…`, `12fca5a7…`
+and `155a17b9…` passed these builds for a decoder that read every
+`deposit_liquidity` / `withdraw_liquidity` body as `[amount_0, amount_1,
+shares]`. For these concentrated builds that was wrong: the body is
+`[liquidity, amount0, amount1]`. A string check cannot see body order, and the
+2026-10-08 lake check of N+1 amounts covered only the four builds without
+`update_reserves`. The evidence now is the 400 deposits and 300 withdraws
+above plus the fixtures below.
 
 Byte search of the `155a17b9…` blob (base64 length 147,132), 2026-11-26:
 every listed literal is present — `position_update`, `pool_state`,
@@ -460,10 +481,16 @@ reserve[0] by exactly the bought amount. The trade (fee 13 on 12,635 sold, the
 pool's `add_pool` announcing 10 bps) is too small to tell the gross and net fee
 conventions apart, so it is not in the fee census.
 
-Withdraw fixtures: `test/fixtures/aquarius/concentrated-2026-04-29/` holds
-three real `withdraw_liquidity` transactions with their `update_reserves` and
+First-build fixtures: `test/fixtures/aquarius/8875f0c7…/` holds three real
+`withdraw_liquidity` transactions with their `update_reserves` and
 `position_update` — single-sided token1 (62,341,437 `CCV2X5TH…`), single-sided
-token0 (62,342,234 `CA4HTZNY…`) and two-sided (62,342,237 `CA4HTZNY…`).
+token0 (62,342,234 `CA4HTZNY…`) and two-sided (62,342,237 `CA4HTZNY…`) — and
+`CCV2X5TH…`'s deposit at 62,341,446. All four are before 62,433,116, the
+first instance change to any other build, so they ran `8875f0c7…`.
+`TestConcentratedDeposit_firstBuildCrossCheck` asserts the deposit's body[0]
+equals its `position_update` delta and that reserves rise from the 62,341,437
+withdraw by exactly its amounts. No fixture pins `1d728cc0…` or `12fca5a7…`:
+the sampled rows do not say which build each pool ran at a given ledger.
 `TestConcentratedWithdraw_fixturesCrossCheckAgainstSameTxEvents` asserts the
 hand-decoded values and body[0] == −(`position_update` delta);
 `TestConcentratedWithdraw_reservesFallByAmounts` asserts `CA4HTZNY…`'s

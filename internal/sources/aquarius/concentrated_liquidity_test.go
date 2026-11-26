@@ -140,9 +140,45 @@ func TestConcentratedDeposit_layoutFromLiveAddPool(t *testing.T) {
 	}
 }
 
-// Withdraw fixtures predate the 155a17b9 upgrade (the lake has no instance change to that hash before 64,578,395), so
-// their directory names the capture date, not a WASM hash.
-const clWithdrawDir = "concentrated-2026-04-29"
+// clWithdrawDir holds the first concentrated build's events: before ledger 62,433,116 no concentrated pool's instance
+// history names any other hash.
+const clWithdrawDir = "8875f0c770fb26d3053648856732a649936aed5db246845fa209f9032001b208"
+
+// On the first build too, deposit body[0] is the same-tx position_update delta, and the pool's reserves rise from the
+// preceding withdraw's update_reserves by exactly amount0/amount1 (0, 0x989680).
+func TestConcentratedDeposit_firstBuildCrossCheck(t *testing.T) {
+	d := NewDecoder()
+	_, ev, _ := loadHashFixture(t, clWithdrawDir, "deposit_liquidity_62341446_07def1523dcf_1.json")
+	lq, ok := decodeOne(t, d, ev).(LiquidityEvent)
+	if !ok || lq.Action != LiquidityDeposit || !lq.Concentrated {
+		t.Fatalf("decoded %+v, want a concentrated deposit", lq)
+	}
+	if lq.Liquidity.String() != "9866406698" || lq.Amounts[0].String() != "0" || lq.Amounts[1].String() != "10000000" {
+		t.Errorf("liquidity=%s amounts=%v, want 9866406698 [0 10000000]", lq.Liquidity, lq.Amounts) // lo 0x024c156b2a
+	}
+	_, puEv, _ := loadHashFixture(t, clWithdrawDir, "position_update_62341446_07def1523dcf_3.json")
+	pu, err := decodeRewardsEvent(&puEv, EventPositionUpdate, lq.ObservedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pu.Attributes["delta"] != lq.Liquidity.String() {
+		t.Errorf("position_update delta %v != liquidity %s", pu.Attributes["delta"], lq.Liquidity)
+	}
+	reserves := func(name string) []*big.Int {
+		_, ev, _ := loadHashFixture(t, clWithdrawDir, name)
+		rv, ok := decodeOne(t, d, ev).(ReservesEvent)
+		if !ok || len(rv.Reserves) != 2 {
+			t.Fatalf("%s did not decode to a 2-leg ReservesEvent", name)
+		}
+		return []*big.Int{rv.Reserves[0].BigInt(), rv.Reserves[1].BigInt()}
+	}
+	before, after := reserves("update_reserves_62341437_bf55f09c8439_2.json"), reserves("update_reserves_62341446_07def1523dcf_2.json")
+	for i := range 2 {
+		if rise := new(big.Int).Sub(after[i], before[i]); rise.Cmp(lq.Amounts[i].BigInt()) != 0 {
+			t.Errorf("reserve[%d] rose by %s, deposit amount%d is %s", i, rise, i, lq.Amounts[i])
+		}
+	}
+}
 
 // A concentrated withdraw_liquidity body is [liquidity, amount0, amount1], all positive; the same-tx position_update
 // delta is -liquidity. Values are hand-decoded from the XDR (i128 lo words), not read back.

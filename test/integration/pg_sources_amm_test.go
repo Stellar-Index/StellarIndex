@@ -202,6 +202,53 @@ func TestAquariusLiquidityRoundTrip(t *testing.T) {
 	if withShares != 0 || amount0 != 37_766_771 {
 		t.Errorf("concentrated rows: %d with shares, amount0 %d; want 0 and 37766771", withShares, amount0)
 	}
+
+	assertConcentratedRebuildRewritesInPlace(ctx, t, store, t0.Add(3*time.Hour), tokenA, tokenB)
+}
+
+// A row stored shares-last by live ingest is rewritten by a rebuild's higher generation (shares NULL, amounts corrected),
+// and a later live gen-0 re-delivery of the old decode cannot revert it.
+func assertConcentratedRebuildRewritesInPlace(ctx context.Context, t *testing.T, store *timescale.Store, at time.Time, tokenA, tokenB string) {
+	t.Helper()
+	const pool = "CCV2X5THRWCT7HCGJU42DMOVYLAARVIPEDG2LQOVVA2WGONF2MZY2OX6"
+	ev := func(amounts []int64, shares int64, absent bool) timescale.AquariusLiquidityEvent {
+		return timescale.AquariusLiquidityEvent{
+			ContractID: pool, Ledger: 62_341_437, LedgerCloseTime: at, EventIndex: 1,
+			TxHash: "bf55f09c84391129c20b7ca779bbb8c8160bf985bb1052df5aeebae0372cc1ea",
+			Action: timescale.AquariusLiquidityWithdraw, Tokens: []string{tokenA, tokenB},
+			Amounts:      []canonical.Amount{canonical.NewAmount(big.NewInt(amounts[0])), canonical.NewAmount(big.NewInt(amounts[1]))},
+			Shares:       canonical.NewAmount(big.NewInt(shares)),
+			SharesAbsent: absent,
+		}
+	}
+	wrong := ev([]int64{12_196_208_501, 0}, 9_999_999, false) // the shares-last misread of [liquidity, 0, 9999999]
+	check := func(stage string) {
+		t.Helper()
+		var withShares int
+		var a0, a1 string
+		if err := store.DB().QueryRowContext(ctx,
+			`SELECT COUNT(*) FILTER (WHERE shares IS NOT NULL),
+			        MAX(amount::text) FILTER (WHERE token_index = 0), MAX(amount::text) FILTER (WHERE token_index = 1)
+			   FROM aquarius_liquidity WHERE contract_id = $1`, pool).Scan(&withShares, &a0, &a1); err != nil {
+			t.Fatalf("%s: %v", stage, err)
+		}
+		if withShares != 0 || a0 != "0" || a1 != "9999999" {
+			t.Errorf("%s: %d rows with shares, amounts [%s %s]; want 0 and [0 9999999]", stage, withShares, a0, a1)
+		}
+	}
+	if err := store.InsertAquariusLiquidity(ctx, wrong); err != nil {
+		t.Fatalf("live insert: %v", err)
+	}
+	store.SetDeriveGeneration(1_764_000_000)
+	if err := store.InsertAquariusLiquidity(ctx, ev([]int64{0, 9_999_999}, 0, true)); err != nil {
+		t.Fatalf("rebuild upsert: %v", err)
+	}
+	check("after rebuild")
+	store.SetDeriveGeneration(0)
+	if err := store.InsertAquariusLiquidity(ctx, wrong); err != nil {
+		t.Fatalf("live re-delivery: %v", err)
+	}
+	check("after live re-delivery")
 }
 
 // TestLatestAquariusReserves: empty-safe (nil, nil); latest snapshot per pool wins; per-token fan-out, i128 and a zero leg

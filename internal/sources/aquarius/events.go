@@ -124,8 +124,8 @@ const (
 )
 
 // MainnetConcentratedPools is every pool MainnetRouter's add_pool announced as "concentrated" (63, from ledger
-// 62,339,683), disjoint from MainnetPools. protocol_contracts has no pool-type column, so after a restart this list is
-// the only source of their layout; a pool in neither list is unknown until its add_pool is re-read.
+// 62,339,683), disjoint from MainnetPools. protocol_contracts has no pool-type column, so a layout learned from a live
+// add_pool is lost on restart: a pool in neither list then has its liquidity events refused (the boot warm logs it).
 var MainnetConcentratedPools = []string{
 	"CA26X2GYYE2H3ZXNXFPU537O2HITDXNMF5HXUJVL3O7XEVQUUB4RQ54T",
 	"CA4HTZNY2RBZWEQE5GBMNREZMFRPAZSVJ6OGPC7T3VM7NHRJYFAVID2S",
@@ -605,6 +605,17 @@ var MainnetPools = []string{
 	"CDW2RFU4WFZMVR5XRDE2TRJF7ZCRJG6A6TZQCWTRB473XJSD6G4BK4EK",
 	"CDYLKM3DGH5A6QA6QOIITPKG7C4DTZMS2HF75XURORACBHCR6AOE3K33",
 	"CDZYAFNTTKR5V6ZWYUBHSYTYNEMOQZJPJ4VRTWFEMEZO3CPLS62HWRY4",
+}
+
+// PoolsWithoutLayout returns the ids in neither in-code pool list, i.e. pools whose liquidity layout a restart cannot restore.
+func PoolsWithoutLayout(ids []string) []string {
+	var out []string
+	for _, id := range ids {
+		if !slices.Contains(MainnetPools, id) && !slices.Contains(MainnetConcentratedPools, id) {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // MainnetGatedSet is the curated child set the decoder seeds, both pool lists sorted (the router is the factory trust root, not a child).

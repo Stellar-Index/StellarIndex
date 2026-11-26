@@ -61,10 +61,10 @@ keys (seen in Soroswap / Reflector).
 - **Liquidity fixtures exist only for concentrated pools.**
   `155a17b9…/` holds concentrated-pool `deposit_liquidity` events with
   their same-tx `update_reserves`, `position_update` and `pool_state`
-  (read by `concentrated_liquidity_test.go`); `concentrated-2026-04-29/`
-  (tag + date: the pools' hash at capture is unresolved) holds three
-  concentrated `withdraw_liquidity` transactions with their `update_reserves`
-  and `position_update`. No classic-pool liquidity fixture is captured.
+  (read by `concentrated_liquidity_test.go`); `8875f0c7…/` holds the first
+  concentrated build's three `withdraw_liquidity` transactions and one
+  `deposit_liquidity`, each with its `update_reserves` and `position_update`.
+  No classic-pool liquidity fixture is captured.
 - **WASM hash not yet resolved.** Fixtures currently land under
   `v2-2026-04-23/` (tag + date), not a hash directory. Resolve it from the lake
   with the query in the "Resolving the WASM hash" section of

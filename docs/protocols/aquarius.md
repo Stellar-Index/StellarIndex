@@ -245,9 +245,12 @@ but `deposit_liquidity` and `withdraw_liquidity` (3 topics, 3×i128, the same
 arity as a two-token classic pool) are ordered `[liquidity, amount0, amount1]`,
 not `[amount0, amount1, shares]`. In every deposit fixture `update_reserves`
 equals the running sums of `amount0` / `amount1` and `position_update`'s delta
-equals `liquidity`. In all 300 withdraw transactions sampled from
-62,341,437 – 62,413,470, `liquidity` equals minus the same-tx
-`position_update` delta. Lake counts from 62,339,683: `deposit_liquidity`
+equals `liquidity`. In 400 deposit transactions sampled from
+62,341,446 – 64,577,704, `liquidity` equals the same-tx `position_update`
+delta; in all 300 withdraw transactions sampled from 62,341,437 – 62,413,470
+it equals minus that delta. The pools ran four builds over that history
+(`8875f0c7…`, `1d728cc0…`, `12fca5a7…`, now `155a17b9…` on all 63; see the
+WASM audit). Lake counts from 62,339,683: `deposit_liquidity`
 32,911 events on 63 pools, `withdraw_liquidity` 19,482 on 52 pools,
 `position_update` 52,393 on 63 pools, every body 3 elements.
 
@@ -257,6 +260,10 @@ The decoder keeps a per-pool liquidity layout in the gate. A pool is
 `constant` / `stable` or it is in `MainnetPools`. Any other pool's liquidity
 events are refused (`ErrUnknownLiquidityLayout`); a refusal counts as
 projector `decode_error`, and the decode-failed log line carries the error.
+`protocol_contracts` has no column for the type, so a layout learned from a
+live `add_pool` does not survive a restart: a pool in neither list then has
+its liquidity events refused, and the boot warm logs a WARN naming it ("NO
+liquidity layout") until it is added to the list its type names.
 A concentrated pool's `aquarius_liquidity` rows carry the two token amounts
 and `shares` NULL: the pool mints no LP shares, and its liquidity is in the
 `position_update` row of `aquarius_rewards_events`.
