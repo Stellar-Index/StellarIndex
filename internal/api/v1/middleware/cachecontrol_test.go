@@ -465,6 +465,7 @@ func TestPolicyForPath_PublicRoutesOffTheDefault(t *testing.T) {
 		{"/v1/lending/rates", current},
 		{"/v1/lending/protocols", current},
 		{"/v1/lending/pools/" + cid + "/config-history", current},
+		{"/v1/lending/pools/" + cid + "/revenue", current},
 		{"/v1/lending/pools/" + cid + "/reserves/" + cid + "/history", current},
 		{"/v1/lending/pools/" + cid + "/backstop/history", current},
 		{"/v1/lending/pools/" + cid + "/liquidations", current},

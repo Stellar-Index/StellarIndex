@@ -2258,6 +2258,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/lending/pools/{pool}/revenue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Lending pool — interest accrued and its split, per reserve.
+         * @description Interest booked on each reserve of a Blend V1, Blend V2 or BLNT
+         *     pool, per hour (`interval=1h`) or UTC day (`interval=1d`), summed
+         *     exactly from the derived hourly interest record. Every amount is a
+         *     decimal string in the reserve token's base units (`decimals`);
+         *     nothing is in USD, and amounts of different reserves are never
+         *     added together.
+         *
+         *     Interest is booked when the reserve is next touched on chain, so it
+         *     lands in the hour of that touch, not spread over the hours it
+         *     accrued in. `interest_accrued` = `supplier_share` + `backstop_take`
+         *     + `protocol_fee`. `supplier_credited` is what the b-token rate
+         *     actually credited suppliers; rounding can leave it below
+         *     `supplier_share`. On Blend the backstop take goes to backstop
+         *     depositors, not to a treasury; `protocol_fee` is non-zero only on
+         *     BLNT, whose fee rate is inferred from chain data
+         *     (`fee_rate_inferred`). Losses (`default_loss`,
+         *     `reconcile_backstop_loss`, `unexplained_supply_loss`) are
+         *     magnitudes, ≥ 0, so a partial sum is a lower bound like every
+         *     other amount. `realised.backstop_drawn` is backstop credit paid out
+         *     by interest auctions, always a lower bound
+         *     (`backstop_drawn_lower_bound`: Blend V1 fills do not state their
+         *     lot, and draws inside unexplained versions are left out).
+         *     `realised.fee_withdrawn` is
+         *     null: BLNT fee withdrawals are not derived (`not_derivable`) and
+         *     Blend has no fee (`not_applicable`). Interest paid by borrowers in
+         *     cash is not served: a repayment does not say how much of it is
+         *     interest.
+         *
+         *     The window is `[from, to)` with `to` rounded down to its hour;
+         *     parameters, window limits and the 2,000-point cap are as on
+         *     `/v1/lending/pools/{pool}/history`, plus `asset` for one reserve.
+         *     Only hours the interest record covers are summed (`coverage`), and
+         *     only rows of the current `derive_rev`. Inside the coverage, at the
+         *     current revision, a bucket with no point booked nothing; an hour
+         *     left out is named in `excluded`. A daily bucket cut short by `to`
+         *     or the coverage is `partial`. `lower_bound` is true whenever
+         *     `excluded` names anything; a reserve's own `lower_bound` is true
+         *     under a window exclusion or one naming it, and its `totals` are
+         *     null when nothing of it was summed, never `"0"`. A known pool
+         *     with no derived interest is a 200 with no reserves and
+         *     `interest_not_derived`; 404 `not-found` when no lending source
+         *     knows the pool.
+         */
+        get: operations["getLendingPoolRevenue"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/lending/accounts/{account}/earnings": {
         parameters: {
             query?: never;
@@ -7153,6 +7214,81 @@ export interface components {
              * @enum {string}
              */
             reason: "unpriced" | "withheld" | "rate_unread" | "positions_unreadable" | "positions_truncated" | "positions_overcounted" | "reserve_list_unreadable";
+        };
+        /** @description Something the revenue sums leave out or cannot vouch for; any one makes them a lower bound. */
+        LendingRevenueExclusion: {
+            /** @enum {string} */
+            kind: "pool" | "window" | "reserve";
+            /** @description The reserve concerned; null for the pool or the window. */
+            asset: string | null;
+            /**
+             * @description `interest_not_derived`: the pool has no derived interest (kind `pool`), or part of the window lies before the derive floor or after the coverage (kind `window`). `derive_stale`: `count` hour rows of another derive revision are left out. `redo_pending`: hours a pending re-derive has not yet rewritten are left out. `accrual_excluded`: `count` versions could not be ordered or accrued, so their interest is not summed. `unexplained_supply_loss`: suppliers lost `amount` over `count` versions that no event explains (Blend V1 and BLNT defaults among them), so it is outside `default_loss`.
+             * @enum {string}
+             */
+            reason: "interest_not_derived" | "derive_stale" | "redo_pending" | "accrual_excluded" | "unexplained_supply_loss";
+            /** @description Base units, a magnitude ≥ 0 (`unexplained_supply_loss`). */
+            amount: string | null;
+            /** Format: int64 */
+            count: number | null;
+        };
+        /** @description Base-unit decimal strings. Counts are versions: a version is one change of the reserve's on-chain state. */
+        LendingRevenueAmounts: {
+            /** @description Gross interest booked: supplier_share + backstop_take + protocol_fee. */
+            interest_accrued: string;
+            /** @description The suppliers' part by the pool's split. */
+            supplier_share: string;
+            /** @description What the b-token rate actually credited suppliers; may be below supplier_share by rounding, and negative. */
+            supplier_credited: string;
+            /** @description The backstop's cut, credited to the reserve's backstop credit; on Blend it goes to backstop depositors, not a treasury. */
+            backstop_take: string;
+            /** @description BLNT's protocol fee; 0 on Blend. */
+            protocol_fee: string;
+            realised: {
+                /** @description Backstop credit paid out by interest auctions (≥ 0); always a lower bound. */
+                backstop_drawn: string;
+                /** @description Always true: Blend V1 fills do not state their lot, and draws inside unexplained versions are left out. */
+                backstop_drawn_lower_bound: boolean;
+                /** @description Always null: not derived. */
+                fee_withdrawn: string | null;
+                /** @enum {string} */
+                fee_withdrawn_reason: "not_derivable" | "not_applicable";
+            };
+            /** @description Tokens gulped into backstop credit (≥ 0). */
+            backstop_gulped: string;
+            /** @description BLNT reconcile_loss charged to backstop credit, a loss (≥ 0). */
+            reconcile_backstop_loss: string;
+            /** @description Blend V2 defaults socialised to suppliers, a loss (≥ 0). */
+            default_loss: string;
+            /** Format: int64 */
+            default_versions: number;
+            /** @description Supplier loss no event explains, summed over the hours where it is a loss (≥ 0). */
+            unexplained_supply_loss: string;
+            /**
+             * Format: int64
+             * @description Unexplained b_rate versions in those hours.
+             */
+            unexplained_supply_loss_versions: number;
+            /** @description Supplier gain no event explains, summed over the hours where it is a gain (≥ 0). */
+            unexplained_supply_gain: string;
+            /**
+             * Format: int64
+             * @description Unexplained b_rate versions in those hours.
+             */
+            unexplained_supply_gain_versions: number;
+            /** @description Backstop credit change no event explains. */
+            unexplained_backstop_residual: string;
+            /** Format: int64 */
+            unexplained_versions: number;
+            /**
+             * Format: int64
+             * @description Versions whose predecessor is unknown: counted, not summed.
+             */
+            unordered_versions: number;
+            /**
+             * Format: int64
+             * @description Versions accrual refused: counted, not summed.
+             */
+            accrual_errors: number;
         };
         /**
          * @description A lending reserve's ReserveConfig. The fractions are the contract's
@@ -19813,6 +19949,192 @@ export interface operations {
                                     queued_shares: string | null;
                                     queued_pct: number | null;
                                 }[];
+                            }[];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getLendingPoolRevenue: {
+        parameters: {
+            query?: {
+                /** @description A reserve token's C-strkey: serve only that reserve. */
+                asset?: string;
+                interval?: "1h" | "1d";
+                /** @description RFC 3339, rounded down to the start of its hour (`1h`) or UTC day (`1d`); default `to` - 90 days (`1d`) or 83 days (`1h`). */
+                from?: string;
+                /** @description RFC 3339, rounded down to its hour; default now. */
+                to?: string;
+                /** @description Duration (`30d`, `72h`); sets from = to - window. Exclusive with `from`. */
+                window?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Pool contract C-strkey. */
+                pool: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Interest accrued per reserve. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                     *         "protocol": "blend",
+                     *         "interval": "1d",
+                     *         "from": "2026-08-18T00:00:00Z",
+                     *         "to": "2026-11-16T00:00:00Z",
+                     *         "coverage": {
+                     *           "derive_rev": 4,
+                     *           "from_ledger": 51499541,
+                     *           "through_ledger": 63339779,
+                     *           "through_hour": "2026-11-15T22:00:00Z"
+                     *         },
+                     *         "lower_bound": true,
+                     *         "excluded": [
+                     *           {
+                     *             "kind": "window",
+                     *             "asset": null,
+                     *             "reason": "interest_not_derived",
+                     *             "amount": null,
+                     *             "count": null
+                     *           }
+                     *         ],
+                     *         "reserves": [
+                     *           {
+                     *             "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *             "decimals": 7,
+                     *             "fee_rate_inferred": false,
+                     *             "lower_bound": true,
+                     *             "totals": {
+                     *               "interest_accrued": "1250000000",
+                     *               "supplier_share": "1000000000",
+                     *               "supplier_credited": "999999998",
+                     *               "backstop_take": "250000000",
+                     *               "protocol_fee": "0",
+                     *               "realised": {
+                     *                 "backstop_drawn": "200000000",
+                     *                 "backstop_drawn_lower_bound": true,
+                     *                 "fee_withdrawn": null,
+                     *                 "fee_withdrawn_reason": "not_applicable"
+                     *               },
+                     *               "backstop_gulped": "0",
+                     *               "reconcile_backstop_loss": "0",
+                     *               "default_loss": "0",
+                     *               "default_versions": 0,
+                     *               "unexplained_supply_loss": "0",
+                     *               "unexplained_supply_loss_versions": 0,
+                     *               "unexplained_supply_gain": "0",
+                     *               "unexplained_supply_gain_versions": 0,
+                     *               "unexplained_backstop_residual": "0",
+                     *               "unexplained_versions": 0,
+                     *               "unordered_versions": 0,
+                     *               "accrual_errors": 0
+                     *             },
+                     *             "points": [
+                     *               {
+                     *                 "t": "2026-11-15T00:00:00Z",
+                     *                 "partial": false,
+                     *                 "interest_accrued": "1250000000",
+                     *                 "supplier_share": "1000000000",
+                     *                 "supplier_credited": "999999998",
+                     *                 "backstop_take": "250000000",
+                     *                 "protocol_fee": "0",
+                     *                 "realised": {
+                     *                   "backstop_drawn": "200000000",
+                     *                   "backstop_drawn_lower_bound": true,
+                     *                   "fee_withdrawn": null,
+                     *                   "fee_withdrawn_reason": "not_applicable"
+                     *                 },
+                     *                 "backstop_gulped": "0",
+                     *                 "reconcile_backstop_loss": "0",
+                     *                 "default_loss": "0",
+                     *                 "default_versions": 0,
+                     *                 "unexplained_supply_loss": "0",
+                     *                 "unexplained_supply_loss_versions": 0,
+                     *                 "unexplained_supply_gain": "0",
+                     *                 "unexplained_supply_gain_versions": 0,
+                     *                 "unexplained_backstop_residual": "0",
+                     *                 "unexplained_versions": 0,
+                     *                 "unordered_versions": 0,
+                     *                 "accrual_errors": 0
+                     *               }
+                     *             ]
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-11-16T00:00:01Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: {
+                            pool: string;
+                            /** @enum {string|null} */
+                            protocol: "blend" | "blnt" | null;
+                            /** @enum {string} */
+                            interval: "1h" | "1d";
+                            /** Format: date-time */
+                            from: string;
+                            /** Format: date-time */
+                            to: string;
+                            coverage: {
+                                /** @description The only derive revision summed; rows of another are named `derive_stale`. */
+                                derive_rev: number;
+                                /**
+                                 * Format: int64
+                                 * @description The derive floor: no interest before it is derived.
+                                 */
+                                from_ledger: number | null;
+                                /**
+                                 * Format: int64
+                                 * @description The lower of the shared interest watermark and the pool's own coverage; the last ledger of its hour.
+                                 */
+                                through_ledger: number | null;
+                                /**
+                                 * Format: date-time
+                                 * @description The last hour covered.
+                                 */
+                                through_hour: string | null;
+                            };
+                            lower_bound: boolean;
+                            excluded: components["schemas"]["LendingRevenueExclusion"][];
+                            reserves: {
+                                asset: string;
+                                /** @description The reserve token's exponent; null when not established. */
+                                decimals: number | null;
+                                /** @description BLNT: the protocol fee rate is inferred from chain data, the contract being closed source. */
+                                fee_rate_inferred: boolean;
+                                /** @description A window exclusion, or one naming this reserve, applies. */
+                                lower_bound: boolean;
+                                /** @description Null when an exclusion left nothing of the reserve summed. */
+                                totals: components["schemas"]["LendingRevenueAmounts"] | null;
+                                points: ({
+                                    /**
+                                     * Format: date-time
+                                     * @description Bucket start.
+                                     */
+                                    t: string;
+                                    /** @description The bucket is cut short by `to` or the coverage. */
+                                    partial: boolean;
+                                } & components["schemas"]["LendingRevenueAmounts"])[];
                             }[];
                         };
                     };

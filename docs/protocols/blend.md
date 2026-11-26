@@ -16,6 +16,25 @@ status: current
 > - **Last verified:** 2026-06-12 (r1 lake).
 > - **Gate status:** ✅ enforced (`internal/sources/blend`, ADR-0035).
 
+## Interest revenue: `GET /v1/lending/pools/{pool}/revenue`
+
+Interest per reserve of a Blend V1, Blend V2 or BLNT pool, per hour or day, in the reserve token's base units (no USD).
+It is summed from the derived hourly interest record (`lending_interest_hourly`); hours that record does not cover, or
+that a pending re-derive will rewrite, are left out and named.
+
+| Field | What it means |
+|---|---|
+| `interest_accrued` | Interest borrowers owe. It is booked when the reserve is next touched on chain, so it lands in the hour of that touch, not spread over the hours it built up in. |
+| `supplier_share`, `backstop_take`, `protocol_fee` | How the pool splits it; the three add up to `interest_accrued`. `protocol_fee` is BLNT's fee, with its rate inferred from chain data (`fee_rate_inferred`); it is 0 on Blend. |
+| `supplier_credited` | What the b-token rate actually credited suppliers. Rounding leaves a little in the pool, so it can sit just below `supplier_share`. |
+| `backstop_take` | On Blend this goes to backstop depositors, not to a treasury. |
+| `realised.backstop_drawn` | Backstop credit actually paid out by interest auctions. Always a lower bound (`backstop_drawn_lower_bound`): Blend V1 fills do not state their lot, and a draw inside a version nothing explains is left out. |
+| `realised.fee_withdrawn` | Always null: BLNT fee withdrawals are not derived yet (`not_derivable`); Blend has no fee (`not_applicable`). |
+| `default_loss`, `unexplained_supply_loss` | Losses cut from suppliers, as positive amounts: Blend V2 defaults that reproduce exactly, and what no event explains (Blend V1 and BLNT defaults among it). `unexplained_supply_gain` is the unexplained move the other way. |
+
+Interest borrowers paid in cash is not served: a repayment does not say how much of it is interest. `lower_bound` is true
+whenever `excluded` names anything left out; a reserve whose summed part is nothing has `totals: null`, never `"0"`.
+
 ## Pool factories (trust roots)
 
 A contract's events are attributed to Blend only if the contract is one of

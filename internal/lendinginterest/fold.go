@@ -12,6 +12,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
 )
 
+// DeriveRev is every row's derive_rev. Bump it, and re-derive, on any change to blend/accrual.go, blnt/accrual.go or
+// this package: rows are computed when written, not decoded at read time, so readers serve only this revision.
+const DeriveRev uint16 = 4
+
 // Protocol is the accrual arithmetic a pool runs; it is an input, never inferred from rate scale.
 type Protocol string
 
