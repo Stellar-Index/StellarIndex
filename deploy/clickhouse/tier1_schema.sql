@@ -1635,6 +1635,8 @@ CREATE TABLE IF NOT EXISTS stellar.lending_interest_hourly
     brate_mismatches      UInt32,
     backstop_residual     Int256,
     supply_residual       Int256,
+    default_loss          Int256 DEFAULT 0,        -- supply_residual of classified V2 defaulted_debt versions (≤ 0)
+    default_versions      UInt32 DEFAULT 0,
     fee_mismatches        UInt32,
     fee_credit_residual   Int256,
     residual_explained    Int256,                  -- amount-matched to an event

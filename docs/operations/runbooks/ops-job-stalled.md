@@ -267,7 +267,7 @@ Stop serving: once anything reads the table, a mismatch that a re-derive does no
    ORDER BY hour
    ```
 
-2. Read the pool's events over each row's ledgers in `stellar.contract_events` and find the transaction that wrote the version. A `brate_mismatches` row beside a Blend V2 `defaulted_debt` event is a socialised bad-debt loss (`docs/operations/wasm-audits/blend.md`, "Interest accrual arithmetic"); anything else is a cause the fold has no rule for.
+2. Read the pool's events over each row's ledgers in `stellar.contract_events` and find the transaction that wrote the version. A Blend V2 `defaulted_debt` whose b_rate cut reproduces is explained and lands in `default_loss`; one left unexplained did not reproduce exactly (a supply or withdraw before the cut in the same transaction, or a contract the audit in `docs/operations/wasm-audits/blend.md`, "Interest accrual arithmetic", does not cover). Anything else is a cause the fold has no rule for.
 3. Record it in that audit doc. Totals over those hours are lower bounds until a rule explains them; a new rule is a derive revision and a re-derive from the floor.
 
 ## stellarindex_catchup_lane_failed

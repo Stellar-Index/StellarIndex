@@ -23,7 +23,7 @@ const lendingInterestJob = "ch-entry-history-lending-interest"
 
 // lendingInterestRev is every row's derive_rev. Bump it, and re-derive, on any change to blend/accrual.go,
 // blnt/accrual.go or internal/lendinginterest: rows are computed when written, not decoded at read time.
-const lendingInterestRev uint16 = 2
+const lendingInterestRev uint16 = 3
 
 // interestFlags are the -interest-* flags.
 type interestFlags struct {

@@ -167,7 +167,7 @@ func TestProveInterest_StaleRevisionIsIncomplete(t *testing.T) {
 	p.stored[2].Row.Gross = big.NewInt(-1) // an older arithmetic's value is not a mismatch
 	out, gauge, err := p.prove(t, lendingRun{})
 	if err == nil || !strings.Contains(err.Error(), "INCOMPLETE") || gauge != "0" ||
-		!strings.Contains(out, "derive_rev 1, this binary derives 2") || !strings.Contains(out, "3 hours proved, 0 mismatched, 1 INCOMPLETE") {
+		!strings.Contains(out, "derive_rev 1, this binary derives 3") || !strings.Contains(out, "3 hours proved, 0 mismatched, 1 INCOMPLETE") {
 		t.Fatalf("err %v gauge %s:\n%s", err, gauge, out)
 	}
 }

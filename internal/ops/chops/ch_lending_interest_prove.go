@@ -540,7 +540,7 @@ var interestColumnNames = []string{
 	"protocol", "first_ledger", "last_ledger", "versions", "accrued_versions", "gross", "protocol_fee", "backstop",
 	"supplier_intended", "supplier_realised", "backstop_credit_delta", "unreconciled_versions", "brate_mismatches",
 	"backstop_residual", "supply_residual", "fee_mismatches", "fee_credit_residual", "unordered_versions",
-	"accrual_errors", "error_samples",
+	"accrual_errors", "error_samples", "default_loss", "default_versions",
 	"residual_explained", "residual_attributed", "explained_versions", "attributed_versions",
 	"versions (the lake's count)",
 }
@@ -553,7 +553,7 @@ func interestColumns(r lendinginterest.HourRow) []string {
 		r.ProtocolFee.String(), r.Backstop.String(), r.SupplierIntended.String(), r.SupplierRealised.String(),
 		r.BackstopCreditDelta.String(), n(r.UnreconciledVersions), n(r.BRateMismatches), r.BackstopResidual.String(),
 		r.SupplyResidual.String(), n(r.FeeMismatches), r.FeeCreditResidual.String(), n(r.UnorderedVersions),
-		n(r.AccrualErrors), fmt.Sprintf("%q", r.ErrorSamples),
+		n(r.AccrualErrors), fmt.Sprintf("%q", r.ErrorSamples), r.DefaultLoss.String(), n(r.DefaultVersions),
 	}
 }
 

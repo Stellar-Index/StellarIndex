@@ -182,7 +182,7 @@ func TestExplain_CensusOnlyClassifiedLedgers(t *testing.T) {
 		st.used[eventID{txKey: k, asset: "A"}] = c.used
 		st.poisoned[txRef{"P", "t", 1}] = c.poisoned
 		row := &HourRow{ResidualExplained: new(big.Int), ResidualAttributed: new(big.Int), ResidualUnexplained: new(big.Int)}
-		st.explain(row, c.nexts, big.NewInt(c.residual), c.onlyBackstop)
+		st.explain(row, c.nexts, big.NewInt(c.residual), c.onlyBackstop, nil)
 		if got := len(row.ResidualLedgers) == 1; got != c.censused || (row.ExplainedVersions == 1) != c.censused {
 			t.Errorf("%s: census %v explained %d, want %v", c.name, row.ResidualLedgers, row.ExplainedVersions, c.censused)
 		}
@@ -251,14 +251,14 @@ func TestExplain_EventsExplainOnce(t *testing.T) {
 	v := Version{Pool: "P", Asset: "A", Ledger: 1, TxHash: "t"}
 	st.events[txKey{"P", "t", 1, 0}] = []Event{{Pool: "P", Asset: "A", Amount: big.NewInt(-3)}}
 	row := &HourRow{ResidualExplained: new(big.Int), ResidualAttributed: new(big.Int), ResidualUnexplained: new(big.Int)}
-	st.explain(row, []Version{v}, big.NewInt(-3), true)
-	st.explain(row, []Version{v}, big.NewInt(-3), true)
+	st.explain(row, []Version{v}, big.NewInt(-3), true, nil)
+	st.explain(row, []Version{v}, big.NewInt(-3), true, nil)
 	if row.ExplainedVersions != 1 || row.UnexplainedVersions != 1 || len(row.ResidualLedgers) != 1 {
 		t.Fatalf("%+v", row)
 	}
 	// A b_rate or fee mismatch leaves the version unexplained whatever its events.
 	st = &state{used: map[eventID]bool{}, events: st.events}
-	st.explain(row, []Version{v}, big.NewInt(-3), false)
+	st.explain(row, []Version{v}, big.NewInt(-3), false, nil)
 	if row.UnexplainedVersions != 2 {
 		t.Fatalf("%+v", row)
 	}

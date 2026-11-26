@@ -534,18 +534,26 @@ Open before the table is served:
    `d_rate` do not move, so a transaction's defaults compose by applying each
    in event order, and the per-event ceilings do not sum to one cut over the
    summed d-tokens. `blend.DefaultedBRate` (`internal/sources/blend/default.go`,
-   `default_test.go`) implements it as transcribed from v2.0.0
-   `pool/src/pool/user.rs` and `bad_debt.rs`; no contract source is in this
-   repo and no real version checks it, so the rounding, the clamp and the
-   accrual-first order stay unconfirmed until the versions below are
-   fixtures. On the production lake
-   (2026-11-26) all 8 versions the full-history proof left unexplained are
-   b_rate mismatches in the transactions of 8 such events: pool `CCCCIQSD…`
-   ledgers 61,341,315 (2 events) and 61,342,113 (3), pool `CBYOBT7Z…` ledger
-   64,534,597 (3). The fold still counts them unexplained: the table has no
-   column for a supplier-side loss an event explains (`residual_explained`
-   is backstop credit), and the fold's `supply_residual` is the loss
-   measured on `total_supply`, not the b_rate cut.
+   `default_test.go`) implements it, transcribed from v2.0.0
+   `pool/src/pool/user.rs` (no contract source is in this repo).
+   **Reproduced on 8 production versions (2026-11-26).** All 8 versions the
+   full-history proof left unexplained are b_rate mismatches in the
+   transactions of 8 such events, one per asset: pool `CCCCIQSD…` ledgers
+   61,341,315 (2) and 61,342,113 (3), pool `CBYOBT7Z…` ledger 64,534,597
+   (3). Accrual, then the cut, gives each stored b_rate exactly
+   (`TestDefaultedBRate_ReproducesMainnet` over the lake's XDR in
+   `internal/sources/blend/testdata/defaulted_debt/`): the 64,534,597
+   `CDIKURWH…` cut exceeds b_rate and stores 0 (the clamp), and the
+   61,341,315 USDC reserve's `b_supply` grew in the same transaction yet
+   the cut divides by the pre-transaction `b_supply` (the supply ran after
+   it; with the final `b_supply` it does not reproduce). A floor in the
+   second step fails 7 of the 8, in the first 2. The pools'
+   bstop_rate (0.2 and 0.5) is the one rate at which every reserve's
+   `backstop_credit` delta is exactly accrual's share; it is read from
+   that, not from the pool's Config. The fold explains such a version and
+   records its `supply_residual` in `default_loss` (`default_versions`
+   counts them) when the version is otherwise classified.
 5. Unexplained by design until their amount relation is reproduced:
-   `bad_debt` (liabilities moved to the backstop, documented above) and V1
-   `update_pool`'s retroactive bstop_rate.
+   `bad_debt` (liabilities moved to the backstop, documented above; it moves
+   no reserve rate), V1 `defaulted_debt`, and V1 `update_pool`'s retroactive
+   bstop_rate.
