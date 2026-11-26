@@ -3,7 +3,7 @@
 # stellarindex_served_value_check_stale (the absent-series arm) and
 # stellarindex_served_value_unit_failed — and for the reserve-LIST check's
 # own ticket, stellarindex_sdf_reserve_list_drift. Rules live in
-# data-freshness.yml.
+# served-values.yml.
 #
 #   promtool test rules deploy/monitoring/rule-tests/served-values_test.yml
 #
@@ -25,7 +25,7 @@
 # setting is per-FILE — the same reason restore-drill_test.yml is separate.
 #
 # PROVEN-RED (check_stale): delete the `or absent_over_time(...[2d])` line
-# from data-freshness.yml and re-run — the never-scheduled case reports
+# from served-values.yml and re-run — the never-scheduled case reports
 # `got:[]`, nothing firing at all. The dead-timer case still fires off the
 # subtraction branch either way, so the never-scheduled case is the one
 # carrying the coverage. It exercises the real alert (its 48h window + 1h
@@ -39,13 +39,13 @@
 # `offset 25h` + `for: 1h`, and why the dip at t=24h is in the fixture.
 #
 # PROVEN-RED (sdf_reserve_list_drift): delete the alert from
-# data-freshness.yml and re-run — the "missing account tickets at 26h" case
+# served-values.yml and re-run — the "missing account tickets at 26h" case
 # reports `got:[]`. The value check it complements cannot stand in for it:
 # a single reserve account is inside xlm_circulating_supply's 2% tolerance,
 # so served_value_drift stays silent on exactly the state this alert names.
 
 rule_files:
-  - ../rules/data-freshness.yml
+  - ../rules/served-values.yml
 
 evaluation_interval: 1h
 

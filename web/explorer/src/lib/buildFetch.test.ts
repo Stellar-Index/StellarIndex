@@ -529,7 +529,9 @@ describe('degraded core answers', () => {
     const env = await settle(buildFetchEnvelope(path));
     expect(env.degraded).toBe(true);
     expect(env.data).toEqual({ ath: null });
-    expect(fetchMock).toHaveBeenCalledTimes(1 + DEGRADED_REASK_DELAYS_MS.length);
+    expect(fetchMock).toHaveBeenCalledTimes(
+      1 + DEGRADED_REASK_DELAYS_MS.get('/v1/assets/{id}')!.length,
+    );
     expect(buildBakedDegraded().has(path)).toBe(true);
   });
 

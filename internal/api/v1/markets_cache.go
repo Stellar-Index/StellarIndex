@@ -86,8 +86,19 @@ type marketsCacheEntry struct {
 
 // marketsServedStaleLocked is the [swrverdict.Stale] verdict for a filled entry served past ttl; no refresh in flight (every slot
 // was busy) leaves it a last-good copy too. Caller holds c.mu.
-func (c *CachedMarketsReader) marketsServedStaleLocked(e *marketsCacheEntry) bool {
-	return e.flight == nil || swrverdict.Stale(c.now().Sub(e.at), c.ttl, marketsRefreshBudget, e.refreshFailed)
+func (c *CachedMarketsReader) marketsServedStaleLocked(ctx context.Context, e *marketsCacheEntry) bool {
+	overrun := swrverdict.Stale(c.now().Sub(e.at), c.ttl, marketsRefreshBudget, false)
+	switch {
+	case e.refreshFailed:
+		obs.NoteDegradedCause(ctx, obs.DegradedRefreshFailed)
+	case e.flight == nil:
+		obs.NoteDegradedCause(ctx, obs.DegradedRefreshRefused)
+	case overrun:
+		obs.NoteDegradedCause(ctx, obs.DegradedRefreshOverrun)
+	default:
+		return false
+	}
+	return true
 }
 
 // NewCachedMarketsReader wraps upstream with a TTL cache (ttl=0 disables); the 30s production default is tighter than sources_stats's 60s because /v1/markets is the front page.
@@ -368,14 +379,14 @@ func (c *CachedMarketsReader) fetchPairs(
 			done := make(chan struct{})
 			e.flight = done
 			entry := e
-			stale := c.marketsServedStaleLocked(e)
+			stale := c.marketsServedStaleLocked(ctx, e)
 			c.mu.Unlock()
 			obs.APICacheOpsTotal.WithLabelValues("markets", op, "stale").Inc()
 			//nolint:gosec,contextcheck // G118 / contextcheck: intentional detached fill; see runDetachedFill.
 			go runDetachedFill(c.logger, "api-markets-pairs-refresh", marketsRefreshBudget, done, holdingSlot(slots, marketsPageFill(upstream)), c.settlePairs(op, key, entry))
 			return slices.Clone(out), next, at, stale, nil
 		}
-		stale := c.marketsServedStaleLocked(e)
+		stale := c.marketsServedStaleLocked(ctx, e)
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("markets", op, "stale").Inc()
 		return slices.Clone(out), next, at, stale, nil
@@ -508,14 +519,14 @@ func (c *CachedMarketsReader) fetchPools(
 			done := make(chan struct{})
 			e.flight = done
 			entry := e
-			stale := c.marketsServedStaleLocked(e)
+			stale := c.marketsServedStaleLocked(ctx, e)
 			c.mu.Unlock()
 			obs.APICacheOpsTotal.WithLabelValues("markets", op, "stale").Inc()
 			//nolint:gosec,contextcheck // G118 / contextcheck: intentional detached fill; see runDetachedFill.
 			go runDetachedFill(c.logger, "api-markets-pools-refresh", marketsRefreshBudget, done, holdingSlot(slots, marketsPageFill(upstream)), c.settlePools(op, key, entry))
 			return slices.Clone(out), next, at, stale, nil
 		}
-		stale := c.marketsServedStaleLocked(e)
+		stale := c.marketsServedStaleLocked(ctx, e)
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("markets", op, "stale").Inc()
 		return slices.Clone(out), next, at, stale, nil

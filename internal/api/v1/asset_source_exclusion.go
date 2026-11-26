@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
@@ -65,6 +66,7 @@ func (sc assetExclusionScope) judgeRows(ctx context.Context, s *Server, rows []A
 		clearThinWhenUnpriced(&rows[i])
 	}
 	if sc.unread && removed {
+		obs.NoteDegradedCause(ctx, obs.DegradedCheckUnread)
 		flags.Stale, flags.Degraded = true, true
 		return flags
 	}
@@ -350,7 +352,9 @@ func (sc assetExclusionScope) writeDetail(ctx context.Context, w http.ResponseWr
 		writeJSON(w, d, flags)
 		return
 	}
-	writeCachedAssetDetail(w, newAssetDetailEntry(d, body, flags))
+	judged := newAssetDetailEntry(d, body, flags)
+	judged.reason = e.reason
+	writeCachedAssetDetail(w, judged)
 }
 
 // replayAssetListing writes a cached listing page: its bytes under an empty set, else its unjudged envelope judged.

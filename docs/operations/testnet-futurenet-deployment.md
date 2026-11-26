@@ -100,6 +100,21 @@ Triage `systemctl list-units --state=failed` first. Gated on `stellar_network ==
 - A `disabled` unit in `failed` state is residue.
 - **Never rebuild a unit's environment on the command line.** `sudo -u stellarindex env $(grep ... | xargs) <cmd>` puts every secret into argv, which sudo logs to the journal (shipped to Loki). Use `systemctl start <unit>` or `sudo -u <user> bash -c 'set -a; . /etc/default/<file>; set +a; exec <cmd>'`.
 
+## Monitoring
+
+`run_local_prometheus: true` installs a single-host, loopback-only Prometheus that scrapes this box (`roles/archival-node/tasks/23-local-prometheus.yml`); `/v1/status` reads it for heartbeats and incidents. It loads no alert rules unless the operator also sets, in the host's inventory:
+
+- `local_prometheus_rules_enabled: true`
+- `local_prometheus_rule_files`: rule file names from `configs/prometheus/rules.r1/`, installed verbatim. The role default is a list checked against a test net (no aggregator, backups, ZFS or second region); `scripts/ci/ansible-local-prometheus-rules-test.sh` rejects files with `absent()`-style or `page` rules. The default includes `data-freshness.yml`, which carries the price-history alerts; `served-values.yml` is left out because `verify-served-values` does not run on a test net, so its `stellarindex_served_value_check_stale` would fire.
+
+Apply with `--tags local-prometheus`. The play copies the listed files to `/etc/prometheus/rules.local/`, deletes files no longer listed, validates with `promtool check rules`, and restarts Prometheus. Unlisted, empty or missing files fail the play.
+
+Nothing is delivered: there is no Alertmanager, no `alerting:` block and no notification. A firing rule shows in the `ALERTS` series, as `/v1/status` `incidents` (ticket alerts set `incidents_status: degraded`; `overall` changes only for `page` alerts, which the default list has none of), and on the host:
+
+```sh
+curl -s localhost:9090/api/v1/alerts | jq '.data.alerts[] | {name: .labels.alertname, state, severity: .labels.severity}'
+```
+
 ## Keeping the test nets in step with r1
 
 Test nets take releases after r1, by a separate `deploy.yml` dispatch per region. Two checks catch drift, both running [`scripts/ci/check-fleet-release-drift.sh`](../../scripts/ci/check-fleet-release-drift.sh):
@@ -120,6 +135,22 @@ gh workflow run deploy.yml -f region=futurenet -f version=vX.Y.Z -f binaries=ste
 ```
 
 Verify: `curl -sf https://api.testnet.stellarindex.io/v1/version | jq -r .data.version` equals r1's.
+
+## Enabling pricing on a test net
+
+The role's peg defaults are pubnet issuers. Set these in the host inventory together:
+
+```yaml
+run_aggregator: true
+stellarindex_usd_pegged_classic_assets: ["USDC-<this network's USDC issuer>"]
+stellarindex_fiat_pegged_classic_assets: {}
+stellarindex_watched_classic_assets: [<this network's classic assets>]
+```
+
+- The USD peg must be **this network's own** USDC issuer. The preflight fails the play if any of the three variables carries a pubnet issuer from the role defaults (`CODE-ISSUER` or `CODE:ISSUER`).
+- The CEX/FX connectors (`[external]`) and the oracle contracts stay off on a test net whatever `run_aggregator` says: a CEX XLM price is the mainnet price. Prices come from on-chain trades against the USD peg only.
+- Add `stellarindex-aggregator` to the region's binary set in `scripts/dev/region-binaries.tsv` (dropping its `stellarindex-aggregator:` exception) and to the deploy dispatch.
+- Price history starts when the aggregator is enabled; earlier buckets stay unpriced.
 
 ## Known gaps
 

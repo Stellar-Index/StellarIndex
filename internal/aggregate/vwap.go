@@ -3,6 +3,7 @@ package aggregate
 import (
 	"errors"
 	"math/big"
+	"sort"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
@@ -70,7 +71,7 @@ type SourceContribution struct {
 	TradeCount  int
 }
 
-// SourceContributions returns one [SourceContribution] per distinct Source, skipping the same trades as [VWAP]; nil for empty or all-skipped input.
+// SourceContributions returns one [SourceContribution] per distinct Source in ascending Source order, skipping the same trades as [VWAP]; nil for empty or all-skipped input.
 func SourceContributions(trades []canonical.Trade) []SourceContribution {
 	if len(trades) == 0 {
 		return nil
@@ -111,5 +112,7 @@ func SourceContributions(trades []canonical.Trade) []SourceContribution {
 			TradeCount:  a.count,
 		})
 	}
+	// Source is unique per entry, so this is a total order; without it the slice follows map iteration.
+	sort.Slice(out, func(i, j int) bool { return out[i].Source < out[j].Source })
 	return out
 }

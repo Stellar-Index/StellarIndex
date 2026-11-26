@@ -14,9 +14,10 @@
 # mirrors r1: the distro package (/usr/bin/prometheus, prometheus.service) with
 # a scrape config of localhost targets.
 #
-# Alerting is out on purpose (see run_local_prometheus in defaults/main.yml and
-# templates/local-prometheus.yml.j2): the status endpoint needs only the scrape
-# layer, and Incidents() reads the `ALERTS` series, which is empty without rules.
+# Alert rules load only with local_prometheus_rules_enabled, from the include
+# list local_prometheus_rule_files. Delivery is not configured (no
+# Alertmanager): a firing rule shows in `ALERTS`, which Incidents() reads for
+# /v1/status, and at localhost:9090/api/v1/alerts.
 #
 # Gated on `run_local_prometheus` (default false; r1 keeps its out-of-band
 # stack) with its own tag, so it applies alone:
@@ -58,6 +59,75 @@
       systemd memory drop-in cannot be previewed on this run. Everything
       else previews normally; re-run --check --diff after the first real
       apply to review those two files.
+
+# Alert rules (local_prometheus_rules_enabled). Installed before the scrape
+# config so its promtool check and the restart see the final rule set. The
+# install mirrors apply-rules.sh: validate before use, delete files no longer
+# listed, and refuse an empty set rather than read it as "delete every rule".
+- name: Install the listed alert rule files
+  when: local_prometheus_rules_enabled | bool
+  vars:
+    # playbook_dir is configs/ansible/playbooks.
+    local_prom_rules_src: "{{ playbook_dir }}/../../prometheus/rules.r1"
+  block:
+    - name: Assert the rule include list is non-empty and every file exists
+      ansible.builtin.assert:
+        that:
+          - local_prometheus_rule_files | length > 0
+          - local_prometheus_rule_files | select('match', '^[A-Za-z0-9._-]+\.yml$') | list | length
+            == local_prometheus_rule_files | length
+          - local_prometheus_rule_files | map('regex_replace', '^', local_prom_rules_src ~ '/')
+            | select('file') | list | length == local_prometheus_rule_files | length
+        fail_msg: >-
+          local_prometheus_rule_files must name at least one existing file in
+          configs/prometheus/rules.r1/ (bare *.yml names, no paths); got
+          {{ local_prometheus_rule_files }}. Refusing to load an empty or
+          partial rule set.
+
+    - name: Ensure the local rules dir
+      when: local_prom_confdir.stat.exists or not ansible_check_mode
+      ansible.builtin.file:
+        path: /etc/prometheus/rules.local
+        state: directory
+        owner: root
+        group: prometheus
+        mode: "0750"
+
+    - name: Copy the listed rule files (promtool-validated)
+      when: local_prom_confdir.stat.exists or not ansible_check_mode
+      ansible.builtin.copy:
+        src: "{{ local_prom_rules_src }}/{{ item }}"
+        dest: "/etc/prometheus/rules.local/{{ item }}"
+        owner: root
+        group: prometheus
+        mode: "0640"
+        validate: "/usr/bin/promtool check rules %s"
+      loop: "{{ local_prometheus_rule_files }}"
+      notify: Restart prometheus
+
+    - name: List installed rule files
+      ansible.builtin.find:
+        paths: /etc/prometheus/rules.local
+        patterns: "*.yml"
+      register: local_prom_installed_rules
+
+    - name: Remove rule files no longer in the include list
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: >-
+        {{ local_prom_installed_rules.files | map(attribute='path')
+           | reject('regex', '/(' ~ (local_prometheus_rule_files | map('regex_escape') | join('|')) ~ ')$')
+           | list }}
+      notify: Restart prometheus
+
+# With rules off the template renders no rule_files, so the directory is inert;
+# remove it so a host that turned rules off carries no rule set at all.
+- name: Remove the local rules dir when rules are disabled
+  when: not (local_prometheus_rules_enabled | bool)
+  ansible.builtin.file:
+    path: /etc/prometheus/rules.local
+    state: absent
 
 # /etc/prometheus/prometheus.yml is a dpkg conffile; overwriting it matches
 # r1 (configs/prometheus/README.md), and unattended-upgrades runs
