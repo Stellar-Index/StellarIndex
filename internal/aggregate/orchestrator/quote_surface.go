@@ -5,24 +5,42 @@ import (
 	"sort"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// The quote-surface check compares proxy and own-quote prints sub-bucket by sub-bucket, so a price trend under volume that falls at
-// different times of day cannot read as a de-peg while a persistent basis still does. The aligned reading only sees shared slots while
-// the served leg is the whole-window VWAP, so it replaces the whole-window reading only when it speaks for nearly all served prints.
+// The quote-surface check compares proxy and own-quote prints slot by slot, so a price trend under volume that falls at different
+// times of day cannot read as a de-peg while a basis on the served stablecoin prints still does. The aligned reading is the
+// proxy-volume-weighted mean of the per-slot gaps, i.e. the mean disagreement of exactly the prints the par rewrite vouches for.
 const (
-	// surfaceSubBucketsPerWindow sets the sub-bucket at window/24 (5m→1m, 1h→2m, 24h→1h), never finer than closedBucket.
+	// surfaceSubBucketsPerWindow sets the slot at window/24 (5m→1m, 1h→2m, 24h→1h), never finer than closedBucket.
 	surfaceSubBucketsPerWindow = 24
-	// surfaceMinOverlap is the fewest above-floor shared sub-buckets before an aligned reading exists at all.
-	surfaceMinOverlap = 3
-	// surfaceRecentBuckets is how many of the newest above-floor shared sub-buckets also judge alone (unweighted median), so a de-peg
-	// in progress is not out-voted by the older window or one heavy slot.
-	surfaceRecentBuckets = 3
-	// surfaceCoverageDenom: the aligned reading replaces the whole-window one only when at most 1/20 (5 %) of each surface's volume
-	// lies outside above-floor shared slots; a de-peg confined to that remainder moves the served leg by at most 5 % of its size.
+	// surfaceMinOwnSources: a slot's own-quote reference must come from this many distinct venues, so one venue cannot set it alone.
+	surfaceMinOwnSources = 2
+	// surfaceOwnShareDenom: a slot's own-quote base must be >= 1/4 of its proxy base, so a slot carrying heavy proxy weight is never
+	// judged against a thin reference and faking one costs volume in proportion to the proxy volume it would vouch for. Production
+	// own-quote volume is ~1.6x proxy overall, so honest hours clear it with a wide margin.
+	surfaceOwnShareDenom = 4
+	// surfaceCoverageDenom: the aligned reading decides alone only when at most 1/20 (5 %) of the proxy volume lies outside eligible
+	// slots; a de-peg confined to that remainder moves the served leg by at most 5 % of its size (under maxBps for any de-peg < 15 %).
 	surfaceCoverageDenom = 20
+	// surfaceQuoteFloorPerHour: each surface of an eligible slot must carry >= this many whole quote-currency units per hour of slot
+	// (pro rata for shorter slots), so two tiny surfaces never decide. Production XLM's quietest hours carried ~40k USD own-quote and
+	// ~23k USD proxy volume; a leg thinner than this falls back to the whole-window compare.
+	surfaceQuoteFloorPerHour = 10_000
 )
+
+// surfaceQuoteFloor is surfaceQuoteFloorPerHour for a slot of length sub at the given decimal scale, multiplied by one hour in
+// nanoseconds so the pro-rata floor is exact: compare it against quote volume times int64(time.Hour).
+func surfaceQuoteFloor(decimals int, sub time.Duration) *big.Int {
+	floor := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
+	return floor.Mul(floor, big.NewInt(surfaceQuoteFloorPerHour*int64(sub)))
+}
+
+// underFloor reports quote * 1h < floor (floor from [surfaceQuoteFloor]).
+func underFloor(quote, floor *big.Int) bool {
+	return new(big.Int).Mul(quote, big.NewInt(int64(time.Hour))).Cmp(floor) < 0
+}
 
 // surfaceSubBucket is the time-alignment grain for window.
 func surfaceSubBucket(window time.Duration) time.Duration {
@@ -33,48 +51,47 @@ func surfaceSubBucket(window time.Duration) time.Duration {
 	return sub
 }
 
-// surfaceCell holds one sub-bucket's prints per surface and their base volume at the window's common scale.
+// surfaceCell holds one slot's prints: proxy prints and their base volume at the window's common scale, own-quote prints per source.
 type surfaceCell struct {
-	start              time.Time
-	proxy, own         []canonical.Trade
-	proxyBase, ownBase *big.Int
+	start                 time.Time
+	proxy                 []canonical.Trade
+	proxyBase, proxyQuote *big.Int
+	ownBase, ownQuote     *big.Int
+	own                   map[string][]canonical.Trade
 }
 
-// surfacePoint is one shared sub-bucket's signed gap (proxyVWAP - ownVWAP) / ownVWAP, its weight min(proxyBase, ownBase) and the
-// cell it came from.
-type surfacePoint struct {
-	start  time.Time
-	gap    *big.Rat
-	weight *big.Int
-	cell   *surfaceCell
-}
-
-// alignedReading is the time-aligned comparison: gap is nil when fewer than surfaceMinOverlap shared slots clear the floor; replaces
-// reports whether it speaks for the served prints and may stand instead of the whole-window gap.
+// alignedReading is the time-aligned comparison: gap is the proxy-weighted mean of eligible slots' gaps (nil when none is eligible),
+// coverage the share of the window's proxy base volume in eligible slots, decides whether that share lets gap stand alone.
 type alignedReading struct {
 	gap      *big.Rat
-	overlap  int
-	replaces bool
+	eligible int
+	coverage *big.Rat
+	decides  bool
 }
 
-// surfaceCells buckets trades by sub-bucket start (absolute-time aligned, so input order cannot move a boundary), oldest first; scaled
-// is trades at the common amount scale, index-aligned.
+// surfaceCells buckets trades by slot start (absolute-time aligned, so input order cannot move a boundary), oldest first; scaled is
+// trades at the common amount scale, index-aligned.
 func surfaceCells(trades, scaled []canonical.Trade, proxied map[string]struct{}, sub time.Duration) []*surfaceCell {
 	byStart := make(map[int64]*surfaceCell)
 	for i := range trades {
 		start := trades[i].Timestamp.UTC().Truncate(sub)
 		c, ok := byStart[start.UnixNano()]
 		if !ok {
-			c = &surfaceCell{start: start, proxyBase: new(big.Int), ownBase: new(big.Int)}
+			c = &surfaceCell{
+				start: start, proxyBase: new(big.Int), proxyQuote: new(big.Int), ownBase: new(big.Int), ownQuote: new(big.Int),
+				own: make(map[string][]canonical.Trade),
+			}
 			byStart[start.UnixNano()] = c
 		}
 		if _, isProxy := proxied[trades[i].ID()]; isProxy {
 			c.proxy = append(c.proxy, trades[i])
 			c.proxyBase.Add(c.proxyBase, scaled[i].BaseAmount.BigInt())
+			c.proxyQuote.Add(c.proxyQuote, scaled[i].QuoteAmount.BigInt())
 			continue
 		}
-		c.own = append(c.own, trades[i])
+		c.own[trades[i].Source] = append(c.own[trades[i].Source], trades[i])
 		c.ownBase.Add(c.ownBase, scaled[i].BaseAmount.BigInt())
+		c.ownQuote.Add(c.ownQuote, scaled[i].QuoteAmount.BigInt())
 	}
 	cells := make([]*surfaceCell, 0, len(byStart))
 	for _, c := range byStart {
@@ -84,103 +101,84 @@ func surfaceCells(trades, scaled []canonical.Trade, proxied map[string]struct{},
 	return cells
 }
 
-// surfacePoints prices every sub-bucket holding both surfaces, oldest first; ok=false when a sub-bucket VWAP could not be computed
-// (the caller fails closed, as for the whole window).
-func (o *Orchestrator) surfacePoints(pair canonical.Pair, cells []*surfaceCell) (points []surfacePoint, ok bool) {
-	for _, c := range cells {
-		if len(c.proxy) == 0 || len(c.own) == 0 {
-			continue
-		}
-		weight := c.proxyBase
-		if c.ownBase.Cmp(weight) < 0 {
-			weight = c.ownBase
-		}
-		if weight.Sign() <= 0 {
-			continue
-		}
-		proxyVWAP, perr := o.computeNormalizedVWAP(c.proxy, pair)
-		ownVWAP, oerr := o.computeNormalizedVWAP(c.own, pair)
-		if perr != nil || oerr != nil || proxyVWAP.Sign() <= 0 || ownVWAP.Sign() <= 0 {
+// thinSlot reports a slot whose evidence is too thin to vouch for its proxy prints: under surfaceMinOwnSources own venues, own base
+// under 1/surfaceOwnShareDenom of proxy base, or either surface's quote volume under floor.
+func thinSlot(c *surfaceCell, floor *big.Int) bool {
+	return len(c.own) < surfaceMinOwnSources ||
+		new(big.Int).Mul(c.ownBase, big.NewInt(surfaceOwnShareDenom)).Cmp(c.proxyBase) < 0 ||
+		underFloor(c.ownQuote, floor) || underFloor(c.proxyQuote, floor)
+}
+
+// ownReference is a slot's own-quote VWAP when it is eligible: not [thinSlot], and its venues' own VWAPs agree within maxBps (max - min
+// <= maxBps of min), so a venue pricing away from the others cannot pull the reference by more than maxBps. ok=false when a VWAP could
+// not be computed (the caller fails closed).
+func (o *Orchestrator) ownReference(pair canonical.Pair, c *surfaceCell, floor *big.Int, maxBps int) (ref *big.Rat, ok bool) {
+	if thinSlot(c, floor) {
+		return nil, true
+	}
+	var lo, hi *big.Rat
+	all := make([]canonical.Trade, 0, len(c.own))
+	for _, venueTrades := range c.own {
+		v, err := o.computeNormalizedVWAP(venueTrades, pair)
+		if err != nil || v.Sign() <= 0 {
 			return nil, false
+		}
+		if lo == nil || v.Cmp(lo) < 0 {
+			lo = v
+		}
+		if hi == nil || v.Cmp(hi) > 0 {
+			hi = v
+		}
+		all = append(all, venueTrades...)
+	}
+	spread := new(big.Rat).Sub(hi, lo)
+	if spread.Mul(spread, big.NewRat(10_000, 1)).Cmp(new(big.Rat).Mul(lo, big.NewRat(int64(maxBps), 1))) > 0 {
+		return nil, true
+	}
+	ref, err := o.computeNormalizedVWAP(all, pair)
+	if err != nil || ref.Sign() <= 0 {
+		return nil, false
+	}
+	return ref, true
+}
+
+// alignedSurfaceGap is the proxy-weighted mean of (proxyVWAP_s - ownVWAP_s) / ownVWAP_s over eligible slots; ok=false when a VWAP failed.
+func (o *Orchestrator) alignedSurfaceGap(
+	pair canonical.Pair, trades []canonical.Trade, sw aggregate.ScaledWindow, proxied map[string]struct{}, window time.Duration,
+	proxyBase *big.Int, maxBps int,
+) (reading alignedReading, ok bool) {
+	sub := surfaceSubBucket(window)
+	floor := surfaceQuoteFloor(sw.Decimals(), sub)
+	weighted, covered := new(big.Rat), new(big.Int)
+	for _, c := range surfaceCells(trades, sw.Trades(), proxied, sub) {
+		if len(c.proxy) == 0 || c.proxyBase.Sign() <= 0 {
+			continue
+		}
+		ownVWAP, computed := o.ownReference(pair, c, floor, maxBps)
+		if !computed {
+			return alignedReading{}, false
+		}
+		if ownVWAP == nil {
+			continue
+		}
+		proxyVWAP, err := o.computeNormalizedVWAP(c.proxy, pair)
+		if err != nil || proxyVWAP.Sign() <= 0 {
+			return alignedReading{}, false
 		}
 		gap := new(big.Rat).Sub(proxyVWAP, ownVWAP)
 		gap.Quo(gap, ownVWAP)
-		points = append(points, surfacePoint{start: c.start, gap: gap, weight: new(big.Int).Set(weight), cell: c})
+		weighted.Add(weighted, gap.Mul(gap, new(big.Rat).SetInt(c.proxyBase)))
+		covered.Add(covered, c.proxyBase)
+		reading.eligible++
 	}
-	return points, true
-}
-
-// aboveFloor keeps the shared slots whose weight is at least half the mean weight over the window's slots (2·slots·w >= Σw), so dust
-// on either side neither votes nor counts as covering volume.
-func aboveFloor(points []surfacePoint, slots int64) []surfacePoint {
-	total := new(big.Int)
-	for _, p := range points {
-		total.Add(total, p.weight)
+	reading.coverage = new(big.Rat).SetFrac(covered, proxyBase)
+	if reading.eligible == 0 {
+		return reading, true
 	}
-	kept := make([]surfacePoint, 0, len(points))
-	for _, p := range points {
-		if new(big.Int).Mul(p.weight, big.NewInt(2*slots)).Cmp(total) >= 0 {
-			kept = append(kept, p)
-		}
-	}
-	return kept
-}
-
-// speaksForServed reports whether kept covers all but 1/surfaceCoverageDenom of each surface's volume and holds the newest slot with
-// proxy prints, i.e. whether the aligned reading compares nearly every print the served leg VWAP is made of.
-func speaksForServed(kept []surfacePoint, cells []*surfaceCell, proxyBase, ownBase *big.Int) bool {
-	proxyCovered, ownCovered := new(big.Int), new(big.Int)
-	members := make(map[*surfaceCell]bool, len(kept))
-	for _, p := range kept {
-		proxyCovered.Add(proxyCovered, p.cell.proxyBase)
-		ownCovered.Add(ownCovered, p.cell.ownBase)
-		members[p.cell] = true
-	}
-	for i := len(cells) - 1; i >= 0; i-- {
-		if len(cells[i].proxy) > 0 {
-			if !members[cells[i]] {
-				return false
-			}
-			break
-		}
-	}
-	return mostlyCovered(proxyCovered, proxyBase) && mostlyCovered(ownCovered, ownBase)
-}
-
-// mostlyCovered reports denom·(whole - part) <= whole.
-func mostlyCovered(part, whole *big.Int) bool {
-	rest := new(big.Int).Sub(whole, part)
-	return rest.Mul(rest, big.NewInt(surfaceCoverageDenom)).Cmp(whole) <= 0
-}
-
-// alignedSurfaceGap is the time-aligned signed surface gap over the above-floor shared slots: the larger in magnitude of their weighted
-// median and the unweighted median of the newest surfaceRecentBuckets; ok=false when a sub-bucket VWAP failed.
-func (o *Orchestrator) alignedSurfaceGap(
-	pair canonical.Pair, trades, scaled []canonical.Trade, proxied map[string]struct{}, window time.Duration,
-	proxyBase, ownBase *big.Int,
-) (reading alignedReading, ok bool) {
-	sub := surfaceSubBucket(window)
-	cells := surfaceCells(trades, scaled, proxied, sub)
-	points, ok := o.surfacePoints(pair, cells)
-	if !ok {
-		return alignedReading{}, false
-	}
-	kept := aboveFloor(points, int64((window+sub-1)/sub))
-	if len(kept) < surfaceMinOverlap {
-		return alignedReading{overlap: len(kept)}, true
-	}
-	gap := largerMagnitude(weightedMedianGap(kept), middleOfNewest(kept))
-	return alignedReading{gap: gap, overlap: len(kept), replaces: speaksForServed(kept, cells, proxyBase, ownBase)}, true
-}
-
-// middleOfNewest is the unweighted median of the newest surfaceRecentBuckets points (points oldest first, len >= surfaceRecentBuckets).
-func middleOfNewest(points []surfacePoint) *big.Rat {
-	gaps := make([]*big.Rat, 0, surfaceRecentBuckets)
-	for _, p := range points[len(points)-surfaceRecentBuckets:] {
-		gaps = append(gaps, p.gap)
-	}
-	sort.Slice(gaps, func(i, j int) bool { return gaps[i].Cmp(gaps[j]) < 0 })
-	return new(big.Rat).Set(gaps[surfaceRecentBuckets/2])
+	reading.gap = weighted.Quo(weighted, new(big.Rat).SetInt(covered))
+	rest := new(big.Int).Sub(proxyBase, covered)
+	reading.decides = rest.Mul(rest, big.NewInt(surfaceCoverageDenom)).Cmp(proxyBase) <= 0
+	return reading, true
 }
 
 // largerMagnitude returns whichever of a and b is larger in absolute value (a on a tie).
@@ -189,37 +187,4 @@ func largerMagnitude(a, b *big.Rat) *big.Rat {
 		return b
 	}
 	return a
-}
-
-// atLeastHalf reports 2*part >= whole.
-func atLeastHalf(part, whole *big.Int) bool {
-	return new(big.Int).Lsh(part, 1).Cmp(whole) >= 0
-}
-
-// weightedMedianGap is the weighted median of points' gaps (ties by sub-bucket start, so the result is a function of the trade set
-// alone); on an exact half-weight split it takes the larger magnitude of the two middle values. points must be non-empty.
-func weightedMedianGap(points []surfacePoint) *big.Rat {
-	sorted := append([]surfacePoint(nil), points...)
-	sort.Slice(sorted, func(i, j int) bool {
-		if c := sorted[i].gap.Cmp(sorted[j].gap); c != 0 {
-			return c < 0
-		}
-		return sorted[i].start.Before(sorted[j].start)
-	})
-	total := new(big.Int)
-	for _, p := range sorted {
-		total.Add(total, p.weight)
-	}
-	cum := new(big.Int)
-	for i, p := range sorted {
-		cum.Add(cum, p.weight)
-		if !atLeastHalf(cum, total) {
-			continue
-		}
-		if i+1 < len(sorted) && new(big.Int).Lsh(cum, 1).Cmp(total) == 0 {
-			return new(big.Rat).Set(largerMagnitude(p.gap, sorted[i+1].gap))
-		}
-		return new(big.Rat).Set(p.gap)
-	}
-	return new(big.Rat).Set(sorted[len(sorted)-1].gap)
 }

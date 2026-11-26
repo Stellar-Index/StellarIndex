@@ -15,14 +15,24 @@ import (
 // surfaceEnd is a closed bucket end, hour-aligned like every production window end.
 var surfaceEnd = time.Date(2026, 11, 26, 0, 0, 0, 0, time.UTC)
 
-// surfaceTick is one instant's prints: each surface's price and base volume (nil base = no print).
+// ownVenues print the own-quote (real USD) volume, split evenly; extraVenue is a third own-quote venue (thin or hostile).
+var ownVenues = []string{"coinbase", "kraken"}
+
+const (
+	proxyVenue = "binance"
+	extraVenue = "bitstamp"
+)
+
+// surfaceTick is one instant's prints (nil base = no print): the proxy, the own-quote volume split across ownVenues (or printed by the
+// first alone when soleOwn), and an optional extraVenue print.
 type surfaceTick struct {
-	proxyPrice, ownPrice *big.Rat
-	proxyBase, ownBase   *big.Int
+	proxyPrice, ownPrice, extraPrice *big.Rat
+	proxyBase, ownBase, extraBase    *big.Int
+	soleOwn                          bool
 }
 
-// buildSurface prints both surfaces every step across [surfaceEnd-window, surfaceEnd): the proxy at the step start, the own-quote
-// print half a step later, priced and sized by at(offset from window start).
+// buildSurface prints every step across [surfaceEnd-window, surfaceEnd): the proxy at the step start, own-quote prints half a step
+// later, priced and sized by at(offset from window start).
 func buildSurface(
 	t *testing.T, window, step time.Duration, at func(offset time.Duration) surfaceTick,
 ) ([]canonical.Trade, map[string]struct{}) {
@@ -34,21 +44,30 @@ func buildSurface(
 	for off := time.Duration(0); off < window; off += step {
 		tk := at(off)
 		if tk.proxyBase != nil {
-			tr := surfacePrint(xlmUSD, start.Add(off), tk.proxyBase, tk.proxyPrice)
+			tr := surfacePrint(xlmUSD, proxyVenue, start.Add(off), tk.proxyBase, tk.proxyPrice)
 			trades = append(trades, tr)
 			proxied[tr.ID()] = struct{}{}
 		}
-		if tk.ownBase != nil {
-			trades = append(trades, surfacePrint(xlmUSD, start.Add(off+step/2), tk.ownBase, tk.ownPrice))
+		ts := start.Add(off + step/2)
+		if tk.ownBase != nil && tk.soleOwn {
+			trades = append(trades, surfacePrint(xlmUSD, ownVenues[0], ts, tk.ownBase, tk.ownPrice))
+		} else if tk.ownBase != nil {
+			half := new(big.Int).Rsh(tk.ownBase, 1)
+			trades = append(trades,
+				surfacePrint(xlmUSD, ownVenues[0], ts, half, tk.ownPrice),
+				surfacePrint(xlmUSD, ownVenues[1], ts, new(big.Int).Sub(tk.ownBase, half), tk.ownPrice))
+		}
+		if tk.extraBase != nil {
+			trades = append(trades, surfacePrint(xlmUSD, extraVenue, ts, tk.extraBase, tk.extraPrice))
 		}
 	}
 	return trades, proxied
 }
 
-func surfacePrint(pair canonical.Pair, ts time.Time, base *big.Int, price *big.Rat) canonical.Trade {
+func surfacePrint(pair canonical.Pair, venue string, ts time.Time, base *big.Int, price *big.Rat) canonical.Trade {
 	quote := new(big.Int).Mul(base, price.Num())
 	quote.Quo(quote, price.Denom())
-	tr := pivotTrade(pair, "sdex", 1, 1, ts)
+	tr := pivotTrade(pair, venue, 1, 1, ts)
 	tr.BaseAmount, tr.QuoteAmount = canonical.NewAmount(base), canonical.NewAmount(quote)
 	return tr
 }
@@ -70,7 +89,17 @@ func basis(p *big.Rat, bps int64) *big.Rat {
 	return new(big.Rat).Mul(p, big.NewRat(10_000+bps, 10_000))
 }
 
-func xlm(n int64) *big.Int { return new(big.Int).Mul(big.NewInt(n), big.NewInt(10_000_000)) }
+// xlm is n thousand XLM at the test venues' 8-decimal scale (at 0.12, 1 unit = 120 USD).
+func xlm(n int64) *big.Int { return new(big.Int).Mul(big.NewInt(n), big.NewInt(100_000_000_000)) }
+
+// shiftedVolume is the production shape: stablecoin volume early, real-USD volume late (4:1 each way, the thinnest own share an
+// eligible slot may have).
+func shiftedVolume(off time.Duration) (proxyBase, ownBase *big.Int) {
+	if off >= 16*time.Hour {
+		return xlm(250), xlm(1000)
+	}
+	return xlm(1000), xlm(250)
+}
 
 // readSurface judges trades the way a published leg is judged and returns the leg reading.
 func readSurface(t *testing.T, window time.Duration, trades []canonical.Trade, proxied map[string]struct{}) legRef {
@@ -82,82 +111,115 @@ func readSurface(t *testing.T, window time.Duration, trades []canonical.Trade, p
 
 func gapBps(lr legRef) float64 { return ratBps(lr.surfaceGap) }
 
-// P1: the production false positive. Price rises 6 % in the last 8 h, stablecoin volume trades early and real-USD volume late, both at
-// the same instantaneous price: no de-peg, so the leg must stand.
+// T1: the production false positive. Price rises 6 % in the last 8 h, stablecoin volume trades early and real-USD volume late, both at
+// the same instantaneous price: the whole-window gap is ~-250 bps, but there is no de-peg, so the leg must stand.
 func TestQuoteSurface_TrendWithShiftedVolumeIsNotADepeg(t *testing.T) {
 	trades, proxied := buildSurface(t, 24*time.Hour, 10*time.Minute, func(off time.Duration) surfaceTick {
-		pb, ob := xlm(1000), xlm(50)
-		if off >= 16*time.Hour {
-			pb, ob = xlm(50), xlm(1000)
-		}
+		pb, ob := shiftedVolume(off)
 		return surfaceTick{proxyPrice: ramp(off), ownPrice: ramp(off), proxyBase: pb, ownBase: ob}
 	})
+	if whole := surfaceOracleOf(trades, proxied).whole; ratBps(whole) > -75 {
+		t.Fatalf("whole-window gap %.1f bps; the case no longer reproduces the false positive", ratBps(whole))
+	}
 	lr := readSurface(t, 24*time.Hour, trades, proxied)
-	if why := lr.quoteSurfaceRefusal(75); why != "" {
+	if why := lr.quoteSurfaceRefusal(surfaceTol); why != "" {
 		t.Fatalf("refusal = %q (gap %.1f bps, overlap %d, aligned %v), want none: both surfaces print the same price at every instant",
 			why, gapBps(lr), lr.surfaceOverlap, lr.surfaceAligned)
 	}
-	if g := gapBps(lr); g < -10 || g > 10 || !lr.surfaceAligned || lr.surfaceOverlap != 24 {
-		t.Errorf("gap %.1f bps aligned=%v overlap=%d, want |gap| < 10 bps aligned over all 24 sub-buckets", g, lr.surfaceAligned, lr.surfaceOverlap)
+	if g := gapBps(lr); g < -10 || g > 10 || !lr.surfaceAligned || lr.surfaceOverlap != 24 || lr.surfaceCoverage.Cmp(big.NewRat(1, 1)) != 0 {
+		t.Errorf("gap %.1f bps aligned=%v overlap=%d coverage=%v, want |gap| < 10 bps decided alone over all 24 slots at full coverage",
+			g, lr.surfaceAligned, lr.surfaceOverlap, lr.surfaceCoverage)
 	}
 }
 
-// P2: an 80 bps basis at every instant is a de-peg whether the price is flat or trending.
+// T2: stablecoin prints 1 % below real USD at every instant is a de-peg whether the price is flat or trending.
 func TestQuoteSurface_PersistentBasisIsRefused(t *testing.T) {
 	for name, price := range map[string]func(time.Duration) *big.Rat{"flat": flat, "trending": ramp} {
 		trades, proxied := buildSurface(t, 24*time.Hour, 10*time.Minute, func(off time.Duration) surfaceTick {
-			pb, ob := xlm(1000), xlm(50)
-			if off >= 16*time.Hour {
-				pb, ob = xlm(50), xlm(1000)
-			}
-			return surfaceTick{proxyPrice: basis(price(off), 80), ownPrice: price(off), proxyBase: pb, ownBase: ob}
+			pb, ob := shiftedVolume(off)
+			return surfaceTick{proxyPrice: basis(price(off), -100), ownPrice: price(off), proxyBase: pb, ownBase: ob}
 		})
 		lr := readSurface(t, 24*time.Hour, trades, proxied)
-		if lr.quoteSurfaceRefusal(75) == "" {
-			t.Errorf("%s: not refused (gap %.1f bps), want an 80 bps basis refused", name, gapBps(lr))
+		if lr.quoteSurfaceRefusal(surfaceTol) == "" {
+			t.Errorf("%s: not refused (gap %.1f bps), want a -100 bps basis refused", name, gapBps(lr))
 		}
-		if g := gapBps(lr); g < 78 || g > 82 {
-			t.Errorf("%s: gap %.1f bps, want ~+80", name, g)
+		if g := gapBps(lr); g < -101 || g > -99 || !lr.surfaceAligned {
+			t.Errorf("%s: gap %.1f bps aligned=%v, want ~-100 decided alone", name, g, lr.surfaceAligned)
 		}
 	}
 }
 
-// depegLast prints both surfaces equally at a flat price, the proxy 100 bps rich for the newest `last` of the window.
-func depegLast(t *testing.T, window, step, last time.Duration) legRef {
-	t.Helper()
-	trades, proxied := buildSurface(t, window, step, func(off time.Duration) surfaceTick {
-		proxy := flat(off)
-		if off >= window-last {
-			proxy = basis(proxy, 100)
-		}
-		return surfaceTick{proxyPrice: proxy, ownPrice: flat(off), proxyBase: xlm(100), ownBase: xlm(100)}
-	})
-	return readSurface(t, window, trades, proxied)
-}
-
-// P3: a de-peg that begins late is caught by the newest overlapping sub-buckets, not out-voted by the older window: detection takes
-// two sub-buckets (24h: 2 h, 1h: 4 m, 5m: 2 m).
-func TestQuoteSurface_DepegInProgressIsCaughtWithinTwoSubBuckets(t *testing.T) {
+// T3: a de-peg confined to part of the window is judged by its volume-weighted mean over the window's proxy prints, as the served leg
+// carries it. By design (the whole-window check's blind spot too) a de-peg of size d over a share f of the proxy volume passes while
+// d·f <= 75 bps: 3 % over the last third (100 bps) refuses, 3 % over the last 4 h (50 bps) and 1 % over the last 6 h (25 bps) do not.
+func TestQuoteSurface_PartialDepegIsJudgedByItsWeightedMean(t *testing.T) {
 	cases := []struct {
 		window, step, last time.Duration
+		bps                int64
 		refused            bool
 	}{
-		{24 * time.Hour, 10 * time.Minute, 6 * time.Hour, true},
-		{24 * time.Hour, 10 * time.Minute, 2 * time.Hour, true},
-		{24 * time.Hour, 10 * time.Minute, time.Hour, false},
-		{time.Hour, 20 * time.Second, 4 * time.Minute, true},
-		{time.Hour, 20 * time.Second, 2 * time.Minute, false},
-		{5 * time.Minute, 10 * time.Second, 2 * time.Minute, true},
+		{24 * time.Hour, 10 * time.Minute, 8 * time.Hour, -300, true},
+		{24 * time.Hour, 10 * time.Minute, 4 * time.Hour, -300, false},
+		{24 * time.Hour, 10 * time.Minute, 6 * time.Hour, 100, false},
+		{time.Hour, 20 * time.Second, 20 * time.Minute, 300, true},
+		{5 * time.Minute, 10 * time.Second, 2 * time.Minute, 300, true},
 	}
 	for _, tc := range cases {
-		lr := depegLast(t, tc.window, tc.step, tc.last)
-		if got := lr.quoteSurfaceRefusal(75) != ""; got != tc.refused {
-			t.Errorf("window %v, de-peg over the last %v: refused=%v (gap %.1f bps), want %v", tc.window, tc.last, got, gapBps(lr), tc.refused)
+		trades, proxied := buildSurface(t, tc.window, tc.step, func(off time.Duration) surfaceTick {
+			proxy := ramp(off)
+			if off >= tc.window-tc.last {
+				proxy = basis(proxy, tc.bps)
+			}
+			return surfaceTick{proxyPrice: proxy, ownPrice: ramp(off), proxyBase: xlm(100), ownBase: xlm(100)}
+		})
+		lr := readSurface(t, tc.window, trades, proxied)
+		if got := lr.quoteSurfaceRefusal(surfaceTol) != ""; got != tc.refused || !lr.surfaceAligned {
+			t.Errorf("window %v, %+d bps over the last %v: refused=%v aligned=%v (gap %.1f bps), want refused=%v aligned",
+				tc.window, tc.bps, tc.last, got, lr.surfaceAligned, gapBps(lr), tc.refused)
 		}
 	}
 }
 
-// P4: one surface empty is not measured (pivot_unverified upstream), exactly as before alignment.
+// T6: one own-quote venue per slot never sets the reference, so the reading is exactly the whole-window compare it replaced.
+func TestQuoteSurface_SingleOwnVenueIsTheWholeWindowCompare(t *testing.T) {
+	trades, proxied := buildSurface(t, 24*time.Hour, 10*time.Minute, func(off time.Duration) surfaceTick {
+		pb, ob := shiftedVolume(off)
+		return surfaceTick{proxyPrice: ramp(off), ownPrice: ramp(off), proxyBase: pb, ownBase: ob, soleOwn: true}
+	})
+	lr := readSurface(t, 24*time.Hour, trades, proxied)
+	whole := surfaceOracleOf(trades, proxied).whole
+	if lr.surfaceAligned || lr.surfaceOverlap != 0 || lr.surfaceGap == nil || lr.surfaceGap.Cmp(whole) != 0 {
+		t.Fatalf("aligned=%v overlap=%d gap=%v, want the whole-window gap %s with no eligible slot",
+			lr.surfaceAligned, lr.surfaceOverlap, lr.surfaceGap, whole.RatString())
+	}
+	if lr.quoteSurfaceRefusal(surfaceTol) == "" {
+		t.Errorf("gap %.1f bps not refused, want the whole-window verdict", gapBps(lr))
+	}
+}
+
+// A thin leg (both surfaces ~1 USD a print, under the 10k-per-hour floor) never decides alone: its verdict is exactly the
+// whole-window compare's.
+func TestQuoteSurface_ThinLegIsTheWholeWindowCompare(t *testing.T) {
+	for name, bps := range map[string]int64{"trend, no de-peg": 0, "de-peg": -100} {
+		trades, proxied := buildSurface(t, 24*time.Hour, 10*time.Minute, func(off time.Duration) surfaceTick {
+			pb, ob := shiftedVolume(off)
+			pb.Quo(pb, big.NewInt(100_000))
+			ob.Quo(ob, big.NewInt(100_000))
+			return surfaceTick{proxyPrice: basis(ramp(off), bps), ownPrice: ramp(off), proxyBase: pb, ownBase: ob}
+		})
+		lr := readSurface(t, 24*time.Hour, trades, proxied)
+		whole := surfaceOracleOf(trades, proxied).whole
+		if lr.surfaceAligned || lr.surfaceOverlap != 0 || lr.surfaceGap == nil || lr.surfaceGap.Cmp(whole) != 0 {
+			t.Errorf("%s: aligned=%v overlap=%d gap=%v, want the whole-window gap %s with no eligible slot",
+				name, lr.surfaceAligned, lr.surfaceOverlap, lr.surfaceGap, whole.RatString())
+		}
+		if got, want := lr.quoteSurfaceRefusal(surfaceTol) != "", exceeds(whole); got != want {
+			t.Errorf("%s: refused=%v, want the whole-window verdict %v", name, got, want)
+		}
+	}
+}
+
+// One surface empty is not measured (pivot_unverified upstream).
 func TestQuoteSurface_OneSideEmptyIsUnmeasured(t *testing.T) {
 	trades, proxied := buildSurface(t, time.Hour, time.Minute, func(off time.Duration) surfaceTick {
 		return surfaceTick{proxyPrice: basis(ramp(off), 300), proxyBase: xlm(10)}
@@ -172,32 +234,17 @@ func TestQuoteSurface_OneSideEmptyIsUnmeasured(t *testing.T) {
 	}
 }
 
-// P5: too little overlap to align falls back to the whole-window compare, which can refuse a trend but never passes a de-peg.
-func TestQuoteSurface_ThinOverlapFallsBackToWholeWindow(t *testing.T) {
-	// Three shared sub-buckets, but they hold well under half of the proxy volume.
-	trades, proxied := buildSurface(t, 24*time.Hour, 10*time.Minute, func(off time.Duration) surfaceTick {
-		if off >= 21*time.Hour {
-			return surfaceTick{proxyPrice: ramp(off), ownPrice: ramp(off), proxyBase: xlm(10), ownBase: xlm(1000)}
-		}
-		return surfaceTick{proxyPrice: ramp(off), proxyBase: xlm(1000)}
-	})
-	lr := readSurface(t, 24*time.Hour, trades, proxied)
-	if lr.surfaceAligned || lr.surfaceOverlap != 3 {
-		t.Fatalf("aligned=%v overlap=%d, want the whole-window fallback with overlap 3", lr.surfaceAligned, lr.surfaceOverlap)
-	}
-	if lr.quoteSurfaceRefusal(75) == "" {
-		t.Errorf("gap %.1f bps not refused, want the whole-window compare to refuse what it cannot align", gapBps(lr))
-	}
-}
-
-// P6: the reading is a function of the trade set, not its order.
+// The reading is a function of the trade set, not its order.
 func TestQuoteSurface_DeterministicUnderShuffle(t *testing.T) {
 	trades, proxied := buildSurface(t, 24*time.Hour, 10*time.Minute, func(off time.Duration) surfaceTick {
 		proxy := ramp(off)
 		if off >= 18*time.Hour {
 			proxy = basis(proxy, 100+int64(off/time.Hour))
 		}
-		return surfaceTick{proxyPrice: proxy, ownPrice: ramp(off), proxyBase: xlm(100 + int64(off/time.Hour)), ownBase: xlm(100)}
+		return surfaceTick{
+			proxyPrice: proxy, ownPrice: ramp(off), proxyBase: xlm(100 + int64(off/time.Hour)), ownBase: xlm(100),
+			extraPrice: basis(ramp(off), 30), extraBase: xlm(7),
+		}
 	})
 	want := readSurface(t, 24*time.Hour, trades, proxied)
 	rng := rand.New(rand.NewPCG(1, 2))
@@ -212,7 +259,7 @@ func TestQuoteSurface_DeterministicUnderShuffle(t *testing.T) {
 	}
 }
 
-// P7: single-print sub-buckets above 2^100 stay exact: an exact 0.8 % basis reads exactly 1/125.
+// Single-print slots above 2^100 stay exact: an exact 0.8 % basis reads exactly 1/125.
 func TestQuoteSurface_ExactAboveTwoToTheHundred(t *testing.T) {
 	huge := new(big.Int).Lsh(big.NewInt(1), 101)
 	trades, proxied := buildSurface(t, 5*time.Minute, time.Minute, func(off time.Duration) surfaceTick {
@@ -224,7 +271,7 @@ func TestQuoteSurface_ExactAboveTwoToTheHundred(t *testing.T) {
 	if lr.surfaceGap == nil || lr.surfaceGap.Cmp(big.NewRat(1, 125)) != 0 || !lr.surfaceAligned {
 		t.Fatalf("gap = %v aligned=%v, want exactly 1/125 aligned", lr.surfaceGap, lr.surfaceAligned)
 	}
-	if lr.quoteSurfaceRefusal(75) == "" {
+	if lr.quoteSurfaceRefusal(surfaceTol) == "" {
 		t.Error("an exact 80 bps basis was not refused")
 	}
 }
@@ -238,7 +285,7 @@ func TestQuoteSurface_GaugeCarriesTheSignedGap(t *testing.T) {
 	o := New(nil, cache, Config{Windows: []time.Duration{window}})
 	o.setTickLegRef(xlmUSD, window, legRef{
 		price: big.NewRat(12, 100), sources: 2, surfaceGap: big.NewRat(-80, 10_000),
-		surfaceDivergence: big.NewRat(80, 10_000), surfaceAligned: true, surfaceOverlap: 20,
+		surfaceDivergence: big.NewRat(80, 10_000), surfaceAligned: true, surfaceOverlap: 20, surfaceCoverage: big.NewRat(1, 1),
 	})
 	ref := compositeReference{
 		legSources: map[string]int{}, legDispersionBps: map[string]float64{},
@@ -250,7 +297,7 @@ func TestQuoteSurface_GaugeCarriesTheSignedGap(t *testing.T) {
 	if got < -80.01 || got > -79.99 {
 		t.Errorf("quote_surface_bps = %v, want -80", got)
 	}
-	if s := ref.legSurfaceString(); s != "{crypto:XLM/fiat:USD:-80.0bps/aligned=20}" {
+	if s := ref.legSurfaceString(); s != "{crypto:XLM/fiat:USD:-80.0bps/aligned=20,cover=100.0%}" {
 		t.Errorf("leg_quote_surface = %q", s)
 	}
 	o.clearCompositeReference(xlmGBP, window)

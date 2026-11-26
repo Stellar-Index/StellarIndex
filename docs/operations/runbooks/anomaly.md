@@ -223,18 +223,20 @@ ssh root@136.243.90.96 "curl -s http://localhost:9465/metrics | grep -E 'stellar
 | `leg_quote_surface=uncomputable` | A surface VWAP could not be computed; the leg is refused, not skipped. |
 | `leg_not_refreshed`, `fx_*`, `no_chain` | Leg not published this tick, FX snap missing/stale, or no triangulation configured. |
 
-For `leg_quote_surface`, the log field `leg_quote_surface` reads `<leg>:<signed bps>/aligned=<n>` (judged on the `n` sub-buckets where both surfaces traded above a dust floor, which hold at least 95% of each surface's volume) or `/whole_window(overlap=<n>)` (those sub-buckets do not speak for the served prints, so the larger of the whole-window and aligned gaps judged). `stellarindex_aggregator_quote_surface_bps{pair,window,leg}` carries the same signed value: positive means stablecoin prints sit above real-USD prints.
+How the quote-surface check judges a leg: the window is cut into window/24 slots (minimum 1 minute: 5m→1m, 1h→2m, 24h→1h). A slot is eligible when it holds stablecoin prints and real-USD prints from at least two USD venues whose own VWAPs agree within `leg_dispersion_bps`, its USD base volume is at least 1/4 of its stablecoin base volume, and each side carries at least 10,000 quote-currency units per hour of slot (pro rata for shorter slots). The aligned gap is the mean of the eligible slots' gaps `(stablecoin VWAP − USD VWAP) / USD VWAP`, weighted by each slot's stablecoin base volume: the average disagreement of the prints the par rewrite vouches for. It decides alone when eligible slots hold at least 95% of the window's stablecoin volume; otherwise the leg is judged by the larger of the aligned gap and the whole-window VWAP gap, so thin evidence is never judged more leniently than the whole-window compare.
+
+The log field `leg_quote_surface` reads `<leg>:<signed bps>/aligned=<n>,cover=<p>%` (decided alone on `n` eligible slots holding `p`% of stablecoin volume) or `/whole_window(overlap=<n>,cover=<p>%)` (coverage under 95%, so the larger of the whole-window and aligned gaps judged). `stellarindex_aggregator_quote_surface_bps{pair,window,leg}` carries the same signed value: positive means stablecoin prints sit above real-USD prints. A refusal means that value exceeded `leg_dispersion_bps`: the stablecoin prints and same-time real-USD prints disagree, or the evidence was too thin to tell and the whole-window compare refused.
 
 ### Likely causes
 
 - A real stablecoin de-peg: the gap persists in every window (5m, 1h, 24h) with the same sign, and the stablecoin's own market (`USDC/fiat:USD`, `USDT/fiat:USD` prices on `/v1/price`, or the issuer's redemption status) shows the same move.
-- A trend artefact of the whole-window fallback: `whole_window(...)` on the 24h window during a strong move, while the 1h window's `quote_surface_bps` is inside the bound. The USD venues were quiet or thin for part of the window (more than 5% of a surface's volume outside shared sub-buckets, or no USD print in the newest stablecoin sub-bucket), so the check could not rely on alignment alone.
+- A trend artefact of the whole-window fallback: `whole_window(...)` on the 24h window during a strong move, while the 1h window's `quote_surface_bps` is inside the bound. More than 5% of stablecoin volume fell in ineligible slots (one USD venue only, USD venues disagreeing, USD volume under 1/4 of stablecoin volume, or either side under the floor), so the check could not rely on alignment alone. `cover=` says how much was eligible.
 - Thin legs or dispersed venues: `leg_sources` / `leg_dispersion` causes; see the composite-reference config in `[aggregate.composite_reference]`.
 
 ### Fix
 
 1. De-peg: no action on the aggregator; refusing the composite is the intended outcome. Track the stablecoin's peg and record it in the incident log.
-2. Trend artefact on `whole_window`: no action; it clears as the window rolls past the quiet hours, once shared sub-buckets hold at least 95% of each surface's volume. If it recurs on `aligned=` readings with a quiet 1h window, capture both windows' `quote_surface_bps` and the log lines and escalate as a defect in the surface check.
+2. Trend artefact on `whole_window`: no action; it clears as the window rolls past the thin hours, once eligible slots hold at least 95% of stablecoin volume. If it recurs on `aligned=` readings with a quiet 1h window, capture both windows' `quote_surface_bps` and the log lines and escalate as a defect in the surface check.
 3. Do NOT raise `leg_dispersion_bps` or `tolerance_bps` to clear this alert: both also gate de-peg detection.
 
 ## Related

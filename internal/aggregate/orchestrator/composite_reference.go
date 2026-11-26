@@ -142,6 +142,7 @@ type legRef struct {
 	surfaceDivergence   *big.Rat
 	surfaceGap          *big.Rat
 	surfaceOverlap      int
+	surfaceCoverage     *big.Rat
 	surfaceAligned      bool
 	surfaceUncomputable bool
 }
@@ -159,25 +160,27 @@ func (lr legRef) quoteSurfaceRefusal(maxBps int) string {
 }
 
 // surfaceReading is one leg's quote-surface comparison: gap is the signed (proxy - own) / own (nil when a surface is empty or the
-// comparison failed), overlap the above-floor shared sub-buckets, aligned whether gap is their reading alone (else the larger of it and
-// the whole-window gap).
+// comparison failed), overlap the eligible slots, coverage their share of proxy base volume, aligned whether gap is their reading alone
+// (else the larger of it and the whole-window gap).
 type surfaceReading struct {
 	gap          *big.Rat
 	overlap      int
+	coverage     *big.Rat
 	aligned      bool
 	uncomputable bool
 }
 
 // quoteSurfaces measures how much of a published bucket came through a stablecoin-proxy rewrite (proxied holds those trade IDs) and how
-// far those prints sit from the pair's own-quote prints, time-aligned per [Orchestrator.alignedSurfaceGap]; every VWAP is priced with
-// computeNormalizedVWAP, as the leg VWAP is.
+// far those prints sit from the pair's own-quote prints, time-aligned per [Orchestrator.alignedSurfaceGap] with maxBps as the own-venue
+// agreement bound; every VWAP is priced with computeNormalizedVWAP, as the leg VWAP is.
 func (o *Orchestrator) quoteSurfaces(
-	pair canonical.Pair, window time.Duration, trades []canonical.Trade, proxied map[string]struct{},
+	pair canonical.Pair, window time.Duration, trades []canonical.Trade, proxied map[string]struct{}, maxBps int,
 ) (share float64, reading surfaceReading) {
 	if len(proxied) == 0 {
 		return 0, surfaceReading{}
 	}
-	scaled := aggregate.NormalizeAmountScale(trades, amountScaleDecimalsFor).Trades()
+	sw := aggregate.NormalizeAmountScale(trades, amountScaleDecimalsFor)
+	scaled := sw.Trades()
 	var proxy, own []canonical.Trade
 	proxyBase, ownBase := new(big.Int), new(big.Int)
 	for i := range trades {
@@ -190,22 +193,22 @@ func (o *Orchestrator) quoteSurfaces(
 		ownBase.Add(ownBase, scaled[i].BaseAmount.BigInt())
 	}
 	totalBase := new(big.Int).Add(proxyBase, ownBase)
-	if len(proxy) == 0 || totalBase.Sign() <= 0 {
+	if len(proxy) == 0 || proxyBase.Sign() <= 0 {
 		return 0, surfaceReading{}
 	}
 	share, _ = new(big.Rat).SetFrac(proxyBase, totalBase).Float64() // i128:ok a share for reporting, not a served amount
 	if len(own) == 0 {
 		return share, surfaceReading{}
 	}
-	aligned, ok := o.alignedSurfaceGap(pair, trades, scaled, proxied, window, proxyBase, ownBase)
+	aligned, ok := o.alignedSurfaceGap(pair, trades, sw, proxied, window, proxyBase, maxBps)
 	if !ok {
 		return share, surfaceReading{uncomputable: true}
 	}
-	if aligned.replaces {
-		return share, surfaceReading{gap: aligned.gap, overlap: aligned.overlap, aligned: true}
+	if aligned.decides {
+		return share, surfaceReading{gap: aligned.gap, overlap: aligned.eligible, coverage: aligned.coverage, aligned: true}
 	}
-	// The aligned slots do not speak for the served prints: judge by the larger of the whole-window gap (the check as it was, which a
-	// trend can inflate or, against the basis's sign, shrink) and the aligned gap, so this is never weaker than the whole-window compare.
+	// The eligible slots do not speak for the served proxy prints: judge by the larger of the whole-window gap (the check as it was,
+	// which a trend can inflate or, against the basis's sign, shrink) and the aligned gap, so this never passes what the old check refused.
 	proxyVWAP, perr := o.computeNormalizedVWAP(proxy, pair)
 	ownVWAP, oerr := o.computeNormalizedVWAP(own, pair)
 	if perr != nil || oerr != nil || proxyVWAP.Sign() <= 0 || ownVWAP.Sign() <= 0 {
@@ -216,11 +219,11 @@ func (o *Orchestrator) quoteSurfaces(
 	if aligned.gap != nil {
 		gap = largerMagnitude(gap, aligned.gap)
 	}
-	return share, surfaceReading{gap: gap, overlap: aligned.overlap}
+	return share, surfaceReading{gap: gap, overlap: aligned.eligible, coverage: aligned.coverage}
 }
 
-// surfaceString renders the leg's surface reading for logs: `+12.3bps/aligned=20` or `-80.0bps/whole_window(overlap=1)`; "" when
-// unmeasured.
+// surfaceString renders the leg's surface reading for logs: `+12.3bps/aligned=20,cover=100.0%` or
+// `-80.0bps/whole_window(overlap=1,cover=4.0%)` (overlap = eligible slots, cover = their share of proxy volume); "" when unmeasured.
 func (lr legRef) surfaceString() string {
 	switch {
 	case lr.surfaceUncomputable:
@@ -228,9 +231,10 @@ func (lr legRef) surfaceString() string {
 	case lr.surfaceGap == nil:
 		return ""
 	case lr.surfaceAligned:
-		return fmt.Sprintf("%+.1fbps/aligned=%d", ratBps(lr.surfaceGap), lr.surfaceOverlap)
+		return fmt.Sprintf("%+.1fbps/aligned=%d,cover=%.1f%%", ratBps(lr.surfaceGap), lr.surfaceOverlap, ratBps(lr.surfaceCoverage)/100)
 	default:
-		return fmt.Sprintf("%+.1fbps/whole_window(overlap=%d)", ratBps(lr.surfaceGap), lr.surfaceOverlap)
+		return fmt.Sprintf("%+.1fbps/whole_window(overlap=%d,cover=%.1f%%)", ratBps(lr.surfaceGap), lr.surfaceOverlap,
+			ratBps(lr.surfaceCoverage)/100)
 	}
 }
 
@@ -441,7 +445,7 @@ func (o *Orchestrator) newLegRef(
 	pair canonical.Pair, window time.Duration, vwap *big.Rat, trades []canonical.Trade, proxied map[string]struct{},
 ) legRef {
 	dispersion, uncomputable := o.legDispersion(pair, trades, vwap)
-	share, surface := o.quoteSurfaces(pair, window, trades, proxied)
+	share, surface := o.quoteSurfaces(pair, window, trades, proxied, o.cfg.CompositeReference.withDefaults().LegDispersionBps)
 	lr := legRef{
 		price:                  new(big.Rat).Set(vwap), // defensive copy, as newEdgeQuote
 		sources:                distinctSourceCount(trades),
@@ -450,6 +454,7 @@ func (o *Orchestrator) newLegRef(
 		proxyShare:             share,
 		surfaceGap:             surface.gap,
 		surfaceOverlap:         surface.overlap,
+		surfaceCoverage:        surface.coverage,
 		surfaceAligned:         surface.aligned,
 		surfaceUncomputable:    surface.uncomputable,
 	}
