@@ -44,7 +44,7 @@ func (c *CachedContractStorageSupplyReader) ContractStorageSupply(ctx context.Co
 	if err != nil {
 		return clickhouse.ContractStorageSupply{}, err
 	}
-	if c.cache.lastGood(contractID, cacheFillBudget) {
+	if c.cache.lastGood(contractID, cacheFillBudget) != "" {
 		reportStaleRead(ctx)
 	}
 	if res.declined != nil {

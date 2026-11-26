@@ -82,23 +82,16 @@ type marketsCacheEntry struct {
 	err error
 	// refreshFailed: the last refresh of a filled entry failed or panicked, so it is a last-good copy until one succeeds.
 	refreshFailed bool
+	// flightAt is when the SWR refresh in flight started; it, not the rows' age, says whether that refresh has overrun.
+	flightAt time.Time
 }
 
-// marketsServedStaleLocked is the [swrverdict.Stale] verdict for a filled entry served past ttl; no refresh in flight (every slot
-// was busy) leaves it a last-good copy too. Caller holds c.mu.
+// marketsServedStaleLocked is the flags.stale verdict for a filled entry served past ttl: [swrverdict.Stale], or no refresh in
+// flight (every slot was busy). Only a failed or overrun refresh makes it a last-good copy, reported on ctx through
+// [reportDegradedRead]. Caller holds c.mu.
 func (c *CachedMarketsReader) marketsServedStaleLocked(ctx context.Context, e *marketsCacheEntry) bool {
-	overrun := swrverdict.Stale(c.now().Sub(e.at), c.ttl, marketsRefreshBudget, false)
-	switch {
-	case e.refreshFailed:
-		obs.NoteDegradedCause(ctx, obs.DegradedRefreshFailed)
-	case e.flight == nil:
-		obs.NoteDegradedCause(ctx, obs.DegradedRefreshRefused)
-	case overrun:
-		obs.NoteDegradedCause(ctx, obs.DegradedRefreshOverrun)
-	default:
-		return false
-	}
-	return true
+	reportDegradedRead(ctx, lastGoodCause(e.refreshFailed, e.flight != nil, c.now().Sub(e.flightAt), marketsRefreshBudget))
+	return e.refreshFailed || e.flight == nil || swrverdict.Stale(c.now().Sub(e.at), c.ttl, marketsRefreshBudget, false)
 }
 
 // NewCachedMarketsReader wraps upstream with a TTL cache (ttl=0 disables); the 30s production default is tighter than sources_stats's 60s because /v1/markets is the front page.
@@ -227,9 +220,13 @@ func (c *CachedMarketsReader) GetPairsVolumeHistory24hBatchAt(ctx context.Contex
 		keys[i] = p[0] + "|" + p[1]
 	}
 	sort.Strings(keys)
-	hist, _, stale, err := c.sparks.get(ctx, "pairs_volume_24h", strings.Join(keys, ","), func(ctx context.Context) (map[string][]timescale.PairVolumePoint, error) {
+	key := strings.Join(keys, ",")
+	hist, _, stale, err := c.sparks.get(ctx, "pairs_volume_24h", key, func(ctx context.Context) (map[string][]timescale.PairVolumePoint, error) {
 		return c.upstream.GetPairsVolumeHistory24hBatch(ctx, pairs)
 	})
+	if err == nil {
+		reportDegradedRead(ctx, c.sparks.lastGood(key, cacheFillBudget))
+	}
 	return hist, stale, err
 }
 
@@ -377,7 +374,7 @@ func (c *CachedMarketsReader) fetchPairs(
 		out, next, at := e.pairs, e.cursor, e.at
 		if slots := c.refreshSlots(class.head()); e.flight == nil && trySlot(slots) {
 			done := make(chan struct{})
-			e.flight = done
+			e.flight, e.flightAt = done, c.now()
 			entry := e
 			stale := c.marketsServedStaleLocked(ctx, e)
 			c.mu.Unlock()
@@ -517,7 +514,7 @@ func (c *CachedMarketsReader) fetchPools(
 		out, next, at := e.pools, e.cursor, e.at
 		if slots := c.refreshSlots(class.head()); e.flight == nil && trySlot(slots) {
 			done := make(chan struct{})
-			e.flight = done
+			e.flight, e.flightAt = done, c.now()
 			entry := e
 			stale := c.marketsServedStaleLocked(ctx, e)
 			c.mu.Unlock()

@@ -36,7 +36,8 @@ func newPoolsSWRCase(t *testing.T) (*CachedMarketsReader, *swrTestClock, *panick
 	return cache, clk, up, serve
 }
 
-// A serve past the TTL whose refresh is SKIPPED because every refresh slot is busy has nothing replacing it, so it is stale.
+// A serve past the TTL whose refresh is SKIPPED because every refresh slot is busy has nothing replacing it, so it is stale;
+// no refresh of it failed or overran, so it is not degraded and keeps the route band.
 func TestMarketsSWR_SkippedRefreshIsFlagged(t *testing.T) {
 	cache, clk, _, serve := newPoolsSWRCase(t)
 	clk.add(30*time.Second + time.Second)
@@ -54,8 +55,8 @@ func TestMarketsSWR_SkippedRefreshIsFlagged(t *testing.T) {
 			<-slots
 		}
 	}
-	if !got.stale || !got.noStore {
-		t.Errorf("refresh skipped, slots full: stale=%v no-store=%v, want both true", got.stale, got.noStore)
+	if !got.stale || got.noStore {
+		t.Errorf("refresh skipped, slots full: stale=%v no-store=%v, want stale only", got.stale, got.noStore)
 	}
 	waitMarketsIdle(t, cache)
 }

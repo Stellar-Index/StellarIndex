@@ -87,15 +87,10 @@ func (c *CachedAssetsReader) listingLastGood(opts timescale.ListAssetsOptions) s
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.entries[listAssetsCacheKey(opts)]
-	switch {
-	case !ok || e.at.IsZero():
+	if !ok || e.at.IsZero() {
 		return ""
-	case e.refreshFailed:
-		return obs.DegradedRefreshFailed
-	case e.flight != nil && time.Since(e.flightAt) >= assetsRefreshBudget:
-		return obs.DegradedRefreshOverrun
 	}
-	return ""
+	return lastGoodCause(e.refreshFailed, e.flight != nil, time.Since(e.flightAt), assetsRefreshBudget)
 }
 
 // catalogueListingLastGood is [CachedAssetsReader.listingLastGood] through s.AssetsReader; "" for a reader without it.

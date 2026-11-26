@@ -171,8 +171,9 @@ func getSWRFlags(t *testing.T, h http.Handler, path string) swrFlagsServe {
 	}
 }
 
-// A serve past the TTL that starts a healthy refresh is clean and cacheable; one whose last refresh failed, or older than
-// ttl+min(ttl, budget), is stale and no-store; the next serve after a successful refresh is clean again.
+// A serve past the TTL that starts a healthy refresh is clean and cacheable; one whose last refresh failed is stale and
+// no-store; one older than ttl+min(ttl, budget) whose refresh it starts is stale but cacheable; after a successful refresh
+// the next serve is clean again.
 func TestMarketsSWR_FlagsOnlyLateOrFailedRefresh(t *testing.T) {
 	const ttl = 30 * time.Second
 	for _, path := range []string{"/v1/markets?include=sparkline", "/v1/pools"} {
@@ -215,7 +216,9 @@ func TestMarketsSWR_FlagsOnlyLateOrFailedRefresh(t *testing.T) {
 
 			clk.add(2*ttl + time.Second)
 			up.hold()
-			want("past the hard bound, refresh in flight", getSWRFlags(t, h, path), true)
+			if bound := getSWRFlags(t, h, path); !bound.stale || bound.noStore {
+				t.Errorf("past the hard bound, refresh just started: stale=%v no-store=%v, want stale only", bound.stale, bound.noStore)
+			}
 			up.release(false)
 			waitMarketsIdle(t, cache)
 
