@@ -119,8 +119,9 @@ class_ansible() {
   # configs/prometheus/** and deploy/monitoring/** are read by
   # clickhouse-exporter-test.sh, which only the ansible-check job runs —
   # so a diff confined to either set must set ansible=true. The self-host
-  # guide is read by ansible-api-env-test.sh, also run only there.
-  grep -E '^(configs/ansible/|configs/prometheus/|deploy/monitoring/)|^docs/operations/self-hosting\.md$'
+  # guide is read by ansible-api-env-test.sh, also run only there, and the
+  # peg fixture by ansible-usd-peg-network-gate-test.sh.
+  grep -E '^(configs/ansible/|configs/prometheus/|deploy/monitoring/)|^docs/operations/self-hosting\.md$|^internal/config/testdata/ansible-pubnet-pegs\.toml$'
 }
 
 usage() {
