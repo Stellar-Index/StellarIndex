@@ -42,6 +42,9 @@ Non-interactive runs (agents, CI, `nohup`): pass `--yes` — the script refuses 
    deliberately) and does NOT deploy.
 5. Do not sit monitoring the workflow during a /loop session — check
    it when next convenient.
+6. **Publish the docs**: `gh workflow run docs-deploy.yml --ref main`.
+   The deploy is manual; skipped, the public API reference drifts from
+   the repo.
 
 ## After
 
