@@ -55,7 +55,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
-// goldenProjectedEvents is IsProjectedEvent's true set (44 types), keyed by
+// goldenProjectedEvents is IsProjectedEvent's true set (45 types), keyed by
 // the spelling used in pipeline/sink.go so the AST check can compare it.
 var goldenProjectedEvents = map[string]consumer.Event{
 	"soroswap.TradeEvent":           soroswap.TradeEvent{},
@@ -77,6 +77,7 @@ var goldenProjectedEvents = map[string]consumer.Event{
 	"comet.LiquidityEvent":          comet.LiquidityEvent{},
 	"sushiswap_v3.TradeEvent":       sushiswap_v3.TradeEvent{},
 	"sushiswap_v3.PositionEvent":    sushiswap_v3.PositionEvent{},
+	"sushiswap_v3.ManagerEvent":     sushiswap_v3.ManagerEvent{},
 	"reflector.UpdateEvent":         reflector.UpdateEvent{},
 	"redstone.UpdateEvent":          redstone.UpdateEvent{},
 	"chainlink_stellar.UpdateEvent": chainlink_stellar.UpdateEvent{},
@@ -248,8 +249,8 @@ func registryNames(r projector.Registry) []string {
 }
 
 func TestProjectedEventSet_Golden(t *testing.T) {
-	if len(goldenProjectedEvents) != 44 {
-		t.Fatalf("golden projected table has %d entries, want 44", len(goldenProjectedEvents))
+	if len(goldenProjectedEvents) != 45 {
+		t.Fatalf("golden projected table has %d entries, want 45", len(goldenProjectedEvents))
 	}
 	for name, ev := range goldenProjectedEvents {
 		if !pipeline.IsProjectedEvent(ev) {

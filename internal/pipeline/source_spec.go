@@ -212,7 +212,7 @@ var specs = []SourceSpec{
 	},
 	{
 		Name:       sushiswap_v3.SourceName,
-		Events:     []consumer.Event{sushiswap_v3.TradeEvent{}, sushiswap_v3.PositionEvent{}},
+		Events:     []consumer.Event{sushiswap_v3.TradeEvent{}, sushiswap_v3.PositionEvent{}, sushiswap_v3.ManagerEvent{}},
 		NewDecoder: gatedDecoder(sushiswap_v3.SourceName, sushiswap_v3.NewDecoder),
 		Projector:  &ProjectorSpec{LiveContractIDs: liveGatedSet, Genesis: sushiswap_v3.FactoryGenesisLedger},
 	},

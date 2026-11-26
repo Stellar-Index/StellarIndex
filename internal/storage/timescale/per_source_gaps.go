@@ -201,6 +201,8 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// sushiswap_v3-positions: mint/burn/collect are sparse, so a large override keeps a quiet
 	// stretch from reading as a decoder outage.
 	{Source: "sushiswap_v3-positions", CanonicalSource: "sushiswap_v3", Table: "sushiswap_v3_position_events", LedgerColumn: "ledger", Genesis: 61_487_379, MinGapSizeOverride: 700000},
+	// sushiswap_v3-manager: position-manager events are as sparse as the pool-side positions they drive.
+	{Source: "sushiswap_v3-manager", CanonicalSource: "sushiswap_v3", Table: "sushiswap_v3_manager_events", LedgerColumn: "ledger", Genesis: 61_487_383, MinGapSizeOverride: 700000},
 	// upshift: vaults publish no price, so they use their own hypertable, not `trades`. Genesis is
 	// the first event (an `admin_set`, which produces no row); the first ROW lands 15,341 ledgers
 	// later, far inside the threshold.

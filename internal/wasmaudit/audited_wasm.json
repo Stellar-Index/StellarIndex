@@ -464,6 +464,14 @@
     "audited": "2026-10-05",
     "doc": "docs/operations/wasm-audits/blend.md"
   },
+  "be969de545da89a04508e4952e94a53a77e76ecfa67d74b23fd56e0be42290d4": {
+    "sources": [
+      "sushiswap_v3"
+    ],
+    "role": "position_manager",
+    "audited": "2026-11-26",
+    "doc": "docs/operations/wasm-audits/sushiswap_v3.md"
+  },
   "c1f4502a757e25c611f5a159bc1ab0eef64085adac6c68123dca66e87faffbc2": {
     "sources": [
       "blend"
@@ -495,6 +503,14 @@
     "role": "pool",
     "audited": "2026-11-15",
     "doc": "docs/operations/wasm-audits/comet.md"
+  },
+  "dae1af1c2863e907e6b58dc861bb7ae610c9b951d23af7902a6afc247b923b0a": {
+    "sources": [
+      "sushiswap_v3"
+    ],
+    "role": "position_manager",
+    "audited": "2026-11-26",
+    "doc": "docs/operations/wasm-audits/sushiswap_v3.md"
   },
   "daeb931b9507440b6dc4f73256ac33c6089964f5d035f7eec5fcedc10e732c8e": {
     "sources": [

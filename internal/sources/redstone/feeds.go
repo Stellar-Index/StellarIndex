@@ -54,9 +54,6 @@ var feedRegistry = map[string]feedEntry{
 
 	// earnUSDC — an Upshift vault share, keyed on the vault contract, NOT USDC: collapsing a
 	// yield-bearing claim into USDC is the asset-identity error class.
-	//
-	// REPORTED AS PUBLISHED: RedStone's ~0.72 differs from the ~1.01 share price and is their
-	// confirmed figure. Do not "correct" this entry.
 	// The bare feed is NAV in the USDC reserve; the `/USD` sibling is the same NAV in dollars.
 	"earnUSDC_FUNDAMENTAL":     {Base: mustSoroban(earnUSDCVaultContract), Quote: quoteUSDC},
 	"earnUSDC_FUNDAMENTAL/USD": {Base: mustSoroban(earnUSDCVaultContract), Quote: quoteUSD},
@@ -104,6 +101,12 @@ var feedRegistry = map[string]feedEntry{
 	"XAUm_FUNDAMENTAL/USD":    {Base: mustRWA("XAUm"), Quote: quoteUSD},    // Matrixdock gold: live 4115.67/oz (CG pax-gold 4088)
 	"deJAAA_FUNDAMENTAL/USD":  {Base: mustRWA("deJAAA"), Quote: quoteUSD},  // deRWA JAAA: live 1.0404
 	"deJTRSY_FUNDAMENTAL/USD": {Base: mustRWA("deJTRSY"), Quote: quoteUSD}, // deRWA JTRSY: live 1.0315
+}
+
+// keptRawFeeds are known feed_ids deliberately recorded as raw:<feed_id> (exact match), each with
+// why it cannot be mapped. They are not a mapping gap, so they skip SourceUnknownSymbolsTotal.
+var keptRawFeeds = map[string]string{
+	"earnUSDC_PPS_FUNDAMENTAL/USD": "second earnUSDC share-price feed; oracle_updates has no feed dimension, so mapping it onto the vault would blend it with earnUSDC_FUNDAMENTAL/USD",
 }
 
 // lookupFeed resolves a feed_id to its registry entry; ok is false off-registry (then recorded raw).
