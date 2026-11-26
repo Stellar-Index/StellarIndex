@@ -59,10 +59,19 @@ const opTypeRollupTipMargin = 720
 // ErrCountsShrink marks a partition recompute that counted fewer rows than the live partition; the partition is left untouched.
 var ErrCountsShrink = errors.New("counts rollup recompute is smaller than the live partition")
 
-// opTypeBuilt is one partition's sentinel: counts cover ledger_seq < through, built from srcRows active source rows.
+// opTypeBuilt is one partition's sentinel: counts cover ledger_seq < through, built from srcRows active source rows. builds > 1
+// means the partition holds several builds' rows side by side (REPLACE PARTITION's outdated parts come back active after a
+// restart), so its counts are a sum of builds and must not be served.
 type opTypeBuilt struct {
 	through uint32
 	srcRows uint64
+	builds  uint64
+}
+
+func (b opTypeBuilt) duplicated() bool { return b.builds > 1 }
+
+func resurrectedReason(builds uint64) string {
+	return fmt.Sprintf("live partition holds %d builds — outdated parts resurrected by a restart; replacing", builds)
 }
 
 func opTypePartitionEnd(p uint32) uint32 { return (p + 1) * opTypePartitionWidth }
@@ -87,7 +96,7 @@ func planOpTypeCounts(built map[uint32]opTypeBuilt, src map[uint32]uint64) (opTy
 	var plan opTypeCountsPlan
 	headComplete := head.through == opTypePartitionEnd(newest)
 	switch {
-	case headComplete && head.srcRows != src[newest]:
+	case head.duplicated() || headComplete && head.srcRows != src[newest]:
 		plan.stale = append(plan.stale, newest)
 		plan.tailFrom = opTypePartitionEnd(newest)
 	case head.through > newest*opTypePartitionWidth:
@@ -100,7 +109,7 @@ func planOpTypeCounts(built map[uint32]opTypeBuilt, src map[uint32]uint64) (opTy
 		if p >= newest {
 			continue
 		}
-		if b, ok := built[p]; ok && b.through == opTypePartitionEnd(p) && b.srcRows == src[p] {
+		if b, ok := built[p]; ok && !b.duplicated() && b.through == opTypePartitionEnd(p) && b.srcRows == src[p] {
 			plan.valid = append(plan.valid, p)
 		} else {
 			plan.stale = append(plan.stale, p)
@@ -147,7 +156,8 @@ func opTypeCountsRollupQuery(plan opTypeCountsPlan) string {
 	) GROUP BY op_type ORDER BY n DESC` + explorerScanSettings + `, do_not_merge_across_partitions_select_final = 1`
 }
 
-// readState reads every partition's sentinel and the source's active row count per partition.
+// readState reads every partition's sentinels and the source's active row count per partition; a partition with several sentinels
+// keeps the highest through and counts its builds.
 func (rc *CountsRollup) readState(ctx context.Context, conn driver.Conn) (map[uint32]opTypeBuilt, map[uint32]uint64, error) {
 	built := map[uint32]opTypeBuilt{}
 	rows, err := conn.Query(ctx, `SELECT part, through, n FROM stellar.`+rc.table+` WHERE account = ''`)
@@ -160,6 +170,11 @@ func (rc *CountsRollup) readState(ctx context.Context, conn driver.Conn) (map[ui
 		if err := rows.Scan(&p, &b.through, &b.srcRows); err != nil {
 			_ = rows.Close()
 			return nil, nil, err
+		}
+		b.builds = 1
+		if prev, ok := built[p]; ok {
+			b.builds += prev.builds
+			b.through = max(b.through, prev.through)
 		}
 		built[p] = b
 	}
@@ -285,6 +300,8 @@ func opTypeRollupWork(built map[uint32]opTypeBuilt, src map[uint32]uint64, head,
 		switch {
 		case !ok:
 			reason = "not built"
+		case b.duplicated():
+			reason = resurrectedReason(b.builds)
 		case b.through != opTypePartitionEnd(p):
 			reason = "built through " + strconv.FormatUint(uint64(b.through), 10)
 		case b.srcRows != src[p]:
@@ -300,7 +317,11 @@ func opTypeRollupWork(built map[uint32]opTypeBuilt, src map[uint32]uint64, head,
 	start := head * opTypePartitionWidth
 	if tip >= start+opTypeRollupTipMargin {
 		through := tip + 1 - opTypeRollupTipMargin
-		if b, ok := built[head]; !ok || through > b.through {
+		b, ok := built[head]
+		switch {
+		case ok && b.duplicated():
+			work = append(work, OpTypeRollupPartition{Part: head, Through: through, Reason: resurrectedReason(b.builds)})
+		case !ok || through > b.through:
 			work = append(work, OpTypeRollupPartition{Part: head, Through: through, Reason: "open partition"})
 		}
 	}
@@ -357,22 +378,38 @@ func (rc *CountsRollup) runPartitionConn(ctx context.Context, conn driver.Conn, 
 		return fmt.Errorf("clickhouse: %s partition %s sentinel: %w", rc.table, pid, err)
 	}
 	if !shrinkOK {
-		var newOps, liveOps uint64
-		if err := conn.QueryRow(ctx, `SELECT
-			(SELECT toUInt64(sum(n)) FROM stellar.`+staging+` WHERE account != ''),
-			(SELECT toUInt64(sum(n)) FROM stellar.`+rc.table+` WHERE part = ? AND account != '')`, w.Part).
-			Scan(&newOps, &liveOps); err != nil {
-			return fmt.Errorf("clickhouse: %s partition %s size check: %w", rc.table, pid, err)
-		}
-		if newOps < liveOps {
-			return fmt.Errorf("%w: %s partition %s recomputed %d row(s), live has %d — the lake lost rows under it; pass -shrink-ok only if intended",
-				ErrCountsShrink, rc.table, pid, newOps, liveOps)
+		if err := rc.shrinkCheck(ctx, conn, staging, w.Part, logf); err != nil {
+			return err
 		}
 	}
+	// REPLACE PARTITION replaces every active part of the partition, so it also drops a resurrected build.
 	if err := conn.Exec(ctx, "ALTER TABLE stellar."+rc.table+" REPLACE PARTITION ID '"+pid+"' FROM stellar."+staging); err != nil {
 		return fmt.Errorf("clickhouse: %s partition %s replace: %w", rc.table, pid, err)
 	}
 	logf("%s partition %s through %d (%s) done in %s", rc.Name, pid, w.Through, w.Reason, time.Since(start).Round(time.Second))
+	return nil
+}
+
+// shrinkCheck refuses a recompute counting fewer ops than the live build. A live partition holding several builds is measured per
+// build (their mean; the newest is at least that), so the heal needs no -shrink-ok while a recompute below it still refuses.
+func (rc *CountsRollup) shrinkCheck(ctx context.Context, conn driver.Conn, staging string, part uint32, logf func(string, ...any)) error {
+	var newOps, liveOps, builds uint64
+	if err := conn.QueryRow(ctx, `SELECT
+		(SELECT toUInt64(sum(n)) FROM stellar.`+staging+` WHERE account != ''),
+		toUInt64(sumIf(n, account != '')), countIf(account = '')
+		FROM stellar.`+rc.table+` WHERE part = ?`, part).
+		Scan(&newOps, &liveOps, &builds); err != nil {
+		return fmt.Errorf("clickhouse: %s partition %d size check: %w", rc.table, part, err)
+	}
+	if builds > 1 {
+		logf("%s partition %d: %s (live sums %d op(s) over the builds)", rc.Name, part, resurrectedReason(builds), liveOps)
+		liveOps /= builds
+	}
+	if newOps < liveOps {
+		return fmt.Errorf("%w: %s partition %d recomputed %d op(s), the live build has %d — source rows were removed since that build, "+
+			"or the live partition carries rows no sentinel accounts for; find which before passing -shrink-ok",
+			ErrCountsShrink, rc.table, part, newOps, liveOps)
+	}
 	return nil
 }
 
