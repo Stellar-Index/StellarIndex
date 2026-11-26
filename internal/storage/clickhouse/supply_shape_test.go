@@ -61,18 +61,18 @@ func muxedBody(t *testing.T, lo uint64) string {
 	return b64All(t, xdr.ScVal{Type: xdr.ScValTypeScvMap, Map: &m})[0]
 }
 
-func TestClassifySupplyEventXDR_ProductionPoolMintIsNotTokenShaped(t *testing.T) {
+func TestClassifySupplyEventXDR_ProductionPoolMintIsTopicNotTokenShaped(t *testing.T) {
 	amt, skip := ClassifySupplyEventXDR(poolMintContract, []string{poolMintTopic0}, poolMintBody)
-	if skip != SupplySkipNotTokenShaped || amt != nil {
-		t.Fatalf("one-topic pool mint: skip=%q amt=%v, want %q", skip, amt, SupplySkipNotTokenShaped)
+	if skip != SupplySkipTopicNotTokenShaped || amt != nil {
+		t.Fatalf("one-topic pool mint: skip=%q amt=%v, want %q", skip, amt, SupplySkipTopicNotTokenShaped)
 	}
 	if SupplySkipAlerts(skip) {
 		t.Error("the pool's mint must not alert")
 	}
 	ext := &LedgerExtract{}
 	recordSupplyFlow(ext, ContractEventRow{ContractID: poolMintContract, Topic0Sym: "mint", TopicsXDR: []string{poolMintTopic0}, DataXDR: poolMintBody}, 1, time.Unix(0, 0), "tx")
-	if len(ext.SupplyFlows) != 0 || len(ext.SupplyFlowSkipSamples) != 0 || ext.SupplyFlowSkips[SupplySkipNotTokenShaped] != 1 || len(ext.SupplyFlowSkips) != 1 {
-		t.Errorf("flows=%d samples=%v skips=%v, want only {not_token_shaped: 1}", len(ext.SupplyFlows), ext.SupplyFlowSkipSamples, ext.SupplyFlowSkips)
+	if len(ext.SupplyFlows) != 0 || len(ext.SupplyFlowSkipSamples) != 0 || ext.SupplyFlowSkips[SupplySkipTopicNotTokenShaped] != 1 || len(ext.SupplyFlowSkips) != 1 {
+		t.Errorf("flows=%d samples=%v skips=%v, want only {topic_not_token_shaped: 1}", len(ext.SupplyFlows), ext.SupplyFlowSkipSamples, ext.SupplyFlowSkips)
 	}
 }
 
@@ -131,8 +131,56 @@ func TestClassifySupplyEventXDR_NotTokenShapedTopics(t *testing.T) {
 	} {
 		// An i128 body is the case the topic rule decides alone: the body would otherwise decode.
 		amt, skip := ClassifySupplyEventXDR(poolMintContract, b64All(t, tc.topics...), i128Body(t, 5))
-		if skip != SupplySkipNotTokenShaped || amt != nil {
-			t.Errorf("%s: skip=%q amt=%v, want %q", tc.name, skip, amt, SupplySkipNotTokenShaped)
+		if skip != SupplySkipTopicNotTokenShaped || amt != nil || SupplySkipAlerts(skip) {
+			t.Errorf("%s: skip=%q amt=%v, want non-alerting %q", tc.name, skip, amt, SupplySkipTopicNotTokenShaped)
+		}
+	}
+	// The body-shape reason stays distinct: token-shaped topics with a u32 body.
+	id := xdr.Uint32(7)
+	u32 := b64All(t, xdr.ScVal{Type: xdr.ScValTypeScvU32, U32: &id})[0]
+	if _, skip := ClassifySupplyEventXDR(poolMintContract, b64All(t, symScVal("mint"), g), u32); skip != SupplySkipNotTokenShaped {
+		t.Errorf("[mint, G] with a u32 body: skip=%q, want %q", skip, SupplySkipNotTokenShaped)
+	}
+}
+
+// An undecodable topic leaves the event's shape unknown, so it alerts rather than passing as foreign traffic.
+func TestClassifySupplyEventXDR_TopicUnparseableAlerts(t *testing.T) {
+	g := b64All(t, accountAddrScVal(2))[0]
+	for name, topics := range map[string][]string{
+		"topic[0]":           {"not-xdr!", g},
+		"mint topic[1]":      {poolMintTopic0, "not-xdr!"},
+		"transfer topic[2]":  {b64All(t, symScVal("transfer"))[0], g, "AAAA"},
+		"truncated topic[1]": {poolMintTopic0, "AAAAEgAAAAE="},
+	} {
+		amt, skip := ClassifySupplyEventXDR(poolMintContract, topics, i128Body(t, 5))
+		if skip != SupplySkipTopicUnparseable || amt != nil || !SupplySkipAlerts(skip) {
+			t.Errorf("%s: skip=%q amt=%v, want alerting %q", name, skip, amt, SupplySkipTopicUnparseable)
+		}
+	}
+}
+
+// Every ScAddress arm is an Address topic. G and C are SEP-41 holders; claimable-balance and liquidity-pool addresses are CAP-67 SAC
+// holders; a muxed arm never appears in a well-formed CAP-67 topic (the id rides in the body), but a token emitting one keeps its flow.
+func TestClassifySupplyEventXDR_AddressArms(t *testing.T) {
+	var h xdr.Hash
+	h[0] = 9
+	pool := xdr.PoolId(h)
+	arms := map[string]xdr.ScAddress{
+		"muxed account":     {Type: xdr.ScAddressTypeScAddressTypeMuxedAccount, MuxedAccount: &xdr.MuxedEd25519Account{Id: 3, Ed25519: xdr.Uint256(h)}},
+		"claimable balance": {Type: xdr.ScAddressTypeScAddressTypeClaimableBalance, ClaimableBalanceId: &xdr.ClaimableBalanceId{Type: xdr.ClaimableBalanceIdTypeClaimableBalanceIdTypeV0, V0: &h}},
+		"liquidity pool":    {Type: xdr.ScAddressTypeScAddressTypeLiquidityPool, LiquidityPoolId: &pool},
+		"muxed contract":    {Type: xdr.ScAddressTypeScAddressTypeMuxedContract, MuxedContract: &xdr.MuxedContract{Id: 3, ContractId: xdr.ContractId(h)}},
+	}
+	vals := map[string]xdr.ScVal{"account G": accountAddrScVal(2), "contract C": contractAddrScVal(3)}
+	for name, a := range arms {
+		vals[name] = xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &a}
+	}
+	for name, v := range vals {
+		for _, topics := range [][]xdr.ScVal{{symScVal("mint"), v}, {symScVal("transfer"), accountAddrScVal(1), v}, {symScVal("transfer"), v, accountAddrScVal(1)}} {
+			amt, skip := ClassifySupplyEventXDR(poolMintContract, b64All(t, topics...), i128Body(t, 42))
+			if skip != "" || amt == nil || amt.Int64() != 42 {
+				t.Errorf("%s at %v: skip=%q amt=%v, want amount 42", name, topics[0].Sym, skip, amt)
+			}
 		}
 	}
 }

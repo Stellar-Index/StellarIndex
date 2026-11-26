@@ -162,7 +162,7 @@ var cap67CatchUpOnce = runCap67CatchUp
 type cap67CatchUp struct {
 	start, last uint32
 	rows        int64
-	skipped     uint64 // events dropped as undecodable, excluding not_token_shaped and judged_non_token
+	skipped     uint64 // events dropped as undecodable, excluding the non-alerting reasons (clickhouse.SupplySkipAlerts)
 }
 
 // idle reports an empty resolved range: the watermark is at or above the contiguous tip, or `start` is not in the lake.
@@ -436,6 +436,7 @@ func deriveCap67Window(ctx context.Context, addr string, lo, hi uint32, topics [
 		written int64
 		skips   = cap67Skips{}
 		named   []string
+		watch   = cap67ShapeWatch{tokens: map[string]struct{}{}, shapeless: map[string]uint64{}}
 	)
 	flush := func() error {
 		if len(batch) == 0 || dryRun {
@@ -464,8 +465,10 @@ func deriveCap67Window(ctx context.Context, addr string, lo, hi uint32, topics [
 				reason := cap67SkipReason(&ev)
 				skips[reason]++
 				named = nameAlertingSkip(named, ev.ContractID, reason)
+				watch.skipped(ev.ContractID, reason)
 				return nil
 			}
+			watch.tokens[ev.ContractID] = struct{}{}
 			batch = append(batch, m)
 			if len(batch) >= cap67InsertBatch {
 				return flush()
@@ -478,6 +481,7 @@ func deriveCap67Window(ctx context.Context, addr string, lo, hi uint32, topics [
 	if err := flush(); err != nil {
 		return written, skips, err
 	}
+	named = watch.settle(skips, named)
 	if n := skips.total(); n > 0 {
 		// Not fatal per window: a deterministically undecodable transfer event re-fails on every retry; the raw event stays in
 		// contract_events for audit. The one-shot run's exit status accounts for it via enforceDecodeBudget.
@@ -513,8 +517,8 @@ func (s cap67Skips) total() uint64 {
 	return n
 }
 
-// actionable is the skips that may short a token's movements: not_token_shaped is expected traffic, as topic[0] alone does not identify a
-// token and any contract (an NFT's `transfer` with a u32 id) can emit one; judged_non_token is a contract recorded as no token.
+// actionable is the skips that may short a token's movements: topic_not_token_shaped and not_token_shaped are expected traffic, as
+// topic[0] alone does not identify a token (an NFT's `transfer` with a u32 id); judged_non_token is a contract recorded as no token.
 func (s cap67Skips) actionable() uint64 {
 	var n uint64
 	for reason, v := range s {
@@ -528,8 +532,46 @@ func (s cap67Skips) actionable() uint64 {
 // cap67SkipDecodeFailed is a token-shaped body the decoder still refused (malformed topics, unusable close time).
 const cap67SkipDecodeFailed = "decode_failed"
 
+// cap67SkipTokenTopicShape is a topic_not_token_shaped event from a contract whose token events decoded in the same window: a
+// token emitting a supply or transfer event without its address topics, which may be supply the classifier would otherwise hide.
+const cap67SkipTokenTopicShape = "token_topic_not_token_shaped"
+
 // cap67SkipReasons is every reason a window can report, for zero-seeding the heartbeat series.
-var cap67SkipReasons = append(slices.Clone(clickhouse.SupplySkipReasons), cap67SkipDecodeFailed)
+var cap67SkipReasons = append(slices.Clone(clickhouse.SupplySkipReasons), cap67SkipDecodeFailed, cap67SkipTokenTopicShape)
+
+// cap67ShapeWatch holds one window's decoded-token contracts and topic-shape skips per contract; both are bounded by the
+// window's distinct emitters, and no lookup runs per event.
+type cap67ShapeWatch struct {
+	tokens    map[string]struct{}
+	shapeless map[string]uint64
+}
+
+func (w cap67ShapeWatch) skipped(contractID, reason string) {
+	if reason == clickhouse.SupplySkipTopicNotTokenShaped {
+		w.shapeless[contractID]++
+	}
+}
+
+// settle moves a window token's topic-shape skips to the alerting cap67SkipTokenTopicShape and names the contract.
+func (w cap67ShapeWatch) settle(skips cap67Skips, named []string) []string {
+	ids := make([]string, 0, len(w.shapeless))
+	for id := range w.shapeless {
+		if _, ok := w.tokens[id]; ok {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	for _, id := range ids {
+		n := w.shapeless[id]
+		skips[clickhouse.SupplySkipTopicNotTokenShaped] -= n
+		if skips[clickhouse.SupplySkipTopicNotTokenShaped] == 0 {
+			delete(skips, clickhouse.SupplySkipTopicNotTokenShaped)
+		}
+		skips[cap67SkipTokenTopicShape] += n
+		named = nameAlertingSkip(named, id, cap67SkipTokenTopicShape)
+	}
+	return named
+}
 
 // cap67SkipReason classifies an undecodable event with the live sink's supply classifier, which also covers a transfer's topics and body.
 func cap67SkipReason(ev *events.Event) string {
