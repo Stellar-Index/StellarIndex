@@ -112,6 +112,7 @@ var subcommands = map[string]func(args []string) error{
 	"ch-reproject":                 chops.Run,
 	"ch-rebuild":                   chops.Run,
 	"trades-cagg-refresh":          chops.Run,
+	"cagg-history":                 chops.Run,
 	"ch-supply":                    chops.Run,
 	"ch-txindex-backfill":          chops.Run,
 	"ch-contract-ledgers-backfill": chops.Run,

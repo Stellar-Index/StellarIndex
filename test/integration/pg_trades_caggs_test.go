@@ -28,34 +28,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestCAGGHistoryDetector executes the data-freshness watchdog's
-// emptied-continuous-aggregate SQL — the SHIPPED bytes, read out of
-// configs/ansible/roles/archival-node/files/data-freshness.sh — against
-// a real TimescaleDB carrying the real migrations.
-//
-// The state under test is the one migrations 0115 and 0147 leave behind
-// and the one a fresh database applying them from zero starts in: the
-// nine price/TWAP views recreated WITH NO DATA, with each view's own
-// refresh policy re-filling only its trailing start_offset sliver. Every
-// newest-bar signal reads green there — last refresh, bar age, the
-// ADR-0033 verdict — while the API serves no OHLC, no chart and no
-// since-inception history for the whole back-history.
-//
-// Two properties are pinned:
-//
-//  1. every one of the nine views is judged, not just the two TWAPs;
-//  2. the judgement's reference survives the migration that causes the
-//     defect. Deriving it from prices_1m (the previous shape) made the
-//     detector self-muting: 0147 empties prices_1m too, so the
-//     reference collapses to the same sliver as the subject and the
-//     gauge publishes a healthy 0 for a database with no history at all.
-func TestCAGGHistoryDetector(t *testing.T) {
+// TestCAGGHistoryStarts runs the emptied-continuous-aggregate detector data-freshness.sh publishes (stellarindex-ops
+// cagg-history over Store.CAGGHistoryStarts) against a real TimescaleDB carrying the real migrations, starting in the
+// state a WITH NO DATA rebuild leaves: every view empty, each policy re-filling only its trailing sliver, while every
+// newest-bar signal reads green. A TWAP is judged against where prices_1m SHOULD start, not where it does: 0147
+// empties prices_1m too, and a reference collapsed to its sliver would publish a healthy 0.
+func TestCAGGHistoryStarts(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-
 	dsn := startTimescale(t, ctx)
 	applyMigrations(t, dsn)
-
 	store, err := timescale.Open(ctx, dsn)
 	if err != nil {
 		t.Fatalf("store open: %v", err)
@@ -63,118 +45,153 @@ func TestCAGGHistoryDetector(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	db := store.DB()
 
-	// Ten days of trades — the lake the nine views aggregate.
 	now := time.Now().UTC()
+	src := now.AddDate(0, 0, -9)
 	for i := range 10 {
-		seedDetectorTrade(t, ctx, db, 100+i, now.AddDate(0, 0, -9+i))
+		seedDetectorTrade(t, ctx, db, 100+i, src.AddDate(0, 0, i))
 	}
-
-	// The post-migration state: the coarse views hold nothing at all,
-	// and prices_1m holds only what a trailing-window policy tick would
-	// have re-filled since the recreate.
-	if _, err := db.ExecContext(ctx,
-		`CALL refresh_continuous_aggregate('prices_1m', $1::timestamptz, $2::timestamptz)`,
-		now.Add(-2*time.Hour), now,
-	); err != nil {
-		t.Fatalf("refresh prices_1m sliver: %v", err)
+	seedDetectorTrade(t, ctx, db, 200, now.Add(-26*time.Hour+5*time.Minute))
+	seedDetectorTrade(t, ctx, db, 201, now.Add(-time.Hour)) // inside the prices_1m sliver below
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, q, args...); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
 	}
+	refresh := func(view string, from, to any) {
+		t.Helper()
+		exec(fmt.Sprintf(`CALL refresh_continuous_aggregate('%s', $1::timestamptz, $2::timestamptz)`, view), from, to)
+	}
+	measure := func() map[string]timescale.CAGGHistoryStart {
+		t.Helper()
+		rows, err := store.CAGGHistoryStarts(ctx)
+		if err != nil {
+			t.Fatalf("CAGGHistoryStarts: %v", err)
+		}
+		out := map[string]timescale.CAGGHistoryStart{}
+		for _, r := range rows {
+			out[r.View] = r
+		}
+		return out
+	}
+	near := func(a, b time.Time, tol time.Duration) bool { d := a.Sub(b); return d < tol && d > -tol }
+	const wholeHistory = 9 * 24 * time.Hour
+	refresh("prices_1m", now.Add(-2*time.Hour), now)
 
-	t.Run("every emptied view is flagged", func(t *testing.T) {
-		got := runFreshnessCAGGDetector(t, ctx, db)
+	t.Run("an emptied view reads its whole history as the gap", func(t *testing.T) {
+		got := measure()
+		if len(got) != len(timescale.TradesCAGGs)+len(timescale.OracleCAGGs)+1 {
+			t.Fatalf("measured %d views, want every registered one", len(got))
+		}
 		for _, view := range []string{
-			"prices_1m", "prices_15m", "prices_1h", "prices_4h",
-			"prices_1d", "prices_1w", "prices_1mo", "twap_1h", "twap_1d",
+			"prices_15m", "prices_1h", "prices_4h", "prices_1d", "prices_1w", "prices_1mo",
+			"twap_1h", "twap_1d", "dex_volume_by_pair_1d", "source_volume_1h",
 		} {
-			v, ok := got[view]
-			if !ok {
-				t.Errorf("no history-missing sample for %q — the watchdog does not judge this view, so an emptied %s is invisible", view, view)
-				continue
+			r := got[view]
+			if !r.MaterialisedStart.IsZero() || !near(r.ExpectedStart, src, time.Second) ||
+				r.Gap < wholeHistory-time.Minute || r.Gap > wholeHistory+time.Minute {
+				t.Errorf("%s: %+v, want empty with gap ~%s against the trades start %s", view, r, wholeHistory, src)
 			}
-			if v != "1" {
-				t.Errorf("history-missing{%s} = %s, want 1 — the view holds none of the 10 days of trades the lake holds", view, v)
+		}
+		if r := got["prices_1m"]; r.MaterialisedStart.IsZero() || r.Gap < wholeHistory-3*time.Hour {
+			t.Errorf("prices_1m holding a 2 h sliver: %+v, want a gap of ~9 days", r)
+		}
+		for _, view := range []string{"oracle_prices_1h", "supply_1d"} {
+			if r := got[view]; !r.SourceStart.IsZero() || r.Gap != 0 {
+				t.Errorf("%s over an empty source: %+v, want no expected start and gap 0", view, r)
 			}
+		}
+		if got["prices_1h"].TradesRetentionPresent {
+			t.Error("TradesRetentionPresent with no policy on trades")
 		}
 	})
 
-	t.Run("a view whose armed retention explains its floor is not flagged", func(t *testing.T) {
-		// An ARMED retention policy makes short history correct; the detector must tell "trimmed by policy" from "never re-
-		// materialized". Migration 0156 ships one disabled on prices_1m.
-		if _, err := db.ExecContext(ctx,
-			`SELECT add_retention_policy('prices_15m', drop_after => INTERVAL '2 days', if_not_exists => true)`,
-		); err != nil {
-			t.Fatalf("add retention policy: %v", err)
+	t.Run("a real-time view is measured from its materialisation, not the view", func(t *testing.T) {
+		var viewMin time.Time
+		if err := db.QueryRowContext(ctx, `SELECT min(bucket) FROM pools_per_source_1h`).Scan(&viewMin); err != nil {
+			t.Fatalf("view min(bucket): %v", err)
 		}
+		if !near(viewMin, src, time.Hour) {
+			t.Fatalf("premise: real-time pools_per_source_1h min(bucket) = %s, want ~%s computed from raw trades", viewMin, src)
+		}
+		if r := measure()["pools_per_source_1h"]; !r.MaterialisedStart.IsZero() || r.Gap < wholeHistory-time.Minute {
+			t.Errorf("pools_per_source_1h: %+v, want empty materialisation and a ~9 day gap although the view reads %s", r, viewMin)
+		}
+	})
+
+	t.Run("a documented floor is not a gap", func(t *testing.T) {
+		refresh("trade_sums_1m", now.Add(-27*time.Hour), now)
+		r := measure()["trade_sums_1m"]
+		if !near(r.ExpectedStart, now.Add(-26*time.Hour), 2*time.Minute) || r.Gap > 15*time.Minute {
+			t.Errorf("trade_sums_1m over its 26 h floor: %+v, want expected ~now-26h and no gap", r)
+		}
+	})
+
+	t.Run("an armed retention moves the expected start; one on trades never does", func(t *testing.T) {
+		exec(`SELECT add_retention_policy('prices_15m', drop_after => INTERVAL '2 days', if_not_exists => true)`)
 		// Armed, but parked a day out so the job cannot race the test.
-		if _, err := db.ExecContext(ctx, `
-			SELECT alter_job(job_id, scheduled => true, next_start => now() + INTERVAL '1 day')
+		exec(`SELECT alter_job(job_id, scheduled => true, next_start => now() + INTERVAL '1 day')
 			  FROM timescaledb_information.jobs
-			 WHERE proc_name = 'policy_retention' AND hypertable_name = 'prices_15m'`,
-		); err != nil {
-			t.Fatalf("arm retention policy: %v", err)
+			 WHERE proc_name = 'policy_retention' AND hypertable_name = 'prices_15m'`)
+		exec(`SELECT add_retention_policy('trades', drop_after => INTERVAL '1 day', if_not_exists => true)`)
+		exec(`SELECT alter_job(job_id, scheduled => true, next_start => now() + INTERVAL '1 day')
+			  FROM timescaledb_information.jobs
+			 WHERE proc_name = 'policy_retention' AND hypertable_name = 'trades'`)
+		t.Cleanup(func() { _, _ = db.ExecContext(ctx, `SELECT remove_retention_policy('trades')`) })
+		refresh("prices_15m", now.Add(-50*time.Hour), now)
+		got := measure()
+		if r := got["prices_15m"]; !near(r.ExpectedStart, now.Add(-48*time.Hour), 2*time.Minute) || r.Gap != 0 {
+			t.Errorf("prices_15m under an armed 2-day retention: %+v, want expected ~now-48h and gap 0", r)
 		}
-		if _, err := db.ExecContext(ctx,
-			`CALL refresh_continuous_aggregate('prices_15m', $1::timestamptz, $2::timestamptz)`,
-			now.Add(-48*time.Hour), now,
-		); err != nil {
-			t.Fatalf("refresh prices_15m over its retained window: %v", err)
+		if r := got["prices_1h"]; !r.TradesRetentionPresent || !near(r.ExpectedStart, src, time.Second) || r.Gap < wholeHistory-time.Minute {
+			t.Errorf("prices_1h with a retention policy on trades: %+v, want it reported and the expected start left at %s", r, src)
 		}
-
-		got := runFreshnessCAGGDetector(t, ctx, db)
-		if v, ok := got["prices_15m"]; !ok || v != "0" {
-			t.Errorf("history-missing{prices_15m} = %q (present=%v), want 0 — the view holds everything its armed 2-day retention lets it hold", v, ok)
-		}
-		if v, ok := got["prices_1h"]; !ok || v != "1" {
-			t.Errorf("history-missing{prices_1h} = %q (present=%v), want 1 — no retention explains ITS empty state", v, ok)
-		}
+		exec(`SELECT remove_retention_policy('trades')`)
 	})
 
-	t.Run("a fully materialized view reads healthy", func(t *testing.T) {
-		for _, view := range []string{
-			"prices_1m", "prices_1h", "prices_4h",
-			"prices_1d", "prices_1w", "prices_1mo", "twap_1h", "twap_1d",
-		} {
-			if _, err := db.ExecContext(ctx,
-				fmt.Sprintf(`CALL refresh_continuous_aggregate('%s', NULL, NULL)`, view),
-			); err != nil {
-				t.Fatalf("refresh %s: %v", view, err)
+	t.Run("a fully refreshed view reads gap 0, coarse buckets included", func(t *testing.T) {
+		for _, spec := range timescale.TradesCAGGs {
+			refresh(spec.Name, nil, nil)
+		}
+		got := measure()
+		for view, r := range got {
+			if r.Gap != 0 {
+				t.Errorf("%s after a full refresh: %+v, want gap 0", view, r)
 			}
 		}
-		got := runFreshnessCAGGDetector(t, ctx, db)
-		for view, v := range got {
-			if view == "prices_15m" {
-				continue // retention-trimmed on purpose by the sub-test above
-			}
-			if v != "0" {
-				t.Errorf("history-missing{%s} = %s, want 0 — every view now holds the whole lake", view, v)
+		for _, view := range []string{"prices_1w", "prices_1mo"} {
+			if r := got[view]; r.MaterialisedStart.IsZero() || r.MaterialisedStart.After(r.SourceStart) {
+				t.Errorf("%s: materialised start %s, want the bucket holding %s", view, r.MaterialisedStart, r.SourceStart)
 			}
 		}
+		logCAGGHistoryPlans(t, ctx, db)
 	})
 }
 
-// runFreshnessCAGGDetector runs every emptied-CAGG detector block from the shipped watchdog and returns view -> value.
-// Reading the script's SQL, not restating it, is the point: a detector absent from the script protects nobody.
-func runFreshnessCAGGDetector(t *testing.T, ctx context.Context, db *sql.DB) map[string]string {
+// logCAGGHistoryPlans records the plans of the two min() shapes CAGGHistoryStarts runs, for the cost review.
+func logCAGGHistoryPlans(t *testing.T, ctx context.Context, db *sql.DB) {
 	t.Helper()
-	out := map[string]string{}
-	for _, stmt := range freshnessSQLBlocks(t, "_history_missing") {
-		rows, err := db.QueryContext(ctx, stmt)
+	var mat string
+	if err := db.QueryRowContext(ctx, `SELECT format('%I.%I', materialization_hypertable_schema, materialization_hypertable_name)
+		  FROM timescaledb_information.continuous_aggregates WHERE view_name = 'prices_1m'`).Scan(&mat); err != nil {
+		t.Fatalf("resolve prices_1m materialisation: %v", err)
+	}
+	for _, q := range []string{`SELECT min(bucket) FROM ` + mat, `SELECT min(ts) FROM trades`} {
+		rows, err := db.QueryContext(ctx, `EXPLAIN `+q)
 		if err != nil {
-			t.Fatalf("execute watchdog block: %v\n--- SQL ---\n%s", err, stmt)
+			t.Fatalf("EXPLAIN %s: %v", q, err)
 		}
+		var plan []string
 		for rows.Next() {
 			var line string
 			if err := rows.Scan(&line); err != nil {
-				t.Fatalf("scan exposition line: %v", err)
+				t.Fatal(err)
 			}
-			view, value := parseExpositionSample(t, line)
-			out[view] = value
-		}
-		if err := rows.Err(); err != nil {
-			t.Fatalf("watchdog block rows: %v", err)
+			plan = append(plan, line)
 		}
 		_ = rows.Close()
+		t.Logf("PLAN %s\n%s", q, strings.Join(plan, "\n"))
 	}
-	return out
 }
 
 // freshnessSQLBlocks returns the psql heredocs of the shipped
@@ -210,18 +227,6 @@ func freshnessSQLBlocks(t *testing.T, needle string) []string {
 		t.Fatalf("no SQL block in data-freshness.sh emits %q — nothing detects an emptied continuous aggregate", needle)
 	}
 	return blocks
-}
-
-// parseExpositionSample splits `name{view="x"} 1` into ("x", "1").
-func parseExpositionSample(t *testing.T, line string) (string, string) {
-	t.Helper()
-	open := strings.Index(line, `{view="`)
-	closeIdx := strings.Index(line, `"}`)
-	space := strings.LastIndex(line, " ")
-	if open < 0 || closeIdx < 0 || space < 0 || space < closeIdx {
-		t.Fatalf("un-parseable exposition line %q", line)
-	}
-	return line[open+len(`{view="`) : closeIdx], strings.TrimSpace(line[space+1:])
 }
 
 func seedDetectorTrade(t *testing.T, ctx context.Context, db *sql.DB, nonce int, ts time.Time) {
@@ -549,7 +554,7 @@ func TestCAGGBucketsMatchCatalog(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	for _, spec := range slices.Concat(timescale.TradesCAGGs, timescale.OracleCAGGs) {
+	for _, spec := range slices.Concat(timescale.TradesCAGGs, timescale.OracleCAGGs, []timescale.CAGGSpec{timescale.SupplyCAGG}) {
 		want := fmt.Sprintf("%d seconds", int64(spec.Bucket/time.Second))
 		if spec.Bucket == timescale.MonthBucket {
 			want = "1 month"

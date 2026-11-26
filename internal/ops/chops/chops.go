@@ -121,6 +121,8 @@ func verifierVerb(verb string) (func([]string) error, bool) {
 		return verifyNetworkState, true
 	case "wasm-drift":
 		return wasmDrift, true
+	case caggHistoryVerb:
+		return caggHistory, true
 	default:
 		return nil, false
 	}

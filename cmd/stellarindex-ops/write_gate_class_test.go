@@ -141,6 +141,7 @@ var subcommandClasses = map[string]subcommandClass{
 	"verify-lake":                exemptBecause("verifier; writes its -textfile metrics only"),
 	"verify-network-state":       exemptBecause("verifier; writes its -textfile metrics only"),
 	"wasm-drift":                 exemptBecause("verifier; writes its -textfile metrics only"),
+	"cagg-history":               exemptBecause("verifier; writes its -textfile metrics only"),
 }
 
 // pinnedReadOnly is literal so reclassifying a command as read-only is an edit

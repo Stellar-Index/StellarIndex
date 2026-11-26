@@ -104,7 +104,8 @@ var TradesCAGGs = []CAGGSpec{
 	{Name: "dex_volume_by_pair_1d", MinWindow: 3 * 24 * time.Hour, Bucket: 24 * time.Hour},
 	{Name: "source_volume_1h", MinWindow: 3 * time.Hour, Bucket: time.Hour},
 	{Name: "pools_per_source_1h", MinWindow: 3 * time.Hour, Bucket: time.Hour},
-	{Name: "trade_sums_1m", MinWindow: 2 * time.Minute, Bucket: time.Minute},
+	// Keeps only the policy's 26 h start_offset by design (migrations/0217_trade_sums_1m.up.sql).
+	{Name: "trade_sums_1m", MinWindow: 2 * time.Minute, Bucket: time.Minute, Floor: 26 * time.Hour},
 	// Must trail prices_1m.
 	{Name: "twap_1h", MinWindow: 3 * time.Hour, Bucket: time.Hour},
 	{Name: "twap_1d", MinWindow: 3 * 24 * time.Hour, Bucket: 24 * time.Hour},
@@ -125,7 +126,7 @@ var OracleCAGGs = []CAGGSpec{
 var CAGGsOnPrices1m = []string{"twap_1h", "twap_1d"}
 
 // SupplyCAGG is the continuous aggregate over asset_supply_history; its policy reaches back only 7 days, so older re-derived snapshots need an explicit refresh.
-var SupplyCAGG = CAGGSpec{Name: "supply_1d", MinWindow: 3 * 24 * time.Hour}
+var SupplyCAGG = CAGGSpec{Name: "supply_1d", MinWindow: 3 * 24 * time.Hour, Bucket: 24 * time.Hour}
 
 // allowedCAGGViews is the allow-list for RefreshContinuousAggregate; the name is string-formatted (REGCLASS cannot be a placeholder), so
 // this blocks injection.
@@ -151,6 +152,8 @@ type CAGGSpec struct {
 	// Bucket is the view's time_bucket width, or [MonthBucket]. Zero
 	// keeps a refresh of the view in one CALL ([RefreshPieces]).
 	Bucket time.Duration
+	// Floor is the trailing window the view holds by design; zero means all of its source's history.
+	Floor time.Duration
 }
 
 // MonthBucket is the [CAGGSpec.Bucket] of a view bucketed by time_bucket('1 month', ts, 'UTC'), which has no fixed width.
