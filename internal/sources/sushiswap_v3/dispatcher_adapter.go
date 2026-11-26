@@ -2,6 +2,8 @@ package sushiswap_v3
 
 import (
 	"errors"
+	"fmt"
+	"slices"
 	"strconv"
 	"sync"
 
@@ -20,6 +22,8 @@ type PoolTokens struct {
 // Decoder is the dispatcher-facing SushiSwap V3 view (ADR-0035 factory-anchored gating) owning two states that must agree: the contract-identity gate and pool -> (token0, token1), which exists only in the factory's `pool_created` body; a pool admitted by the DB warm without a token mapping fails closed and is counted ([Decoder.SkippedUnknownPool]), never written with invented assets. No correlation buffer: a V3 `swap` is self-contained.
 type Decoder struct {
 	reg *contractid.Registry
+	// managers is the position-manager role, by exact identity; it outranks reg so a manager's `collect` never reads as a pool's.
+	managers map[string]struct{}
 
 	mu         sync.RWMutex
 	poolTokens map[string]PoolTokens
@@ -30,13 +34,21 @@ type Decoder struct {
 
 // NewDecoder constructs a SushiSwap V3 Decoder; options layer the protocol_contracts warm and live-upsert hook (contractid.WithSeed / WithHook) on the intrinsic trust roots.
 func NewDecoder(opts ...contractid.Option) *Decoder {
+	return newDecoder(MainnetPositionManagers, opts...)
+}
+
+func newDecoder(managers []string, opts ...contractid.Option) *Decoder {
 	base := []contractid.Option{
 		contractid.WithFactories(MainnetFactories),
 		contractid.WithSeed(MainnetGatedSet()),
 	}
 	d := &Decoder{
 		reg:        contractid.New(append(base, opts...)...),
+		managers:   make(map[string]struct{}, len(managers)),
 		poolTokens: make(map[string]PoolTokens, len(MainnetPools)),
+	}
+	for _, m := range managers {
+		d.managers[m] = struct{}{}
 	}
 	for pool, meta := range MainnetPools {
 		tok0, err0 := canonical.NewSorobanAsset(meta.Token0)
@@ -73,10 +85,27 @@ func (d *Decoder) seedPersistedPools() {
 func (*Decoder) Name() string { return SourceName }
 
 // GatedContractSet returns the factory roots plus every registered pool, the tightest sound contract-id prefilter for a lake read; topic exclusion would drop this source's own `mint` / `burn` events.
-func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
+func (d *Decoder) GatedContractSet() []string {
+	set := d.reg.GatedSet()
+	for m := range d.managers {
+		if !slices.Contains(set, m) {
+			set = append(set, m)
+		}
+	}
+	slices.Sort(set)
+	return set
+}
 
-// Matches implements [dispatcher.Decoder], gating on contract identity, not topic bytes (ADR-0035), since topics are generic one-element Symbols and any contract may emit a Map under `swap`: `pool_created` matches only from [MainnetFactories] (else a contract could seed itself with chosen token identities), every other event only from a registered pool; an un-seeded real pool fails closed into a visible gap.
+func (d *Decoder) isManager(contractID string) bool {
+	_, ok := d.managers[contractID]
+	return ok
+}
+
+// Matches implements [dispatcher.Decoder], gating on contract identity, not topic bytes (ADR-0035), since topics are generic one-element Symbols and any contract may emit a Map under `swap`: `pool_created` matches only from [MainnetFactories] (else a contract could seed itself with chosen token identities), a position-manager topic only from a manager, every other event only from a registered pool; an un-seeded real pool fails closed into a visible gap.
 func (d *Decoder) Matches(ev events.Event) bool {
+	if d.isManager(ev.ContractID) {
+		return classifyManager(&ev) != ""
+	}
 	kind := classify(&ev)
 	if kind == "" {
 		return false
@@ -87,8 +116,15 @@ func (d *Decoder) Matches(ev events.Event) bool {
 	return d.reg.Has(ev.ContractID)
 }
 
-// Decode implements [dispatcher.Decoder]: `swap` yields a trade, `mint` / `burn` / `collect` a PositionEvent, and lifecycle events (`init` / `upgraded` / `migrated`) are gated and projected as zero rows so the ADR-0033 re-derive counts them as expected-zero.
+// Decode implements [dispatcher.Decoder]: a position manager's events yield a ManagerEvent; a pool's `swap` yields a trade, `mint` / `burn` / `collect` a PositionEvent, and lifecycle events (`init` / `upgraded` / `migrated`) are gated and projected as zero rows so the ADR-0033 re-derive counts them as expected-zero.
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
+	if d.isManager(ev.ContractID) {
+		kind := classifyManager(&ev)
+		if kind == "" {
+			return nil, fmt.Errorf("%w: manager topic shape not recognised", ErrMalformedPayload)
+		}
+		return emitManager(ev, kind)
+	}
 	switch kind := classify(&ev); kind {
 	case EventPoolCreated:
 		return nil, d.seedFromCreation(ev)

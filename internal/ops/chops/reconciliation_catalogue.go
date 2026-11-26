@@ -319,6 +319,8 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 				// One decoded mint/burn/collect → one row, so the per-ledger
 				// count reconciles 1:1 (persistSushiswapV3Position is a single INSERT).
 				{"sushiswap_v3_position_events", "", []string{"sushiswap_v3.position"}},
+				// One decoded position-manager event → one row (persistSushiswapV3Manager is a single INSERT).
+				{"sushiswap_v3_manager_events", "", []string{"sushiswap_v3.manager"}},
 			},
 		},
 		{

@@ -559,6 +559,8 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		return persistTrade(ctx, logger, store, e.Trade)
 	case sushiswap_v3.PositionEvent:
 		return persistSushiswapV3Position(ctx, logger, store, e)
+	case sushiswap_v3.ManagerEvent:
+		return persistSushiswapV3Manager(ctx, logger, store, e)
 	case comet.LiquidityEvent:
 		return persistCometLiquidity(ctx, logger, store, e)
 	case upshift.Event:
