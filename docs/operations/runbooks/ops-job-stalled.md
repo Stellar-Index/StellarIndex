@@ -137,6 +137,34 @@ systemctl restart <unit> ...                    # the listed units; or `needrest
 
 A pending kernel (`NEEDRESTART-KSTA` 2 or 3) needs a reboot in the same window; `Automatic-Reboot` is off.
 
+### Before restarting ClickHouse or rebooting: no recent partition swap
+
+`ALTER TABLE … REPLACE PARTITION` leaves the replaced parts on disk, outdated but not covered by the new ones, for `old_parts_lifetime` (480 s). If ClickHouse restarts inside that window they load back as active beside the new build and the partition holds two builds (a production reboot once served account op-type counts doubled this way). `TRUNCATE` and `DROP PARTITION` leave a covering part and are not affected. The rollups that swap this way: `account_op_type_counts` and `account_movement_counts` (`optype-rollup.timer`), `contracts_census_daily` (`census-rollup.timer`), `asset_stats_daily` (`holders-rollup.timer`).
+
+Before the restart, stop the three timers, let a running job finish, then wait until this returns no rows:
+
+```sql
+SELECT event_time, substring(query, 1, 100) FROM system.query_log
+ WHERE type = 'QueryFinish' AND query_kind = 'Alter' AND query ILIKE '%REPLACE PARTITION%'
+   AND event_time > now() - INTERVAL 10 MINUTE;
+-- without query_log, the parts that would come back (a merge's outdated parts also list here; they are harmless but wait anyway):
+SELECT table, partition_id, count(), max(remove_time) FROM system.parts
+ WHERE database = 'stellar' AND NOT active AND remove_time > now() - INTERVAL 10 MINUTE
+   AND table IN ('account_op_type_counts', 'account_movement_counts', 'contracts_census_daily', 'asset_stats_daily')
+ GROUP BY table, partition_id;
+```
+
+After the restart, start the timers and check for doubled partitions (every row is one partition holding more than one build):
+
+```sql
+SELECT 'account_op_type_counts', toString(part), count() FROM stellar.account_op_type_counts WHERE account = '' GROUP BY part HAVING count() > 1
+UNION ALL SELECT 'account_movement_counts', toString(part), count() FROM stellar.account_movement_counts WHERE account = '' GROUP BY part HAVING count() > 1
+UNION ALL SELECT 'contracts_census_daily', toString(day), count() - uniqExact(contract_id) FROM stellar.contracts_census_daily GROUP BY day HAVING count() > uniqExact(contract_id)
+UNION ALL SELECT 'asset_stats_daily', toString(day), count() - uniqExact(asset) FROM stellar.asset_stats_daily GROUP BY day HAVING count() > uniqExact(asset);
+```
+
+The counts rollups and the census are safe to leave: their readers do not sum two builds (a doubled counts partition is read from source and shows in `stellarindex_counts_rollup_stale_partitions`), and the next `ch-optype-rollup` run replaces the partition, logging `live partition holds N builds — outdated parts resurrected by a restart`; run `stellarindex-ops ch-optype-rollup -write` to heal now. The census run recomputes only recent days: heal an older day with `stellarindex-ops ch-census-rollup -backfill -from-day <day> -write` under `run-heavy-job.sh` (it walks every day from there to today). `asset_stats_daily` has no reader yet and its run replaces only today: an older doubled day stays doubled; nothing serves it.
+
 ## Replaced binary
 
 `stellarindex_unit_running_replaced_binary` (ticket, `for: 30m`) fires when a process in `{unit}` runs a `/usr/local/bin/stellarindex-*` or `galexie` binary that was replaced on disk after it started. Source: `memory-mappings.sh` (5-minute timer, `memory_mappings.prom`); `1` = stale, `0` = current, no series = no release binary in that unit. The process is executing the OLD build, so a deployed fix is not in effect for whatever it writes. Usual causes: a deploy that skipped the restart (`cli_daemon_units` in `configs/ansible/playbooks/deploy-binary.yml` does not list the unit), or a binary copied by hand. A oneshot caught mid-run on a replaced binary is reported too; it clears on its next start.
