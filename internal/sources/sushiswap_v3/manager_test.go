@@ -2,9 +2,11 @@ package sushiswap_v3
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"math/big"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -135,6 +137,65 @@ func TestManagerFixtures(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestManagerWasmFixtures decodes every per-WASM-hash capture under test/fixtures/sushiswap_v3/<hash>/: each must be
+// byte-identical to a testdata row (whose exact columns TestManagerFixtures asserts) and decode to one ManagerEvent.
+func TestManagerWasmFixtures(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("..", "..", "..", "test", "fixtures", "sushiswap_v3", "*", "*.json"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no per-hash fixtures: %v", err)
+	}
+	rows := loadManagerFixtures(t)
+	d := managerDecoder()
+	hashes := map[string]bool{}
+	for _, f := range files {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var capture struct {
+			ContractID string   `json:"contract_id"`
+			WasmHash   string   `json:"wasm_hash"`
+			Ledger     uint32   `json:"ledger"`
+			TxHash     string   `json:"tx_hash"`
+			Topics     []string `json:"topics"`
+			Value      string   `json:"value"`
+			EventName  string   `json:"event_name"`
+		}
+		if err := json.Unmarshal(raw, &capture); err != nil {
+			t.Fatalf("%s: %v", f, err)
+		}
+		if filepath.Base(filepath.Dir(f)) != capture.WasmHash || capture.ContractID != MainnetPositionManager {
+			t.Fatalf("%s: wasm_hash %s / contract %s do not match its directory and the manager", f, capture.WasmHash, capture.ContractID)
+		}
+		matched := slices.ContainsFunc(rows, func(r managerFixture) bool {
+			return r.want == "ok" && r.kind == capture.EventName && r.ledger == capture.Ledger && r.txHash == capture.TxHash &&
+				r.data == capture.Value && slices.Equal(r.topics, capture.Topics)
+		})
+		if !matched {
+			t.Errorf("%s: no byte-identical ok row in testdata/manager_events.txt", f)
+			continue
+		}
+		ev := managerEvent(capture.ContractID, capture.Topics, capture.Value)
+		ev.Ledger, ev.TxHash = capture.Ledger, capture.TxHash
+		out, err := d.Decode(ev)
+		if err != nil || len(out) != 1 {
+			t.Fatalf("%s: Decode = %v, %v", f, out, err)
+		}
+		if got := out[0].(ManagerEvent); got.Kind != capture.EventName {
+			t.Errorf("%s: decoded %s", f, got.Kind)
+		}
+		hashes[capture.WasmHash] = true
+	}
+	for _, h := range []string{
+		"dae1af1c2863e907e6b58dc861bb7ae610c9b951d23af7902a6afc247b923b0a",
+		"be969de545da89a04508e4952e94a53a77e76ecfa67d74b23fd56e0be42290d4",
+	} {
+		if !hashes[h] {
+			t.Errorf("no captured manager event for attested hash %s", h)
+		}
 	}
 }
 
