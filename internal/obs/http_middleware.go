@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -24,7 +25,7 @@ func HTTPMetrics(next http.Handler) http.Handler {
 
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		rc := &routeCapture{}
-		ctx := context.WithValue(r.Context(), routeCaptureKey{}, rc)
+		ctx := context.WithValue(context.WithValue(r.Context(), routeCaptureKey{}, rc), recorderKey{}, rec)
 		// Keep the ctx-wrapped request: its Pattern is the fallback when no CaptureRoute is wired.
 		r2 := r.WithContext(ctx)
 		next.ServeHTTP(rec, r2)
@@ -167,6 +168,7 @@ type statusRecorder struct {
 	degraded bool
 	stale    bool
 	reason   string
+	reasonMu sync.Mutex // notes can arrive from fan-out goroutines
 }
 
 // MarkResponseFlags tells [HTTPMetrics] the response carries flags.degraded or flags.stale. It walks
@@ -192,11 +194,7 @@ func MarkResponseFlags(w http.ResponseWriter, degraded, stale bool) {
 func countFlaggedResponse(route string, rec *statusRecorder) {
 	if rec.degraded {
 		APIFlaggedResponsesTotal.WithLabelValues(route, "degraded").Inc()
-		reason := rec.reason
-		if reason == "" {
-			reason = DegradedOther
-		}
-		APIDegradedResponsesTotal.WithLabelValues(route, reason).Inc()
+		APIDegradedResponsesTotal.WithLabelValues(route, rec.reasonOrOther()).Inc()
 	}
 	if rec.stale {
 		APIFlaggedResponsesTotal.WithLabelValues(route, "stale").Inc()

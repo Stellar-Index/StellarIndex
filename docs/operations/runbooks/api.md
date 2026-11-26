@@ -853,7 +853,7 @@ Thousands at `failed_count = 1` is a fill; a few at `>= 10` is a grinder (contro
 
 **Trigger.** More than 10% of a route's responses carried `flags.degraded` (a carried-forward or partial body served as 200) over a 15m rate, for 30m; ticket. The 5xx SLO does not see these.
 
-**Check.** The route's handler logs name the read that failed (`includes_unread`, carried-forward or degraded warnings). Fix the backing store, not the route.
+**Check.** Read the reason first: `sum by (reason) (rate(stellarindex_api_degraded_responses_total{route="<route>"}[15m]))`, or `degraded_reason` on the request log line. `check_unread`: issuer directory or exclusion scope unreadable, check `account_directory` and the exclusion table. `section_dropped`: the asset catalogue extension timed out (4 s), check the catalogue reads. `partial_read`: an F2, SEP-1, decimals or markets-leg read failed, the handler logs name it. `refresh_failed` / `refresh_overrun`: the cache's upstream scan fails or runs past its budget. `refresh_refused`: every refresh slot is busy with long scans, so look for slow scans, not a failing store. `source_stale`: the supply or price observation itself is old and a re-ask does not heal it, so check the indexer or price feed. `provisional`: an older value is served while its refresh runs and heals on a re-ask within seconds, so it is only a problem if it persists. `other`: not named yet, use the handler logs (`includes_unread`, carried-forward or degraded warnings). Fix the backing store, not the route.
 
 ## stellarindex_passkey_clone_warning
 
