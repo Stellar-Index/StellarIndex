@@ -2279,11 +2279,17 @@ export interface paths {
          *     accrued in. `interest_accrued` = `supplier_share` + `backstop_take`
          *     + `protocol_fee`. `supplier_credited` is what the b-token rate
          *     actually credited suppliers; rounding can leave it below
-         *     `supplier_share`. `protocol_revenue` is `backstop_take` +
-         *     `protocol_fee`; `protocol_fee` is non-zero only on BLNT, whose fee
-         *     rate is inferred from chain data (`fee_rate_inferred`).
-         *     `realised.backstop_drawn` is backstop credit paid out by interest
-         *     auctions, a lower bound on every pool. `realised.fee_withdrawn` is
+         *     `supplier_share`. On Blend the backstop take goes to backstop
+         *     depositors, not to a treasury; `protocol_fee` is non-zero only on
+         *     BLNT, whose fee rate is inferred from chain data
+         *     (`fee_rate_inferred`). Losses (`default_loss`,
+         *     `reconcile_backstop_loss`, `unexplained_supply_loss`) are
+         *     magnitudes, ≥ 0, so a partial sum is a lower bound like every
+         *     other amount. `realised.backstop_drawn` is backstop credit paid out
+         *     by interest auctions, always a lower bound
+         *     (`backstop_drawn_lower_bound`: Blend V1 fills do not state their
+         *     lot, and draws inside unexplained versions are left out).
+         *     `realised.fee_withdrawn` is
          *     null: BLNT fee withdrawals are not derived (`not_derivable`) and
          *     Blend has no fee (`not_applicable`). Interest paid by borrowers in
          *     cash is not served: a repayment does not say how much of it is
@@ -2293,9 +2299,13 @@ export interface paths {
          *     parameters, window limits and the 2,000-point cap are as on
          *     `/v1/lending/pools/{pool}/history`, plus `asset` for one reserve.
          *     Only hours the interest record covers are summed (`coverage`), and
-         *     only rows of the current `derive_rev`. A bucket with no point
-         *     booked nothing. `lower_bound` is true whenever `excluded` names
-         *     anything; `interest_drawn_partial` is always named. A known pool
+         *     only rows of the current `derive_rev`. Inside the coverage, at the
+         *     current revision, a bucket with no point booked nothing; an hour
+         *     left out is named in `excluded`. A daily bucket cut short by `to`
+         *     or the coverage is `partial`. `lower_bound` is true whenever
+         *     `excluded` names anything; a reserve's own `lower_bound` is true
+         *     under a window exclusion or one naming it, and its `totals` are
+         *     null when nothing of it was summed, never `"0"`. A known pool
          *     with no derived interest is a 200 with no reserves and
          *     `interest_not_derived`; 404 `not-found` when no lending source
          *     knows the pool.
@@ -7208,15 +7218,15 @@ export interface components {
         /** @description Something the revenue sums leave out or cannot vouch for; any one makes them a lower bound. */
         LendingRevenueExclusion: {
             /** @enum {string} */
-            kind: "pool" | "window" | "reserve" | "field";
-            /** @description The reserve concerned; null for the pool, the window or a field. */
+            kind: "pool" | "window" | "reserve";
+            /** @description The reserve concerned; null for the pool or the window. */
             asset: string | null;
             /**
-             * @description `interest_not_derived`: the pool has no derived interest (kind `pool`), or part of the window lies before the derive floor or after the coverage (kind `window`). `derive_stale`: `count` hour rows of another derive revision are left out. `redo_pending`: hours a pending re-derive has not yet rewritten are left out. `accrual_excluded`: `count` versions could not be ordered or accrued, so their interest is not summed. `unexplained_supply_loss`: suppliers lost `amount` over `count` versions that no event explains (Blend V1 and BLNT defaults among them), so it is outside `default_loss`. `interest_drawn_partial`: always; `realised.backstop_drawn` omits Blend V1 fills and draws inside unexplained versions.
+             * @description `interest_not_derived`: the pool has no derived interest (kind `pool`), or part of the window lies before the derive floor or after the coverage (kind `window`). `derive_stale`: `count` hour rows of another derive revision are left out. `redo_pending`: hours a pending re-derive has not yet rewritten are left out. `accrual_excluded`: `count` versions could not be ordered or accrued, so their interest is not summed. `unexplained_supply_loss`: suppliers lost `amount` over `count` versions that no event explains (Blend V1 and BLNT defaults among them), so it is outside `default_loss`.
              * @enum {string}
              */
-            reason: "interest_not_derived" | "derive_stale" | "redo_pending" | "accrual_excluded" | "unexplained_supply_loss" | "interest_drawn_partial";
-            /** @description Base units (`unexplained_supply_loss`, ≤ 0). */
+            reason: "interest_not_derived" | "derive_stale" | "redo_pending" | "accrual_excluded" | "unexplained_supply_loss";
+            /** @description Base units, a magnitude ≥ 0 (`unexplained_supply_loss`). */
             amount: string | null;
             /** Format: int64 */
             count: number | null;
@@ -7229,15 +7239,15 @@ export interface components {
             supplier_share: string;
             /** @description What the b-token rate actually credited suppliers; may be below supplier_share by rounding, and negative. */
             supplier_credited: string;
-            /** @description The backstop's cut, credited to the reserve's backstop credit. */
+            /** @description The backstop's cut, credited to the reserve's backstop credit; on Blend it goes to backstop depositors, not a treasury. */
             backstop_take: string;
             /** @description BLNT's protocol fee; 0 on Blend. */
             protocol_fee: string;
-            /** @description backstop_take + protocol_fee. */
-            protocol_revenue: string;
             realised: {
-                /** @description Backstop credit paid out by interest auctions; a lower bound (see interest_drawn_partial). */
+                /** @description Backstop credit paid out by interest auctions (≥ 0); always a lower bound. */
                 backstop_drawn: string;
+                /** @description Always true: Blend V1 fills do not state their lot, and draws inside unexplained versions are left out. */
+                backstop_drawn_lower_bound: boolean;
                 /** @description Always null: not derived. */
                 fee_withdrawn: string | null;
                 /** @enum {string} */
@@ -7245,16 +7255,26 @@ export interface components {
             };
             /** @description Tokens gulped into backstop credit (≥ 0). */
             backstop_gulped: string;
-            /** @description BLNT reconcile_loss charged to backstop credit (≤ 0). */
+            /** @description BLNT reconcile_loss charged to backstop credit, a loss (≥ 0). */
             reconcile_backstop_loss: string;
-            /** @description Blend V2 defaults socialised to suppliers (≤ 0). */
+            /** @description Blend V2 defaults socialised to suppliers, a loss (≥ 0). */
             default_loss: string;
             /** Format: int64 */
             default_versions: number;
-            /** @description Supplier loss no event explains, summed hour by hour (≤ 0). */
+            /** @description Supplier loss no event explains, summed over the hours where it is a loss (≥ 0). */
             unexplained_supply_loss: string;
-            /** Format: int64 */
-            unexplained_supply_versions: number;
+            /**
+             * Format: int64
+             * @description Unexplained b_rate versions in those hours.
+             */
+            unexplained_supply_loss_versions: number;
+            /** @description Supplier gain no event explains, summed over the hours where it is a gain (≥ 0). */
+            unexplained_supply_gain: string;
+            /**
+             * Format: int64
+             * @description Unexplained b_rate versions in those hours.
+             */
+            unexplained_supply_gain_versions: number;
             /** @description Backstop credit change no event explains. */
             unexplained_backstop_residual: string;
             /** Format: int64 */
@@ -19984,13 +20004,6 @@ export interface operations {
                      *         "lower_bound": true,
                      *         "excluded": [
                      *           {
-                     *             "kind": "field",
-                     *             "asset": null,
-                     *             "reason": "interest_drawn_partial",
-                     *             "amount": null,
-                     *             "count": null
-                     *           },
-                     *           {
                      *             "kind": "window",
                      *             "asset": null,
                      *             "reason": "interest_not_derived",
@@ -20003,15 +20016,16 @@ export interface operations {
                      *             "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
                      *             "decimals": 7,
                      *             "fee_rate_inferred": false,
+                     *             "lower_bound": true,
                      *             "totals": {
                      *               "interest_accrued": "1250000000",
                      *               "supplier_share": "1000000000",
                      *               "supplier_credited": "999999998",
                      *               "backstop_take": "250000000",
                      *               "protocol_fee": "0",
-                     *               "protocol_revenue": "250000000",
                      *               "realised": {
                      *                 "backstop_drawn": "200000000",
+                     *                 "backstop_drawn_lower_bound": true,
                      *                 "fee_withdrawn": null,
                      *                 "fee_withdrawn_reason": "not_applicable"
                      *               },
@@ -20020,7 +20034,9 @@ export interface operations {
                      *               "default_loss": "0",
                      *               "default_versions": 0,
                      *               "unexplained_supply_loss": "0",
-                     *               "unexplained_supply_versions": 0,
+                     *               "unexplained_supply_loss_versions": 0,
+                     *               "unexplained_supply_gain": "0",
+                     *               "unexplained_supply_gain_versions": 0,
                      *               "unexplained_backstop_residual": "0",
                      *               "unexplained_versions": 0,
                      *               "unordered_versions": 0,
@@ -20029,14 +20045,15 @@ export interface operations {
                      *             "points": [
                      *               {
                      *                 "t": "2026-11-15T00:00:00Z",
+                     *                 "partial": false,
                      *                 "interest_accrued": "1250000000",
                      *                 "supplier_share": "1000000000",
                      *                 "supplier_credited": "999999998",
                      *                 "backstop_take": "250000000",
                      *                 "protocol_fee": "0",
-                     *                 "protocol_revenue": "250000000",
                      *                 "realised": {
                      *                   "backstop_drawn": "200000000",
+                     *                   "backstop_drawn_lower_bound": true,
                      *                   "fee_withdrawn": null,
                      *                   "fee_withdrawn_reason": "not_applicable"
                      *                 },
@@ -20045,7 +20062,9 @@ export interface operations {
                      *                 "default_loss": "0",
                      *                 "default_versions": 0,
                      *                 "unexplained_supply_loss": "0",
-                     *                 "unexplained_supply_versions": 0,
+                     *                 "unexplained_supply_loss_versions": 0,
+                     *                 "unexplained_supply_gain": "0",
+                     *                 "unexplained_supply_gain_versions": 0,
                      *                 "unexplained_backstop_residual": "0",
                      *                 "unexplained_versions": 0,
                      *                 "unordered_versions": 0,
@@ -20103,13 +20122,18 @@ export interface operations {
                                 decimals: number | null;
                                 /** @description BLNT: the protocol fee rate is inferred from chain data, the contract being closed source. */
                                 fee_rate_inferred: boolean;
-                                totals: components["schemas"]["LendingRevenueAmounts"];
+                                /** @description A window exclusion, or one naming this reserve, applies. */
+                                lower_bound: boolean;
+                                /** @description Null when an exclusion left nothing of the reserve summed. */
+                                totals: components["schemas"]["LendingRevenueAmounts"] | null;
                                 points: ({
                                     /**
                                      * Format: date-time
                                      * @description Bucket start.
                                      */
                                     t: string;
+                                    /** @description The bucket is cut short by `to` or the coverage. */
+                                    partial: boolean;
                                 } & components["schemas"]["LendingRevenueAmounts"])[];
                             }[];
                         };

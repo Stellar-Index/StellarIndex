@@ -13,10 +13,11 @@ import (
 type LendingRevenueSums struct {
 	Gross, SupplierIntended, SupplierRealised, Backstop, ProtocolFee *big.Int
 	InterestDrawn, Gulped, ReconcileBackstopLoss, DefaultLoss        *big.Int
-	// UnexplainedSupplyLoss sums, hour by hour, only the negative part of supply_residual − default_loss: a loss to
-	// suppliers no event explains, never offset by another hour's rounding gain.
-	UnexplainedSupplyLoss                                                  *big.Int
-	UnexplainedSupplyVersions                                              int64
+	// UnexplainedSupplyLoss (≤ 0) and UnexplainedSupplyGain (≥ 0) split supply_residual − default_loss hour by hour by
+	// sign, so a loss is never offset by another hour's gain; each Versions counts the unexplained b_rate versions
+	// (brate_mismatches − default_versions) of the hours on its side.
+	UnexplainedSupplyLoss, UnexplainedSupplyGain                           *big.Int
+	UnexplainedSupplyLossVersions, UnexplainedSupplyGainVersions           int64
 	UnexplainedBackstopResidual                                            *big.Int
 	DefaultVersions, UnexplainedVersions, UnorderedVersions, AccrualErrors int64
 }
@@ -34,11 +35,12 @@ func (s *LendingRevenueSums) amounts() []**big.Int {
 	return []**big.Int{
 		&s.Gross, &s.SupplierIntended, &s.SupplierRealised, &s.Backstop, &s.ProtocolFee, &s.InterestDrawn,
 		&s.Gulped, &s.ReconcileBackstopLoss, &s.DefaultLoss, &s.UnexplainedSupplyLoss, &s.UnexplainedBackstopResidual,
+		&s.UnexplainedSupplyGain,
 	}
 }
 
 func (s *LendingRevenueSums) counts() []*int64 {
-	return []*int64{&s.UnexplainedSupplyVersions, &s.DefaultVersions, &s.UnexplainedVersions, &s.UnorderedVersions, &s.AccrualErrors}
+	return []*int64{&s.UnexplainedSupplyLossVersions, &s.UnexplainedSupplyGainVersions, &s.DefaultVersions, &s.UnexplainedVersions, &s.UnorderedVersions, &s.AccrualErrors}
 }
 
 // Add adds o into s exactly.
@@ -91,6 +93,8 @@ const lendingRevenueQuery = `WITH ? AS rev
 		sumIf(gulped, derive_rev = rev), sumIf(reconcile_backstop_loss, derive_rev = rev), sumIf(default_loss, derive_rev = rev),
 		sumIf(supply_residual - default_loss, derive_rev = rev AND supply_residual - default_loss < 0),
 		sumIf(toInt64(brate_mismatches) - toInt64(default_versions), derive_rev = rev AND supply_residual - default_loss < 0),
+		sumIf(supply_residual - default_loss, derive_rev = rev AND supply_residual - default_loss > 0),
+		sumIf(toInt64(brate_mismatches) - toInt64(default_versions), derive_rev = rev AND supply_residual - default_loss > 0),
 		sumIf(backstop_residual - residual_explained - residual_attributed, derive_rev = rev),
 		sumIf(toInt64(default_versions), derive_rev = rev),
 		sumIf(toInt64(unreconciled_versions) - toInt64(explained_versions) - toInt64(attributed_versions), derive_rev = rev),
@@ -192,7 +196,7 @@ func (r *ExplorerReader) lendingRevenueRows(ctx context.Context, pool, asset str
 		s := NewLendingRevenueSums()
 		if err := rows.Scan(&a, &bucket, &current, &stale, s.Gross, s.SupplierIntended, s.SupplierRealised, s.Backstop,
 			s.ProtocolFee, s.InterestDrawn, s.Gulped, s.ReconcileBackstopLoss, s.DefaultLoss, s.UnexplainedSupplyLoss,
-			&s.UnexplainedSupplyVersions, s.UnexplainedBackstopResidual, &s.DefaultVersions, &s.UnexplainedVersions,
+			&s.UnexplainedSupplyLossVersions, s.UnexplainedSupplyGain, &s.UnexplainedSupplyGainVersions, s.UnexplainedBackstopResidual, &s.DefaultVersions, &s.UnexplainedVersions,
 			&s.UnorderedVersions, &s.AccrualErrors); err != nil {
 			return nil, fmt.Errorf("clickhouse: scan lending revenue %s: %w", pool, err)
 		}

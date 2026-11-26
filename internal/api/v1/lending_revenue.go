@@ -21,15 +21,22 @@ var _ lendingRevenueReader = (*clickhouse.ExplorerReader)(nil)
 
 // The revenue route's exclusion reasons; any one sets lower_bound.
 const (
-	revenueReasonNotDerived                                                  = "interest_not_derived"    // the pool, or part of the window, has no derived interest
-	revenueReasonDeriveStale                                                 = "derive_stale"            // hour rows of another derive revision, left out
-	revenueReasonRedoPending                                                 = "redo_pending"            // hours a pending re-derive has yet to rewrite, left out
-	revenueReasonAccrual                                                     = "accrual_excluded"        // versions accrual could not order or refused, counted not summed
-	revenueReasonSupplyLoss                                                  = "unexplained_supply_loss" // a supplier loss no event explains, not in default_loss
-	revenueReasonDrawnPartial                                                = "interest_drawn_partial"  // realised.backstop_drawn omits attributed and unexplained draws
-	revenueFeeNotDerivable                                                   = "not_derivable"           // BLNT fee withdrawals are not derived yet
-	revenueFeeNotApplicable                                                  = "not_applicable"          // Blend has no protocol fee to withdraw
-	revenueKindPool, revenueKindWindow, revenueKindReserve, revenueKindField = "pool", "window", "reserve", "field"
+	revenueReasonNotDerived  = "interest_not_derived"    // the pool, or part of the window, has no derived interest
+	revenueReasonDeriveStale = "derive_stale"            // hour rows of another derive revision, left out
+	revenueReasonRedoPending = "redo_pending"            // hours a pending re-derive has yet to rewrite, left out
+	revenueReasonAccrual     = "accrual_excluded"        // versions accrual could not order or refused, counted not summed
+	revenueReasonSupplyLoss  = "unexplained_supply_loss" // a supplier loss no event explains, not in default_loss
+	revenueFeeNotDerivable   = "not_derivable"           // BLNT fee withdrawals are not derived yet
+	revenueFeeNotApplicable  = "not_applicable"          // Blend has no protocol fee to withdraw
+
+	revenueKindPool, revenueKindWindow, revenueKindReserve = "pool", "window", "reserve"
+)
+
+// The interest pass runs in lending-state.service (lending-state.timer: OnUnitInactiveSec=10min, RandomizedDelaySec=120)
+// and writes only whole hours, so an hour is due once it has closed and one run has followed; the grace absorbs run time.
+const (
+	lendingInterestDeriveCadence = 12 * time.Minute
+	lendingRevenueStaleGrace     = 30 * time.Minute
 )
 
 // LendingRevenueView is the GET /v1/lending/pools/{pool}/revenue body: interest booked per reserve, in base units.
@@ -57,55 +64,61 @@ type LendingRevenueCoverage struct {
 
 // LendingRevenueExclusion names something left out of, or uncertain in, the served sums.
 type LendingRevenueExclusion struct {
-	Kind   string  `json:"kind"` // pool | window | reserve | field
+	Kind   string  `json:"kind"` // pool | window | reserve
 	Asset  *string `json:"asset"`
 	Reason string  `json:"reason"`
-	Amount *string `json:"amount"` // base units; unexplained_supply_loss only
+	Amount *string `json:"amount"` // base units, ≥ 0; unexplained_supply_loss only
 	Count  *int64  `json:"count"`  // hour rows (derive_stale) or versions (accrual_excluded, unexplained_supply_loss)
 }
 
-// LendingRevenueReserveView is one reserve's totals and its buckets that booked interest.
+// LendingRevenueReserveView is one reserve's totals and its buckets that booked interest. Totals is null when an
+// exclusion left nothing summed, so a zero is never served for rows that were left out.
 type LendingRevenueReserveView struct {
-	Asset           string                `json:"asset"`
-	Decimals        *uint32               `json:"decimals"`
-	FeeRateInferred bool                  `json:"fee_rate_inferred"`
-	Totals          LendingRevenueAmounts `json:"totals"`
-	Points          []LendingRevenuePoint `json:"points"`
+	Asset           string                 `json:"asset"`
+	Decimals        *uint32                `json:"decimals"`
+	FeeRateInferred bool                   `json:"fee_rate_inferred"`
+	LowerBound      bool                   `json:"lower_bound"`
+	Totals          *LendingRevenueAmounts `json:"totals"`
+	Points          []LendingRevenuePoint  `json:"points"`
 }
 
-// LendingRevenuePoint is one bucket's sums.
+// LendingRevenuePoint is one bucket's sums; Partial marks a bucket the window or the coverage cuts short.
 type LendingRevenuePoint struct {
-	T WireTime `json:"t"`
+	T       WireTime `json:"t"`
+	Partial bool     `json:"partial"`
 	LendingRevenueAmounts
 }
 
 // LendingRevenueAmounts are base-unit decimal strings; interest_accrued = supplier_share + backstop_take + protocol_fee.
+// Losses are magnitudes (≥ 0), so a partial sum of them is a lower bound like every other amount.
 type LendingRevenueAmounts struct {
-	InterestAccrued             string                 `json:"interest_accrued"`
-	SupplierShare               string                 `json:"supplier_share"`
-	SupplierCredited            string                 `json:"supplier_credited"`
-	BackstopTake                string                 `json:"backstop_take"`
-	ProtocolFee                 string                 `json:"protocol_fee"`
-	ProtocolRevenue             string                 `json:"protocol_revenue"`
-	Realised                    LendingRevenueRealised `json:"realised"`
-	BackstopGulped              string                 `json:"backstop_gulped"`
-	ReconcileBackstopLoss       string                 `json:"reconcile_backstop_loss"`
-	DefaultLoss                 string                 `json:"default_loss"`
-	DefaultVersions             int64                  `json:"default_versions"`
-	UnexplainedSupplyLoss       string                 `json:"unexplained_supply_loss"`
-	UnexplainedSupplyVersions   int64                  `json:"unexplained_supply_versions"`
-	UnexplainedBackstopResidual string                 `json:"unexplained_backstop_residual"`
-	UnexplainedVersions         int64                  `json:"unexplained_versions"`
-	UnorderedVersions           int64                  `json:"unordered_versions"`
-	AccrualErrors               int64                  `json:"accrual_errors"`
+	InterestAccrued               string                 `json:"interest_accrued"`
+	SupplierShare                 string                 `json:"supplier_share"`
+	SupplierCredited              string                 `json:"supplier_credited"`
+	BackstopTake                  string                 `json:"backstop_take"`
+	ProtocolFee                   string                 `json:"protocol_fee"`
+	Realised                      LendingRevenueRealised `json:"realised"`
+	BackstopGulped                string                 `json:"backstop_gulped"`
+	ReconcileBackstopLoss         string                 `json:"reconcile_backstop_loss"`
+	DefaultLoss                   string                 `json:"default_loss"`
+	DefaultVersions               int64                  `json:"default_versions"`
+	UnexplainedSupplyLoss         string                 `json:"unexplained_supply_loss"`
+	UnexplainedSupplyLossVersions int64                  `json:"unexplained_supply_loss_versions"`
+	UnexplainedSupplyGain         string                 `json:"unexplained_supply_gain"`
+	UnexplainedSupplyGainVersions int64                  `json:"unexplained_supply_gain_versions"`
+	UnexplainedBackstopResidual   string                 `json:"unexplained_backstop_residual"`
+	UnexplainedVersions           int64                  `json:"unexplained_versions"`
+	UnorderedVersions             int64                  `json:"unordered_versions"`
+	AccrualErrors                 int64                  `json:"accrual_errors"`
 }
 
-// LendingRevenueRealised is what left the pool: backstop credit drawn by interest auctions (a lower bound), and BLNT fee
-// withdrawals (null until derived, with the reason).
+// LendingRevenueRealised is what left the pool: backstop credit drawn by interest auctions (always a lower bound), and
+// BLNT fee withdrawals (null until derived, with the reason).
 type LendingRevenueRealised struct {
-	BackstopDrawn      string  `json:"backstop_drawn"`
-	FeeWithdrawn       *string `json:"fee_withdrawn"`
-	FeeWithdrawnReason string  `json:"fee_withdrawn_reason"`
+	BackstopDrawn           string  `json:"backstop_drawn"`
+	BackstopDrawnLowerBound bool    `json:"backstop_drawn_lower_bound"`
+	FeeWithdrawn            *string `json:"fee_withdrawn"`
+	FeeWithdrawnReason      string  `json:"fee_withdrawn_reason"`
 }
 
 // handleLendingPoolRevenue serves GET /v1/lending/pools/{pool}/revenue: interest accrued per reserve and bucket, in base
@@ -154,14 +167,26 @@ func (s *Server) handleLendingPoolRevenue(w http.ResponseWriter, r *http.Request
 			view.Reserves[i].Decimals = &d
 		}
 	}
-	var flags Flags
-	if rev.Covered {
-		flags = s.lendingHistoryFlags(ctx, lendingHistoryCoverageView{HistoryThroughLedger: rev.ThroughLedger})
-	}
-	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(time.Now().UTC()), Flags: flags})
+	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(time.Now().UTC()), Flags: s.revenueFlags(ctx, rev)})
 }
 
-// revenueView maps the read; every exclusion it names sets lower_bound.
+// revenueFlags is stale when the lake is, or the lake tip has run past the hour after the coverage by more than one
+// derive run and the grace: the watermark moves only at hour ends, so a ledger lag would flicker every hour.
+func (s *Server) revenueFlags(ctx context.Context, rev clickhouse.LendingRevenue) Flags {
+	_, stale, ok := s.lakeWatermark(ctx)
+	if stale || !ok || !rev.Covered {
+		return Flags{Stale: stale}
+	}
+	_, tipTime, _, _ := s.lakeWatermarkCached()
+	return Flags{Stale: revenueStale(rev.ThroughHour, tipTime)}
+}
+
+func revenueStale(throughHour, tipTime time.Time) bool {
+	return tipTime.After(throughHour.Add(time.Hour + lendingInterestDeriveCadence + lendingRevenueStaleGrace))
+}
+
+// revenueView maps the read. A window exclusion makes every reserve a lower bound; a reserve's own exclusion makes it
+// one, and nulls its totals when nothing of it was summed.
 func revenueView(pool, protocol, interval string, q clickhouse.LendingHistoryQuery, rev clickhouse.LendingRevenue) LendingRevenueView {
 	q = q.Aligned()
 	to := q.To.UTC().Truncate(time.Hour)
@@ -173,7 +198,6 @@ func revenueView(pool, protocol, interval string, q clickhouse.LendingHistoryQue
 	exclude := func(kind, asset, reason string, amount *string, count *int64) {
 		v.Excluded = append(v.Excluded, LendingRevenueExclusion{Kind: kind, Asset: nonEmptyPtr(asset), Reason: reason, Amount: amount, Count: count})
 	}
-	exclude(revenueKindField, "", revenueReasonDrawnPartial, nil, nil)
 	if !rev.Covered {
 		exclude(revenueKindPool, "", revenueReasonNotDerived, nil, nil)
 		v.LowerBound = true
@@ -191,43 +215,71 @@ func revenueView(pool, protocol, interval string, q clickhouse.LendingHistoryQue
 	if rev.Redo != nil && rev.RedoHour.Before(to) {
 		exclude(revenueKindWindow, "", revenueReasonRedoPending, nil, nil)
 	}
+	windowPartial := len(v.Excluded) > 0
+	end := to
+	if rev.Before.After(time.Time{}) && rev.Before.Before(end) {
+		end = rev.Before
+	}
+	width := time.Hour
+	if q.Daily {
+		width = 24 * time.Hour
+	}
 	fee := blnt.SourceName == protocol
 	for _, res := range rev.Reserves {
-		rv := LendingRevenueReserveView{Asset: res.Asset, FeeRateInferred: fee, Points: make([]LendingRevenuePoint, 0, len(res.Buckets))}
-		total := clickhouse.NewLendingRevenueSums()
-		for _, b := range res.Buckets {
-			total.Add(b.Sums)
-			rv.Points = append(rv.Points, LendingRevenuePoint{T: WireTime(b.Start), LendingRevenueAmounts: revenueAmounts(b.Sums, fee)})
-		}
-		rv.Totals = revenueAmounts(total, fee)
-		if res.StaleRows > 0 {
-			n := int64(res.StaleRows) //nolint:gosec // an hour-row count
-			exclude(revenueKindReserve, res.Asset, revenueReasonDeriveStale, nil, &n)
-		}
-		if n := total.UnorderedVersions + total.AccrualErrors; n > 0 {
-			exclude(revenueKindReserve, res.Asset, revenueReasonAccrual, nil, &n)
-		}
-		if total.UnexplainedSupplyLoss.Sign() < 0 {
-			n := total.UnexplainedSupplyVersions
-			exclude(revenueKindReserve, res.Asset, revenueReasonSupplyLoss, strRef(total.UnexplainedSupplyLoss.String()), &n)
-		}
+		rv, own := revenueReserve(res, fee, width, end, windowPartial)
+		v.Excluded = append(v.Excluded, own...)
 		v.Reserves = append(v.Reserves, rv)
 	}
 	v.LowerBound = len(v.Excluded) > 0
 	return v
 }
 
+// revenueReserve maps one reserve and returns the exclusions naming it.
+func revenueReserve(res clickhouse.LendingRevenueReserve, fee bool, width time.Duration, end time.Time, windowPartial bool) (LendingRevenueReserveView, []LendingRevenueExclusion) {
+	rv := LendingRevenueReserveView{Asset: res.Asset, FeeRateInferred: fee, Points: make([]LendingRevenuePoint, 0, len(res.Buckets))}
+	total := clickhouse.NewLendingRevenueSums()
+	for _, b := range res.Buckets {
+		total.Add(b.Sums)
+		rv.Points = append(rv.Points, LendingRevenuePoint{
+			T: WireTime(b.Start), Partial: b.Start.Add(width).After(end),
+			LendingRevenueAmounts: revenueAmounts(b.Sums, fee),
+		})
+	}
+	var own []LendingRevenueExclusion
+	exclude := func(reason string, amount *string, count int64) {
+		own = append(own, LendingRevenueExclusion{Kind: revenueKindReserve, Asset: strRef(res.Asset), Reason: reason, Amount: amount, Count: &count})
+	}
+	if res.StaleRows > 0 {
+		exclude(revenueReasonDeriveStale, nil, int64(res.StaleRows)) //nolint:gosec // an hour-row count
+	}
+	if n := total.UnorderedVersions + total.AccrualErrors; n > 0 {
+		exclude(revenueReasonAccrual, nil, n)
+	}
+	if total.UnexplainedSupplyLoss.Sign() < 0 {
+		exclude(revenueReasonSupplyLoss, strRef(new(big.Int).Neg(total.UnexplainedSupplyLoss).String()), total.UnexplainedSupplyLossVersions)
+	}
+	rv.LowerBound = windowPartial || len(own) > 0
+	if !rv.LowerBound || total.Gross.Sign() != 0 {
+		a := revenueAmounts(total, fee)
+		rv.Totals = &a
+	}
+	return rv, own
+}
+
+// revenueAmounts serves the stored sums, the ≤ 0 columns as magnitudes.
 func revenueAmounts(s clickhouse.LendingRevenueSums, fee bool) LendingRevenueAmounts {
+	neg := func(x *big.Int) string { return new(big.Int).Neg(x).String() }
 	a := LendingRevenueAmounts{
 		InterestAccrued: s.Gross.String(), SupplierShare: s.SupplierIntended.String(), SupplierCredited: s.SupplierRealised.String(),
 		BackstopTake: s.Backstop.String(), ProtocolFee: s.ProtocolFee.String(),
-		ProtocolRevenue: new(big.Int).Add(s.Backstop, s.ProtocolFee).String(),
-		// interest_drawn is the credit's change, ≤ 0; drawn is its magnitude.
-		Realised:              LendingRevenueRealised{BackstopDrawn: new(big.Int).Neg(s.InterestDrawn).String(), FeeWithdrawnReason: revenueFeeNotApplicable},
+		Realised: LendingRevenueRealised{
+			BackstopDrawn: neg(s.InterestDrawn), BackstopDrawnLowerBound: true, FeeWithdrawnReason: revenueFeeNotApplicable,
+		},
 		BackstopGulped:        s.Gulped.String(),
-		ReconcileBackstopLoss: s.ReconcileBackstopLoss.String(),
-		DefaultLoss:           s.DefaultLoss.String(), DefaultVersions: s.DefaultVersions,
-		UnexplainedSupplyLoss: s.UnexplainedSupplyLoss.String(), UnexplainedSupplyVersions: s.UnexplainedSupplyVersions,
+		ReconcileBackstopLoss: neg(s.ReconcileBackstopLoss),
+		DefaultLoss:           neg(s.DefaultLoss), DefaultVersions: s.DefaultVersions,
+		UnexplainedSupplyLoss: neg(s.UnexplainedSupplyLoss), UnexplainedSupplyLossVersions: s.UnexplainedSupplyLossVersions,
+		UnexplainedSupplyGain: s.UnexplainedSupplyGain.String(), UnexplainedSupplyGainVersions: s.UnexplainedSupplyGainVersions,
 		UnexplainedBackstopResidual: s.UnexplainedBackstopResidual.String(), UnexplainedVersions: s.UnexplainedVersions,
 		UnorderedVersions: s.UnorderedVersions, AccrualErrors: s.AccrualErrors,
 	}

@@ -28,6 +28,32 @@ func (e *stubRevenueExplorer) LendingPoolRevenue(_ context.Context, _, asset str
 	return e.rev, e.err
 }
 
+type revenueTip struct{ at time.Time }
+
+func (r revenueTip) LakeWatermark(context.Context) (uint32, time.Time, error) { return 60, r.at, nil }
+
+// The stale flag follows the hourly watermark: a tip inside one derive run and the grace of the hour after the
+// coverage is fresh, one past it is stale.
+func TestLendingPoolRevenue_StaleFollowsTheHourlyWatermark(t *testing.T) {
+	v2 := blend.PoolV2
+	through := time.Date(2027, 3, 1, 10, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		tip   time.Duration
+		stale bool
+	}{{time.Hour + 41*time.Minute, false}, {time.Hour + 43*time.Minute, true}} {
+		ex := &stubRevenueExplorer{
+			stubExplorerReader: &stubExplorerReader{},
+			rev:                clickhouse.LendingRevenue{Covered: true, ThroughLedger: 50, ThroughHour: through, FloorLedger: 1},
+		}
+		srv := v1.New(v1.Options{Explorer: ex, Lending: &stubLendingReader{version: &v2}, LakeWatermark: revenueTip{through.Add(tc.tip)}})
+		var body struct{ Flags v1.Flags }
+		rec := getLendingHistory(t, srv, "/v1/lending/pools/"+mkCStrkey(t, 1)+"/revenue")
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.Flags.Stale != tc.stale {
+			t.Errorf("tip +%v: %d stale %v, want %v", tc.tip, rec.Code, body.Flags.Stale, tc.stale)
+		}
+	}
+}
+
 func TestLendingPoolRevenue_ValidationAndErrors(t *testing.T) {
 	pool := mkCStrkey(t, 1)
 	base := "/v1/lending/pools/" + pool + "/revenue"
@@ -84,7 +110,7 @@ func TestLendingPoolRevenue_UncoveredPoolIsAnEmptyLowerBound(t *testing.T) {
 	for _, e := range d.Excluded {
 		reasons = append(reasons, e.Kind+":"+e.Reason)
 	}
-	if strings.Join(reasons, ",") != "field:interest_drawn_partial,pool:interest_not_derived" {
+	if strings.Join(reasons, ",") != "pool:interest_not_derived" {
 		t.Fatalf("excluded = %v", reasons)
 	}
 	if time.Time(d.From).Format(time.RFC3339) != "2027-03-01T10:00:00Z" || time.Time(d.To).Format(time.RFC3339) != "2027-03-02T05:00:00Z" ||

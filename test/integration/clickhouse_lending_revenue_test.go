@@ -38,7 +38,7 @@ func TestLendingPoolRevenue_FinalRevisionAndClipping(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	const poolA, poolB, poolC, assetX, assetY = "CPOOLREVA", "CPOOLREVB", "CPOOLREVC", "CASSETREVX", "CASSETREVY"
+	const poolA, poolB, poolC, assetX, assetY, assetZ = "CPOOLREVA", "CPOOLREVB", "CPOOLREVC", "CASSETREVX", "CASSETREVY", "CASSETREVZ"
 	mark := func(name string, v uint32) {
 		t.Helper()
 		if err := conn.Exec(ctx, `INSERT INTO stellar.entry_history_watermark (name, thru_ledger) VALUES (?, ?)`, name, v); err != nil {
@@ -77,6 +77,10 @@ func TestLendingPoolRevenue_FinalRevisionAndClipping(t *testing.T) {
 		row(poolB, assetX, 1, big.NewInt(2)), row(poolB, assetX, 2, big.NewInt(3))) // poolB is covered through hour 1
 	insert(cur, row(poolA, assetX, 1, big.NewInt(10))) // the newer derive of hour 1
 	insert(cur-1, row(poolA, assetX, 2, big.NewInt(7)))
+	// Asset Z's hour 0: a rev-4 row, then a newer rev-3 derive of the same hour. FINAL keeps the rev-3 row, which is
+	// counted stale; the shadowed rev-4 row must not resurface.
+	insert(cur, row(poolA, assetZ, 0, big.NewInt(9)))
+	insert(cur-1, row(poolA, assetZ, 0, big.NewInt(8)))
 
 	er, err := chstore.NewExplorerReader(ctx, addr)
 	if err != nil {
@@ -100,15 +104,19 @@ func TestLendingPoolRevenue_FinalRevisionAndClipping(t *testing.T) {
 	}
 
 	a := read(poolA, "", q)
-	if !a.Covered || a.ThroughLedger != wm || !a.ThroughHour.Equal(hr(3)) || !a.Before.Equal(hr(4)) || a.FloorLedger != floor || len(a.Reserves) != 2 {
+	if !a.Covered || a.ThroughLedger != wm || !a.ThroughHour.Equal(hr(3)) || !a.Before.Equal(hr(4)) || a.FloorLedger != floor || len(a.Reserves) != 3 {
 		t.Fatalf("pool A coverage = %+v", a)
 	}
 	x, y := a.Reserves[0], a.Reserves[1]
 	if got := fmt.Sprint(grossOf(x)); x.Asset != assetX || got != "[00=100 01=10 03="+wide.String()+"]" || x.StaleRows != 1 {
 		t.Fatalf("pool A X = %s stale %d", got, x.StaleRows)
 	}
-	if s := y.Buckets[0].Sums; y.Asset != assetY || s.UnexplainedSupplyLoss.Int64() != -7 || s.UnexplainedSupplyVersions != 1 || s.UnexplainedVersions != 1 {
+	if s := y.Buckets[0].Sums; y.Asset != assetY || s.UnexplainedSupplyLoss.Int64() != -7 || s.UnexplainedSupplyLossVersions != 1 || s.UnexplainedVersions != 1 ||
+		s.UnexplainedSupplyGain.Sign() != 0 || s.UnexplainedSupplyGainVersions != 0 {
 		t.Fatalf("pool A Y = %+v", s)
+	}
+	if z := a.Reserves[2]; z.Asset != assetZ || z.StaleRows != 1 || len(z.Buckets) != 0 {
+		t.Fatalf("pool A Z: a newer rev-3 derive must shadow the rev-4 row, counted stale: %+v", z)
 	}
 	daily := q
 	daily.Daily = true
