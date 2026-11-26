@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
@@ -39,6 +40,20 @@ func runDetachedFill[T any](
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
+	start := time.Now()
 	v, err := upstream(ctx)
+	observeFillDuration(name, time.Since(start), err)
 	settle(v, err)
+}
+
+// observeFillDuration records one fill. name is a fixed per-call-site literal, never a key or asset id.
+func observeFillDuration(name string, d time.Duration, err error) {
+	result := "ok"
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		result = "timeout"
+	case err != nil:
+		result = "error"
+	}
+	obs.APICacheFillDuration.WithLabelValues(name, result).Observe(d.Seconds())
 }

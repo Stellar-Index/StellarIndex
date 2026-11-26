@@ -15,6 +15,8 @@ Wants=network-online.target
 Type=oneshot
 EnvironmentFile=-/etc/default/data-freshness
 EnvironmentFile=-/etc/default/stellarindex
+# The script runs stellarindex-ops cagg-history, which is the batch tier (ops_batch identity).
+EnvironmentFile=-/etc/default/stellarindex-ops
 Environment=TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/data_freshness.prom
 
 ExecStart=/usr/local/sbin/data-freshness.sh

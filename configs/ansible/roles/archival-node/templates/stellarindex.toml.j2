@@ -84,8 +84,9 @@ clickhouse_serving_user = "{{ stellarindex_clickhouse_serving_api_user }}"
 # override: a host that sets run_aggregator: false and forgets to also
 # override the source list would otherwise ship oracle contracts with no
 # aggregator to feed them.
+{# The oracle contracts are pubnet-only, so a test net drops these sources even with run_aggregator on. #}
 {% set stellarindex_oracle_sources = ['reflector-dex', 'reflector-cex', 'reflector-fx', 'redstone', 'chainlink-stellar', 'band'] %}
-enabled_sources       = {{ (stellarindex_enabled_sources if run_aggregator | default(true) | bool else (stellarindex_enabled_sources | reject('in', stellarindex_oracle_sources) | list)) | to_json }}
+enabled_sources       = {{ (stellarindex_enabled_sources if (run_aggregator | default(true) | bool and stellar_network == "pubnet") else (stellarindex_enabled_sources | reject('in', stellarindex_oracle_sources) | list)) | to_json }}
 backfill_from_ledger  = {{ stellarindex_backfill_from_ledger | int }}
 
 [ingestion.projector]
@@ -96,9 +97,9 @@ backfill_from_ledger  = {{ stellarindex_backfill_from_ledger | int }}
 enabled            = true
 persist_per_source = true
 
-{% if run_aggregator | default(true) | bool %}
+{% if run_aggregator | default(true) | bool and stellar_network == "pubnet" %}
 {# Oracle contracts are pubnet Soroban addresses + only consumed by the
-   aggregator/oracle sources. Omitted on a pricing-off host (test net). #}
+   aggregator/oracle sources. Omitted on a pricing-off host and on any test net. #}
 [oracle.reflector]
 dex_contract = "CALI2BYU2JE6WVRUFYTS6MSBNEHGJ35P4AVCZYF3B6QOE3QKOB2PLE6M"
 cex_contract = "CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN"
@@ -266,7 +267,9 @@ legs   = ["crypto:BTC/fiat:USD", "fiat:USD/fiat:GBP"]
 [trades]
 {% if run_aggregator | default(true) | bool %}
 usd_pegged_classic_assets = [
-  "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+{% for asset in stellarindex_usd_pegged_classic_assets %}
+  {{ asset | to_json }},
+{% endfor %}
 ]
 {% else %}
 usd_pegged_classic_assets = []   {# pricing off (test net): no USD pegs, assets are $0 #}
@@ -289,14 +292,23 @@ usd_pegged_classic_assets = []   {# pricing off (test net): no USD pegs, assets 
 {% if run_aggregator | default(true) | bool %}
 
   [pricing_guard.fiat_pegged_classic_assets]
-  # AUDD — AUD Digital, declared 1:1 AUD (operator-approved).
-  "AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU" = "AUD"
-  # AUDR — pegged to AUD transitively through the AUDD↔AUDR 1:1
-  # settlement corridor (~$4.8M/30d at exactly 1.000000 on SDEX) + the
-  # same operator approval.
-  "AUDR-GAAVW6EQ4N4SHNTKBLTOBXKS6CEIMT2KZI7YQ5B37ECNVPFLBIGRKLIL" = "AUD"
-  "EURC-GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2" = "EUR"
-  "PYUSD-GDQE7IXJ4HUHV6RQHIUPRJSEZE4DRS5WY577O2FY6YQ5LVWZ7JZTU2V5" = "USD"
+{# Rationale for a pubnet peg, rendered above its entry; keyed by asset so an override keeps it only for that asset. #}
+{% set stellarindex_fiat_peg_notes = {
+  "AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU": [
+    "AUDD — AUD Digital, declared 1:1 AUD (operator-approved).",
+  ],
+  "AUDR-GAAVW6EQ4N4SHNTKBLTOBXKS6CEIMT2KZI7YQ5B37ECNVPFLBIGRKLIL": [
+    "AUDR — pegged to AUD transitively through the AUDD↔AUDR 1:1",
+    "settlement corridor (~$4.8M/30d at exactly 1.000000 on SDEX) + the",
+    "same operator approval.",
+  ],
+} %}
+{% for asset, fiat in stellarindex_fiat_pegged_classic_assets | dictsort %}
+{% for note in stellarindex_fiat_peg_notes.get(asset, []) %}
+  # {{ note }}
+{% endfor %}
+  {{ asset | to_json }} = {{ fiat | to_json }}
+{% endfor %}
 {% endif %}
 
 # ──────────────────────────────────────────────────────────────────
@@ -304,9 +316,10 @@ usd_pegged_classic_assets = []   {# pricing off (test net): no USD pegs, assets 
 # and the crypto:XLM/fiat:USD price. Free venues only on r1 (no API
 # keys provisioned for the paid FX/aggregator tier).
 # ──────────────────────────────────────────────────────────────────
-{% if run_aggregator | default(true) | bool %}
+{% if run_aggregator | default(true) | bool and stellar_network == "pubnet" %}
 {# External CEX/FX connectors feed the aggregator's USD pricing. Omitted on a
-   pricing-off host (test net) — no external markets, assets are $0. #}
+   pricing-off host and on any test net: a CEX XLM price is the mainnet price,
+   so a test net would price its own XLM at it. #}
 [external]
 
   [external.binance]
@@ -462,17 +475,7 @@ path                    = "/var/lib/stellarindex/hashdb.bin"
 aggregator_refresh_enabled = {{ 'true' if run_aggregator | default(true) | bool else 'false' }}
 aggregator_refresh_cadence = "5m"
 watched_classic_assets = [
-{% for asset in stellarindex_watched_classic_assets | default([
-  "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-  "EURC-GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2",
-  "AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
-  "yXLM-GARDNV3Q7YGT4AKSDF25LT32YSCCW4EV22Y2TV3I2PU2MMXJTEDL5T55",
-  "VELO-GDM4RQUQQUVSKQA7S6EM7XBZP3FCGH4Q7CL6TABQ7B2BEJ5ERARM2M5M",
-  "BLND-GDJEHTBE6ZHUXSWFI642DCGLUOECLHPF3KSXHPXTSTJ7E3JF6MQ5EZYY",
-  "BLNT-GAP2ACGH3O6TRFAERGM4USJ6XWU3U2BFIK224JPV6NI3CUNEEEGTBTFB",
-  "PHO-GAX5TXB5RYJNLBUR477PEXM4X75APK2PGMTN6KEFQSESGWFXEAKFSXJO",
-  "KALE-GBDVX4VELCDSQ54KQJYTNHXAHFLBCA77ZY2USQBM4CSHTTV7DME7KALE",
-]) %}
+{% for asset in stellarindex_watched_classic_assets %}
   "{{ asset }}",
 {% endfor %}
 ]

@@ -1,0 +1,14 @@
+{
+  "contract_id": "CAAJYIESEIKI7KZV67MBSXPCRGKH5WY354WUS55H4UNBD35OSKYPZA7Q",
+  "wasm_hash": "2f8e7d7f237eca17e188c4e5d08b73b0065584b3d39f9e1d801993a8510a3107",
+  "ledger": 65667281,
+  "tx_hash": "9ec5f48b4c1029cc82e13a63204a59966109a1b237db84060e11df48d5cf99cf",
+  "op_index": 0,
+  "event_index": 0,
+  "ledger_closed_at": "2026-11-25T16:01:05Z",
+  "topics": [
+    "AAAADwAAABJzZXRfcmV3YXJkc19jb25maWcAAA=="
+  ],
+  "value": "AAAAEAAAAAEAAAACAAAABQAAAABrB7JYAAAACQAAAAAAAAAAAAAAAAA6eGk=",
+  "event_name": "set_rewards_config"
+}

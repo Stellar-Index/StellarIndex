@@ -1,0 +1,15 @@
+{
+  "contract_id": "CBQDHNBFBZYE4MKPWBSJOPIYLW4SFSXAXUTSXJN76GNKYVYPCKWC6QUK",
+  "wasm_hash": "2f8e7d7f237eca17e188c4e5d08b73b0065584b3d39f9e1d801993a8510a3107",
+  "ledger": 65667281,
+  "tx_hash": "9ec5f48b4c1029cc82e13a63204a59966109a1b237db84060e11df48d5cf99cf",
+  "op_index": 0,
+  "event_index": 1,
+  "ledger_closed_at": "2026-11-25T16:01:05Z",
+  "topics": [
+    "AAAADwAAAA5jb25maWdfcmV3YXJkcwAA",
+    "AAAAEAAAAAEAAAACAAAAEgAAAAEBXYCbqoen8nj67TgxiToTyzhZ6BokJeLbYyJFVbtOGgAAABIAAAABJbT82FmuwvpjSEOMSJs8PBDJi20hvk/TyzDLaJU++Xc="
+  ],
+  "value": "AAAAEAAAAAEAAAADAAAAEgAAAAEAnCCSIhSPqzX32Bld4omUftsb7y1Jd6flGhHvrpKw/AAAAAkAAAAAAAAAAAAAAAAAOnhpAAAABQAAAABrB7JY",
+  "event_name": "config_rewards"
+}

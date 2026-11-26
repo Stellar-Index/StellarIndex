@@ -1677,7 +1677,7 @@ func (o *Orchestrator) flushContributions(
 	if err := o.cfg.ContributionSink.RecordContributions(ctx, ContributionRecord{
 		Pair:            pair,
 		Window:          window,
-		ComputedAt:      time.Now().UTC(),
+		ComputedAt:      o.clock().UTC(),
 		Contributions:   contributions,
 		SourceUSDVolume: sourceUSD,
 	}); err != nil {

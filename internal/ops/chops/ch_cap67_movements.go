@@ -531,10 +531,9 @@ const cap67SkipDecodeFailed = "decode_failed"
 // cap67SkipReasons is every reason a window can report, for zero-seeding the heartbeat series.
 var cap67SkipReasons = append(slices.Clone(clickhouse.SupplySkipReasons), cap67SkipDecodeFailed)
 
-// cap67SkipReason classifies an undecodable event with the supply-body classifier: a transfer body has the same shape (a bare i128, or a
-// map carrying amount).
+// cap67SkipReason classifies an undecodable event with the live sink's supply classifier, which also covers a transfer's topics and body.
 func cap67SkipReason(ev *events.Event) string {
-	if _, skip := clickhouse.ClassifySupplyEventXDR(ev.ContractID, ev.Value); skip != "" {
+	if _, skip := clickhouse.ClassifySupplyEventXDR(ev.ContractID, ev.Topic, ev.Value); skip != "" {
 		return skip
 	}
 	return cap67SkipDecodeFailed

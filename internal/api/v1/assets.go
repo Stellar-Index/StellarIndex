@@ -337,6 +337,8 @@ type AssetDetail struct {
 	extensionUnread bool
 	// extensionStale: the catalogue row or an extension read answered from a cache entry its refresh has not kept up with.
 	extensionStale bool
+	// extensionLastGood names why such a read was a last-good copy ([lastGoodCause]); "" when it was merely past its TTL.
+	extensionLastGood string
 	// sep1Unread: the SEP-1 cache or fetch-state read errored, so sep1_status=not_fetched and the absent SEP-1 fields are ours.
 	sep1Unread bool
 	// priceUnread: the USD price read failed; a null price_usd is then not "no market".
@@ -938,9 +940,11 @@ func (s *Server) buildAssetListPage(
 	// still publish a price.
 	s.attachSparklinesIfRequested(valCtx, r, out)
 	unmeasured, stale = unmeasured || valReads.unread.Load(), stale || valReads.stale.Load()
+	lastGood := listLastGoodReason(s.catalogueListingLastGood(opts), valReads.stale.Load())
 	// Cached rows carry their observation time and, past the TTL, flags.stale; an uncached read
 	// stamps the build time once, so a cached replay carries the as_of of the response that built it.
-	env := Envelope{Data: out, Flags: Flags{Stale: stale || unmeasured, Degraded: stale || unmeasured || anyDirectoryUnchecked(out)}, AsOf: WireTime(time.Now().UTC())}
+	degraded := listDegraded(r.Context(), unmeasured, lastGood, out)
+	env := Envelope{Data: out, Flags: Flags{Stale: stale || unmeasured, Degraded: degraded}, AsOf: WireTime(time.Now().UTC())}
 	if !observedAt.IsZero() {
 		env.AsOf = WireTime(observedAt.UTC())
 	}
@@ -1745,7 +1749,7 @@ func (s *Server) writeCataloguePage(
 	unmeasured = unmeasured || reads.unread.Load()
 	flags = markFillsWithheld(flags, reads.withheld.Load())
 	flags.Stale = flags.Stale || unmeasured || stale
-	flags.Degraded = flags.Degraded || unmeasured || anyDirectoryUnchecked(page)
+	flags.Degraded = listDegraded(ctx, unmeasured, "", page) || flags.Degraded
 	env := Envelope{Data: page, Flags: flags}
 	if end < len(rows) {
 		for _, row := range page {
@@ -1991,7 +1995,7 @@ func (s *Server) serveCatalogueUnifiedPage(
 	page := rows[:end]
 	s.attachSparklinesIfRequested(ctx, r, page)
 	unmeasured = unmeasured || reads.unread.Load()
-	env := Envelope{Data: page, Flags: Flags{Stale: unmeasured || stale, Degraded: unmeasured || anyDirectoryUnchecked(page)}}
+	env := Envelope{Data: page, Flags: Flags{Stale: unmeasured || stale, Degraded: listDegraded(ctx, unmeasured, "", page)}}
 	env.Flags = markFillsWithheld(env.Flags, reads.withheld.Load())
 	if end < len(rows) {
 		for _, row := range page {
@@ -2013,7 +2017,7 @@ func (s *Server) serveCatalogueUnifiedPage(
 		// A fill that added no row neither dates nor stales the rows above it, unless it withheld rows it could not judge.
 		if len(classic.rows) > 0 || classic.unmeasured {
 			env.Flags.Stale = env.Flags.Stale || classic.stale()
-			env.Flags.Degraded = env.Flags.Degraded || classic.stale() || anyDirectoryUnchecked(classic.rows)
+			env.Flags.Degraded = classic.degraded(r.Context()) || env.Flags.Degraded
 			env.AsOf = classic.asOf()
 		}
 		if nextInner != "" {
@@ -2045,7 +2049,7 @@ func (s *Server) serveClassicUnifiedPage(
 	if out == nil {
 		out = []AssetDetail{}
 	}
-	env := Envelope{Data: out, Flags: Flags{Stale: stale, Degraded: stale || anyDirectoryUnchecked(out)}, AsOf: classic.asOf()}
+	env := Envelope{Data: out, Flags: Flags{Stale: stale, Degraded: classic.degraded(r.Context())}, AsOf: classic.asOf()}
 	if nextInner != "" {
 		env.Pagination = &Pagination{Next: "classic:" + nextInner}
 	}
@@ -2062,9 +2066,15 @@ type classicUnifiedRows struct {
 	// cacheStale and observedAt come from the cached reader: rows served past their TTL, and when they were read.
 	cacheStale bool
 	observedAt time.Time
+	// lastGood names a last-good cause behind cacheStale ([listLastGoodReason]); rows merely past their TTL leave it empty.
+	lastGood string
 }
 
 func (c classicUnifiedRows) stale() bool { return c.unmeasured || c.cacheStale }
+
+func (c classicUnifiedRows) degraded(ctx context.Context) bool {
+	return listDegraded(ctx, c.unmeasured, c.lastGood, c.rows)
+}
 
 // asOf is the rows' observation time, never now() over a cached page; zero (the envelope default) for a live read.
 func (c classicUnifiedRows) asOf() WireTime {
@@ -2183,6 +2193,7 @@ func (s *Server) fetchClassicUnifiedRows(
 	}
 	return classicUnifiedRows{
 		rows: out, next: nextInner, unmeasured: unmeasured, cacheStale: cacheStale, observedAt: observedAt,
+		lastGood: listLastGoodReason(s.catalogueListingLastGood(opts), valReads.stale.Load()),
 	}, true
 }
 
@@ -2358,7 +2369,7 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, detail, excl.judgeDetail(ctx, s, &detail, flags))
 		return
 	}
-	entry := newAssetDetailEntry(detail, body, flags)
+	entry := newReasonedAssetDetailEntry(detail, body, flags, detailDegradedReason(&detail, homeDomainDegraded, ctxDead))
 	// A failed decimals, issuer-directory or F2 read, or a dead context (only the reads that landed),
 	// is a transient outage that replaying for the whole TTL would outlive. Skip the cache write only.
 	if !transientlyDegraded(&detail, ctxDead) {
@@ -2370,7 +2381,7 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 // assetDetailStale reports whether detail rests on a failed, cut-short or
 // carried-forward read.
 func assetDetailStale(detail *AssetDetail, homeDomainDegraded, ctxDead bool) bool {
-	return homeDomainDegraded || detail.DecimalsUnresolved || detail.decimalsLakeUnread || detail.SupplyStale || detail.f2ReadFailed || detail.extensionUnread || detail.extensionStale || detail.sep1Unread || ctxDead
+	return assetDetailCarried(detail, homeDomainDegraded, ctxDead) || detail.extensionStale
 }
 
 // transientlyDegraded reports whether detail rests on a read that failed or

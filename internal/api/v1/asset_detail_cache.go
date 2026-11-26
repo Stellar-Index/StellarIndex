@@ -24,10 +24,12 @@ type assetDetailEntry struct {
 	// must not carry the route's shared-cache band.
 	degraded bool
 	stale    bool
+	// reason is the [detailDegradedReason] of a degraded entry, replayed on every serve.
+	reason string
 }
 
-// assetDetailDegradedTTL is a degraded entry's life: it absorbs a burst, while the complete answer its read's detached refresh
-// lands within seconds replaces it instead of waiting out the full TTL.
+// assetDetailDegradedTTL is the life of a degraded entry or one over a stale catalogue value: it absorbs a burst, while the
+// answer its read's detached refresh lands within seconds replaces it instead of waiting out the full TTL.
 const assetDetailDegradedTTL = 3 * time.Second
 
 // assetDetailResponseCache caches the whole /v1/assets/{id} response by normalised asset_id, so new fields and overlays flow
@@ -84,7 +86,8 @@ func (c *assetDetailResponseCache) put(assetID string, e *assetDetailEntry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	ttl := c.ttl
-	if e.degraded {
+	// A catalogue value past its TTL has its refresh running: the body that refresh lands within seconds replaces it.
+	if e.degraded || e.detail.extensionStale {
 		ttl = min(ttl, assetDetailDegradedTTL)
 	}
 	e.cachedAt = c.now()
@@ -141,6 +144,9 @@ func renderAssetDetailEnvelope(detail AssetDetail, flags Flags) ([]byte, error) 
 func writeCachedAssetDetail(w http.ResponseWriter, entry *assetDetailEntry) {
 	if entry.degraded {
 		w.Header().Set("Cache-Control", "no-store")
+	}
+	if entry.degraded && entry.reason != "" {
+		obs.MarkDegradedReason(w, entry.reason)
 	}
 	obs.MarkResponseFlags(w, entry.degraded, entry.stale)
 	w.Header().Set("Content-Type", "application/json")

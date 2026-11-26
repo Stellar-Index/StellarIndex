@@ -242,6 +242,10 @@ expect "configs/prometheus/** triggers the ansible class" 0
 run ansible "deploy/monitoring/rules/clickhouse.yml"
 expect "deploy/monitoring/** triggers the ansible class" 0
 
+# ansible-usd-peg-network-gate-test.sh byte-compares the role's render against this fixture.
+run ansible "internal/config/testdata/ansible-pubnet-pegs.toml"
+expect "the pubnet peg render fixture triggers the ansible class" 0
+
 run ansible "configs/alertmanager/alertmanager.yml"
 expect "configs/alertmanager (not ansible/prometheus) does NOT trigger the ansible class" 1
 

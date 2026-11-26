@@ -82,12 +82,20 @@ type marketsCacheEntry struct {
 	err error
 	// refreshFailed: the last refresh of a filled entry failed or panicked, so it is a last-good copy until one succeeds.
 	refreshFailed bool
+	// flightAt is when the SWR refresh in flight started; it, not the rows' age, says whether that refresh has overrun.
+	flightAt time.Time
 }
 
-// marketsServedStaleLocked is the [swrverdict.Stale] verdict for a filled entry served past ttl; no refresh in flight (every slot
-// was busy) leaves it a last-good copy too. Caller holds c.mu.
-func (c *CachedMarketsReader) marketsServedStaleLocked(e *marketsCacheEntry) bool {
-	return e.flight == nil || swrverdict.Stale(c.now().Sub(e.at), c.ttl, marketsRefreshBudget, e.refreshFailed)
+// marketsServedStaleLocked is the flags.stale verdict for a filled entry served past ttl: [swrverdict.Stale], or no refresh in
+// flight (every slot was busy). A failed, overrun or refused refresh makes it a last-good copy, reported on ctx through
+// [reportDegradedRead]; a refresh this ask started or one in flight within budget leaves it stale only. Caller holds c.mu.
+func (c *CachedMarketsReader) marketsServedStaleLocked(ctx context.Context, e *marketsCacheEntry) bool {
+	cause := lastGoodCause(e.refreshFailed, e.flight != nil, c.now().Sub(e.flightAt), marketsRefreshBudget)
+	if cause == "" && e.flight == nil {
+		cause = obs.DegradedRefreshRefused // no slot was free, so nothing is refreshing this copy
+	}
+	reportDegradedRead(ctx, cause)
+	return e.refreshFailed || e.flight == nil || swrverdict.Stale(c.now().Sub(e.at), c.ttl, marketsRefreshBudget, false)
 }
 
 // NewCachedMarketsReader wraps upstream with a TTL cache (ttl=0 disables); the 30s production default is tighter than sources_stats's 60s because /v1/markets is the front page.
@@ -216,9 +224,13 @@ func (c *CachedMarketsReader) GetPairsVolumeHistory24hBatchAt(ctx context.Contex
 		keys[i] = p[0] + "|" + p[1]
 	}
 	sort.Strings(keys)
-	hist, _, stale, err := c.sparks.get(ctx, "pairs_volume_24h", strings.Join(keys, ","), func(ctx context.Context) (map[string][]timescale.PairVolumePoint, error) {
+	key := strings.Join(keys, ",")
+	hist, _, stale, err := c.sparks.get(ctx, "pairs_volume_24h", key, func(ctx context.Context) (map[string][]timescale.PairVolumePoint, error) {
 		return c.upstream.GetPairsVolumeHistory24hBatch(ctx, pairs)
 	})
+	if err == nil {
+		reportDegradedRead(ctx, c.sparks.lastGood(key, cacheFillBudget))
+	}
 	return hist, stale, err
 }
 
@@ -366,16 +378,16 @@ func (c *CachedMarketsReader) fetchPairs(
 		out, next, at := e.pairs, e.cursor, e.at
 		if slots := c.refreshSlots(class.head()); e.flight == nil && trySlot(slots) {
 			done := make(chan struct{})
-			e.flight = done
+			e.flight, e.flightAt = done, c.now()
 			entry := e
-			stale := c.marketsServedStaleLocked(e)
+			stale := c.marketsServedStaleLocked(ctx, e)
 			c.mu.Unlock()
 			obs.APICacheOpsTotal.WithLabelValues("markets", op, "stale").Inc()
 			//nolint:gosec,contextcheck // G118 / contextcheck: intentional detached fill; see runDetachedFill.
 			go runDetachedFill(c.logger, "api-markets-pairs-refresh", marketsRefreshBudget, done, holdingSlot(slots, marketsPageFill(upstream)), c.settlePairs(op, key, entry))
 			return slices.Clone(out), next, at, stale, nil
 		}
-		stale := c.marketsServedStaleLocked(e)
+		stale := c.marketsServedStaleLocked(ctx, e)
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("markets", op, "stale").Inc()
 		return slices.Clone(out), next, at, stale, nil
@@ -506,16 +518,16 @@ func (c *CachedMarketsReader) fetchPools(
 		out, next, at := e.pools, e.cursor, e.at
 		if slots := c.refreshSlots(class.head()); e.flight == nil && trySlot(slots) {
 			done := make(chan struct{})
-			e.flight = done
+			e.flight, e.flightAt = done, c.now()
 			entry := e
-			stale := c.marketsServedStaleLocked(e)
+			stale := c.marketsServedStaleLocked(ctx, e)
 			c.mu.Unlock()
 			obs.APICacheOpsTotal.WithLabelValues("markets", op, "stale").Inc()
 			//nolint:gosec,contextcheck // G118 / contextcheck: intentional detached fill; see runDetachedFill.
 			go runDetachedFill(c.logger, "api-markets-pools-refresh", marketsRefreshBudget, done, holdingSlot(slots, marketsPageFill(upstream)), c.settlePools(op, key, entry))
 			return slices.Clone(out), next, at, stale, nil
 		}
-		stale := c.marketsServedStaleLocked(e)
+		stale := c.marketsServedStaleLocked(ctx, e)
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("markets", op, "stale").Inc()
 		return slices.Clone(out), next, at, stale, nil

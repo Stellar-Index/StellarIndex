@@ -191,6 +191,11 @@ func TradeOrderLess(a, b *canonical.Trade) bool {
 	return a.Source < b.Source
 }
 
+// SortTradeOrder sorts trades in place by [TradeOrderLess], the order [TWAP] and [ComputeOHLC] require, so ties never fall to merge order.
+func SortTradeOrder(trades []canonical.Trade) {
+	sort.Slice(trades, func(i, j int) bool { return TradeOrderLess(&trades[i], &trades[j]) })
+}
+
 // newLocalIndex sorts usable prices by trade time (ties by [TradeOrderLess], so order depends on the trade set, not the caller's merge
 // order) and partitions them into opts.Bucket-wide buckets.
 func newLocalIndex(trades []canonical.Trade, validIdx []int, prices []*big.Rat, weights []int64, opts LocalOutlierOptions) *localIndex {

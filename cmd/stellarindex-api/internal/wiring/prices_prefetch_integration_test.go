@@ -16,6 +16,7 @@ import (
 	"reflect"
 	"regexp"
 	"runtime"
+	"slices"
 	"testing"
 	"time"
 
@@ -161,6 +162,9 @@ func TestPriceBatchPrefetch_EndToEnd(t *testing.T) {
 	usd, xlm := canonical.Asset{Type: canonical.AssetFiat, Code: "USD"}, canonical.NativeAsset()
 	usdIDs := itSeed(t, ctx, store, rdb, "PU", 100, usd)
 	xlmIDs := itSeed(t, ctx, store, rdb, "PX", 40, xlm)
+	// Priced only against crypto:XLM: a quote=native row reaches them through the quote's alias walk.
+	aliasIDs := itSeed(t, ctx, store, rdb, "PC", 10, canonical.Asset{Type: canonical.AssetCrypto, Code: "XLM"})
+	xlmIDs = append(xlmIDs, aliasIDs...)
 	if _, err := store.DB().ExecContext(ctx, `CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`); err != nil {
 		t.Fatal(err)
 	}
@@ -208,6 +212,9 @@ func TestPriceBatchPrefetch_EndToEnd(t *testing.T) {
 			}
 			if len(got) == 0 || len(got) == len(tc.ids) {
 				t.Fatalf("%d of %d ids priced: the fixture lost its misses or its hits", len(got), len(tc.ids))
+			}
+			if tc.quote == "native" && !slices.ContainsFunc(aliasIDs, func(id string) bool { return got[id] != "" }) {
+				t.Fatal("no crypto:XLM-only id priced under quote=native: the quote-alias walk is not exercised")
 			}
 			for _, id := range tc.ids {
 				status, body := itGet(t, off.URL, "/v1/price?asset="+id+"&quote="+tc.quote)

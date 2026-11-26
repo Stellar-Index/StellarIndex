@@ -545,11 +545,8 @@ func (a AggregateConfig) validate() error {
 		return fmt.Errorf("%w: aggregate.min_route_confidence must be in [0,1], got %v",
 			ErrInvalidConfig, a.MinRouteConfidence)
 	}
-	for _, raw := range a.Pairs {
-		if _, err := parsePairString(raw); err != nil {
-			return fmt.Errorf("%w: aggregate.pairs entry %q: %w",
-				ErrInvalidConfig, raw, err)
-		}
+	if err := a.validatePairs(); err != nil {
+		return err
 	}
 	if err := a.CompositeReference.validate(a); err != nil {
 		return err
@@ -686,6 +683,24 @@ func parsePairString(s string) (canonical.Pair, error) {
 		return canonical.Pair{}, fmt.Errorf("quote: %w", err)
 	}
 	return canonical.NewPair(base, quote)
+}
+
+// validatePairs rejects an unparseable aggregate.pairs entry and a pair listed twice (same canonical base and quote), which
+// would be refreshed and written twice per tick. native, crypto:XLM and the XLM SAC stay distinct pairs.
+func (a AggregateConfig) validatePairs() error {
+	seen := make(map[canonical.Pair]int, len(a.Pairs))
+	for i, raw := range a.Pairs {
+		p, err := parsePairString(raw)
+		if err != nil {
+			return fmt.Errorf("%w: aggregate.pairs entry %q: %w", ErrInvalidConfig, raw, err)
+		}
+		if first, dup := seen[p]; dup {
+			return fmt.Errorf("%w: aggregate.pairs[%d] %q duplicates aggregate.pairs[%d] %q (%s)",
+				ErrInvalidConfig, i, raw, first, a.Pairs[first], p)
+		}
+		seen[p] = i
+	}
+	return nil
 }
 
 // AggregatorPairs resolves the configured pair strings, nil when none (callers use their default); validate() already rejects unparseable entries.

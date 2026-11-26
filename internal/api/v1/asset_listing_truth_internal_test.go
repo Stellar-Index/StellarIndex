@@ -46,6 +46,7 @@ func (t *truthAssetsReader) ListAssetsExtAt(
 }
 
 // TestClassicUnifiedPage_CarriesCacheFreshness: rows served past the cache TTL are flagged and dated by their read, not by now.
+// Age alone is stale, not degraded: with no failed or overrun refresh behind them they keep the normal Cache-Control.
 func TestClassicUnifiedPage_CarriesCacheFreshness(t *testing.T) {
 	observed := time.Now().Add(-40 * time.Minute).UTC().Truncate(time.Second)
 	s := &Server{AssetsReader: &truthAssetsReader{observedAt: observed, cacheStale: true}}
@@ -59,8 +60,8 @@ func TestClassicUnifiedPage_CarriesCacheFreshness(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v (%s)", err, rec.Body.String())
 	}
-	if !got.Flags.Stale || rec.Header().Get("Cache-Control") != "no-store" {
-		t.Errorf("stale = %v, Cache-Control = %q; want stale and no-store for rows past the cache TTL",
+	if !got.Flags.Stale || rec.Header().Get("Cache-Control") == "no-store" {
+		t.Errorf("stale = %v, Cache-Control = %q; want stale, not no-store, for rows merely past the cache TTL",
 			got.Flags.Stale, rec.Header().Get("Cache-Control"))
 	}
 	if !got.AsOf.Equal(observed) {

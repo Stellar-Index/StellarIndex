@@ -148,15 +148,21 @@ Responses served with `flags.degraded` (a carried-forward or partial body, sent 
 
 ### `stellarindex_api_degraded_responses_total`
 
-Counter, labels `route`, `reason` (`refresh_failed` / `refresh_overrun` / `provisional` / `section_dropped` / `other`).
+Counter, labels `route`, `reason` (`check_unread` / `section_dropped` / `partial_read` / `refresh_failed` / `refresh_overrun` / `refresh_refused` / `source_stale` / `provisional` / `request_cancelled` / `other`).
 
-The `flag="degraded"` share of `stellarindex_api_flagged_responses_total`, split by cause; `sum by (route)` of this equals that series. `refresh_failed`: the cached entry served was carried over a refresh that failed or was refused (the cache does not tell the two apart). `refresh_overrun`: the refresh in flight has outrun its budget. `provisional`: the cached payload declared itself provisional. `section_dropped`: a cold cache dropped a panel from the body. `other`: every path that sets `flags.degraded` without naming a cause (partial or unread upstream reads in the handlers). Age past the stale bound alone is `flag="stale"` and never appears here. The same reason is on the request log line as `degraded_reason`. Diagnostic only, not alerted: `stellarindex_api_degraded_responses_high` still fires on the flagged counter.
+The `flag="degraded"` share of `stellarindex_api_flagged_responses_total`, split by cause; `sum by (route)` of this equals that series. When several causes hold on one response the first of this list is the one counted. `check_unread`: a gate (issuer directory, source-exclusion scope) could not be read, so the response withholds pricing. `section_dropped`: a panel or overlay (asset catalogue extension) is missing from the body. `partial_read`: an upstream read failed (F2, SEP-1, decimals, home domain, a markets leg, a listing read), so the body is a lower bound. `refresh_failed`: the cached entry served was carried over a refresh that failed. `refresh_overrun`: the refresh in flight has outrun its budget. `refresh_refused`: no refresh slot was free, so the last good copy went out unrefreshed (`/v1/pools`, `/v1/markets`). `source_stale`: the observation itself (asset supply, price) is old, so a re-ask does not heal it. `provisional`: an older value (for the asset detail, the catalogue extension past its stale bound) was served while its refresh is in flight, so a re-ask within seconds heals it. `request_cancelled`: the request context died mid-build. `other`: every path that sets `flags.degraded` without naming a cause (lending, rwa, price, chart, oracle and cohort handlers). Age past the stale bound alone is `flag="stale"` and never appears here. The same reason is on the request log line as `degraded_reason`. Diagnostic only, not alerted: `stellarindex_api_degraded_responses_high` still fires on the flagged counter.
 
 ### `stellarindex_contracts_census_latest_day_timestamp_seconds`
 
 Gauge, no labels.
 
 Newest day in `stellar.contracts_census_daily` (UTC midnight, Unix seconds), set by the API each time the `/v1/contracts/stats` snapshot refreshes (hourly, while the page is read). `time() - value > 2*86400` means the census rollup has stalled; `/v1/contracts/stats` then serves `active_90d` as a lower bound. 0 until the first read. The gauge only moves when the page is read, so it is not alerted; a stalled rollup pages via `stellarindex_census_rollup_timer_stale`, which watches the timer.
+
+### `stellarindex_api_cache_fill_duration_seconds`
+
+Histogram, labels `cache`, `result`; buckets 10 ms to 30 s.
+
+How long the upstream call of a detached API cache fill took (the work behind a cold miss or a stale refresh). `cache` is the fill name, a fixed per-call-site string such as `api-markets-pairs-refresh`; never a key or asset id. `result`: `ok`, `error`, or `timeout` (the fill's own budget expired). A p99 near the 30 s fill budget means refreshes are close to running late. Not alerted.
 
 ### `stellarindex_api_cache_ops_total`
 
@@ -2114,6 +2120,10 @@ Gauge. Partitions present on both sides that the last run compared.
 ### `galexie_archive_upstream_last_success_unix`
 
 Gauge. Unix time the last completed comparison wrote the file.
+
+## Continuous-aggregate history (textfile collector, Go-emitted)
+
+Emitted into `data_freshness.prom` by `stellarindex-ops cagg-history -textfile`, which `data-freshness.sh` runs every 15 minutes; a failed run publishes none of them that tick. Each carries label `view`, one per registered continuous aggregate. `stellarindex_cagg_history_start_seconds` is the earliest bucket in the view's materialisation hypertable (absent when empty; a real-time view's unmaterialised tail does not count). `stellarindex_cagg_expected_start_seconds` is where its history should start: the source's earliest row (for `twap_*`, `prices_1m`'s expected start), raised by a documented floor (`trade_sums_1m`: 26 h) or an armed retention policy on the view or a non-`trades` source. `stellarindex_cagg_history_gap_seconds` is how far the first exceeds the bucket holding the second. The same run emits the 0/1 `stellarindex_cagg_history_missing` (`prices_*`) and `stellarindex_twap_history_missing` (`twap_*`), now gap > 1 day once the source is over 2 days old, and `stellarindex_trades_retention_present`, 1 when any retention policy exists on `trades` (never a floor).
 
 ## Changelog
 

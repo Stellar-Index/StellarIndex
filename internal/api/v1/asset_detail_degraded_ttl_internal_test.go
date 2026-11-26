@@ -102,22 +102,22 @@ func pastStaleBound(now *atomic.Int64) {
 	now.Add(int64(AssetCatalogueTTL + cacheFillBudget + time.Second))
 }
 
-// A degraded body lives assetDetailDegradedTTL, not the clean TTL: within it a repeat replays it, after it the refreshed
-// values rebuild a clean answer.
-func TestAssetDetail_DegradedEntryYieldsToRefreshedAnswer(t *testing.T) {
+// A body over a stale catalogue value lives assetDetailDegradedTTL, not the clean TTL: within it a repeat replays it, after it
+// the refreshed values rebuild a clean answer. The refresh it started has neither failed nor overrun, so it is not no-store.
+func TestAssetDetail_StaleCatalogueEntryYieldsToRefreshedAnswer(t *testing.T) {
 	s, c, up, now := newDetailTTLServer(t)
 	gate := up.hold()
 	pastStaleBound(now)
 
 	first := clientDetailGET(t, s)
-	if !first.flags.Stale || !first.noStore || first.hit {
-		t.Fatalf("first GET: flags=%+v no-store=%v hit=%v, want a stale no-store build", first.flags, first.noStore, first.hit)
+	if !first.flags.Stale || first.noStore || first.hit {
+		t.Fatalf("first GET: flags=%+v no-store=%v hit=%v, want a stale cacheable build", first.flags, first.noStore, first.hit)
 	}
 
 	now.Add(int64(assetDetailDegradedTTL - time.Second))
 	burst := clientDetailGET(t, s)
-	if !burst.hit || burst.body != first.body || !burst.noStore {
-		t.Errorf("repeat within %v: hit=%v same body=%v no-store=%v, want a no-store HIT of the stale body",
+	if !burst.hit || burst.body != first.body || burst.noStore {
+		t.Errorf("repeat within %v: hit=%v same body=%v no-store=%v, want a HIT of the stale body",
 			assetDetailDegradedTTL, burst.hit, burst.body == first.body, burst.noStore)
 	}
 

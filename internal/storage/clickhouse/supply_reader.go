@@ -17,6 +17,7 @@ type MintBurnFlow struct {
 	OpIndex    uint32
 	EventIndex uint32
 	Kind       string // "mint" | "burn" | "clawback"
+	TopicsXDR  []string
 	DataXDR    string
 }
 
@@ -44,7 +45,7 @@ func mintBurnFlowsQuery(useFinal bool) string {
 		final = "FINAL"
 	}
 	return fmt.Sprintf(`
-		SELECT ledger_seq, close_time, contract_id, tx_hash, op_index, event_index, topic_0_sym, data_xdr
+		SELECT ledger_seq, close_time, contract_id, tx_hash, op_index, event_index, topic_0_sym, topics_xdr, data_xdr
 		FROM stellar.contract_events %s
 		WHERE ledger_seq BETWEEN ? AND ?
 		  AND topic_0_sym IN ('mint','burn','clawback')`, final)
@@ -62,14 +63,15 @@ func streamMintBurnFlowRows(rows driver.Rows, fn func(MintBurnFlow) error) error
 			opIndex    uint32
 			eventIndex uint32
 			kind       string
+			topicsXDR  []string
 			dataXDR    string
 		)
-		if err := rows.Scan(&ledger, &closeTime, &contractID, &txHash, &opIndex, &eventIndex, &kind, &dataXDR); err != nil {
+		if err := rows.Scan(&ledger, &closeTime, &contractID, &txHash, &opIndex, &eventIndex, &kind, &topicsXDR, &dataXDR); err != nil {
 			return fmt.Errorf("clickhouse: scan mint/burn flow: %w", err)
 		}
 		if err := fn(MintBurnFlow{
-			Ledger: ledger, CloseTime: closeTime, ContractID: contractID,
-			TxHash: txHash, OpIndex: opIndex, EventIndex: eventIndex, Kind: kind, DataXDR: dataXDR,
+			Ledger: ledger, CloseTime: closeTime, ContractID: contractID, TxHash: txHash, OpIndex: opIndex,
+			EventIndex: eventIndex, Kind: kind, TopicsXDR: topicsXDR, DataXDR: dataXDR,
 		}); err != nil {
 			return err
 		}

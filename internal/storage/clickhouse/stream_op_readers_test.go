@@ -2,6 +2,7 @@ package clickhouse
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -610,9 +611,9 @@ func TestStreamMintBurnFlowRows_CarriesRawDataXDR(t *testing.T) {
 	}
 
 	rows := &stubRows{data: [][]any{
-		{uint32(50), at, "CDEADBEEF", "aa", uint32(0), uint32(2), "mint", dataXDR},
-		{uint32(51), at, "CDEADBEEF", "bb", uint32(1), uint32(0), "burn", dataXDR},
-		{uint32(52), at, "CDEADBEEF", "cc", uint32(0), uint32(0), "clawback", dataXDR},
+		{uint32(50), at, "CDEADBEEF", "aa", uint32(0), uint32(2), "mint", []string{"t0", "t1"}, dataXDR},
+		{uint32(51), at, "CDEADBEEF", "bb", uint32(1), uint32(0), "burn", []string{"t0", "t1"}, dataXDR},
+		{uint32(52), at, "CDEADBEEF", "cc", uint32(0), uint32(0), "clawback", []string{"t0", "t1"}, dataXDR},
 	}}
 	var got []MintBurnFlow
 	if err := streamMintBurnFlowRows(rows, func(f MintBurnFlow) error { got = append(got, f); return nil }); err != nil {
@@ -624,6 +625,9 @@ func TestStreamMintBurnFlowRows_CarriesRawDataXDR(t *testing.T) {
 	for i, want := range []string{"mint", "burn", "clawback"} {
 		if got[i].Kind != want {
 			t.Errorf("flow %d Kind = %q, want %q", i, got[i].Kind, want)
+		}
+		if !slices.Equal(got[i].TopicsXDR, []string{"t0", "t1"}) {
+			t.Errorf("flow %d TopicsXDR = %v, want [t0 t1]: the classifier needs the topics", i, got[i].TopicsXDR)
 		}
 		if got[i].DataXDR != dataXDR {
 			t.Errorf("flow %d DataXDR was altered in transit:\n got %q\nwant %q", i, got[i].DataXDR, dataXDR)
@@ -663,8 +667,8 @@ func TestStreamMintBurnFlowRows_EmptyAndErrorPaths(t *testing.T) {
 	}
 	stop := errors.New("stop")
 	rows := &stubRows{data: [][]any{
-		{uint32(1), nonUTC(t), "C1", "aa", uint32(0), uint32(0), "mint", "AAAA"},
-		{uint32(2), nonUTC(t), "C1", "bb", uint32(0), uint32(0), "burn", "AAAA"},
+		{uint32(1), nonUTC(t), "C1", "aa", uint32(0), uint32(0), "mint", []string{"AAAA"}, "AAAA"},
+		{uint32(2), nonUTC(t), "C1", "bb", uint32(0), uint32(0), "burn", []string{"AAAA"}, "AAAA"},
 	}}
 	seen := 0
 	if err := streamMintBurnFlowRows(rows, func(MintBurnFlow) error { seen++; return stop }); !errors.Is(err, stop) || seen != 1 {

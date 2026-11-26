@@ -5,6 +5,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -74,13 +75,32 @@ func (c *CachedAssetsReader) ListAssetsExtAt(
 // listingRefreshFailed peeks whether the last refresh of the cached listing for opts failed; it never starts one. This is
 // the failure half of the stale verdict ListAssetsExtAt returns, for a caller that judges the rows' age by its own bound.
 func (c *CachedAssetsReader) listingRefreshFailed(opts timescale.ListAssetsOptions) bool {
+	return c.listingLastGood(opts) == obs.DegradedRefreshFailed
+}
+
+// listingLastGood names why the cached listing for opts is a last-good copy, "" when it is not: its last refresh failed, or
+// the refresh in flight has run past its budget. Rows merely past their TTL are not: an idle key refreshes on demand.
+func (c *CachedAssetsReader) listingLastGood(opts timescale.ListAssetsOptions) string {
 	if c == nil || c.ttl <= 0 {
-		return false
+		return ""
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.entries[listAssetsCacheKey(opts)]
-	return ok && e.refreshFailed
+	if !ok || e.at.IsZero() {
+		return ""
+	}
+	return lastGoodCause(e.refreshFailed, e.flight != nil, time.Since(e.flightAt), assetsRefreshBudget)
+}
+
+// catalogueListingLastGood is [CachedAssetsReader.listingLastGood] through s.AssetsReader; "" for a reader without it.
+func (s *Server) catalogueListingLastGood(opts timescale.ListAssetsOptions) string {
+	if c, ok := s.AssetsReader.(interface {
+		listingLastGood(timescale.ListAssetsOptions) string
+	}); ok {
+		return c.listingLastGood(opts)
+	}
+	return ""
 }
 
 // catalogueListingsFailed is true when the catalogue's last refresh of any listing in reads failed.

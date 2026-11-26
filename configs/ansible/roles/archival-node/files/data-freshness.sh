@@ -36,6 +36,9 @@ fi
 # Debian's pg_wrapper psql aborts ("Invalid data directory") for users who cannot read the
 # cluster data dir, which User=stellarindex cannot; call the versioned binary directly.
 PSQL="/usr/lib/postgresql/${PG_VERSION:-15}/bin/psql"
+# The DSN reaches stellarindex-ops through the unit's EnvironmentFile, never argv.
+OPS=/usr/local/bin/stellarindex-ops
+CONFIG="${CONFIG_PATH:-/etc/stellarindex.toml}"
 
 OUT="${TEXTFILE_OUTPUT:-/var/lib/node_exporter/textfile_collector/data_freshness.prom}"
 TMP="$(mktemp "${OUT}.XXXXXX")"
@@ -54,10 +57,6 @@ PROBE_FAILED=0
   echo '# TYPE stellarindex_recognition_unattributed_shapes gauge'
   echo '# HELP stellarindex_recognition_ok UNRECOGNIZED EVENTS FROM A KNOWN PROTOCOL: 0 when a source WE INDEX emitted a (contract, topic) shape none of its decoders claimed, 1 when every shape on its owned contracts decodes. This is the bucket that means OUR bug — a protocol we promised to cover is silently dropping events — and it is the one worth paging on. Distinct from unattributed_shapes, which counts other people contracts and is inert.'
   echo '# TYPE stellarindex_recognition_ok gauge'
-  echo '# HELP stellarindex_cagg_history_missing 1 when a price continuous aggregate (prices_1m..prices_1mo) holds less history than the trades hypertable it aggregates — a migration recreated it WITH NO DATA, or a replay rewrote its base rows, and the manual refresh_continuous_aggregate follow-up never ran. Its refresh policy re-fills only a trailing sliver, so every newest-bar and last-refresh signal reads green while the back-history serves empty.'
-  echo '# TYPE stellarindex_cagg_history_missing gauge'
-  echo '# HELP stellarindex_twap_history_missing 1 when a TWAP continuous aggregate is missing the history prices_1m holds — a migration recreated/emptied it (WITH NO DATA) and the manual refresh_continuous_aggregate follow-up never ran.'
-  echo '# TYPE stellarindex_twap_history_missing gauge'
   # These families are composed inside the SQL blocks below; an undeclared family is scraped
   # untyped, so declare HELP/TYPE here.
   echo '# HELP stellarindex_supply_assets_stale Watched assets whose newest asset_supply_history row is older than 30h. An aggregate max(time) cannot see a PARTIAL freeze: on 2026-07-28 a handful of live assets kept it green while 37 of 48 had stopped (CS-102).'
@@ -278,60 +277,19 @@ fi
 # last-refresh checks read GREEN while back-history serves empty. The ADR-0033 verdict
 # cannot see it either (derived views are not reconcile TARGETS).
 #
-# Judge every view against `trades` (raw, kept forever), not prices_1m's own min(bucket):
-# 0147 empties prices_1m too, so that reference would be the policy's minutes-old sliver and
-# the gauge would publish a healthy 0 with no OHLC history. A view is emptied when it is
-# empty or its oldest bar trails the oldest trade by more than a day, except where an ARMED
-# retention policy (0156 ships one disabled on prices_1m) moves the floor to now()-drop_after;
-# reading timescaledb_information.jobs keeps that in step without a hardcoded window.
-#
-# Cheap: min(bucket)/min(ts) ride the time indexes. The 1-day slack absorbs time_bucket
-# rounding down; the 2-day gate keeps a fresh deploy's initial materialization quiet.
-# window from false-firing.
-if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -v ON_ERROR_STOP=1 -tA -F$'\t' >> "$TMP" <<'SQL'
-WITH base AS (SELECT min(ts) AS tmin FROM trades),
-     ret AS (
-       SELECT hypertable_name AS view_name,
-              (config->>'drop_after')::interval AS drop_after
-         FROM timescaledb_information.jobs
-        WHERE proc_name = 'policy_retention'
-          AND scheduled
-          AND config ? 'drop_after'
-     ),
-     v (view_name, vmin) AS (
-       VALUES ('prices_1m'::text, (SELECT min(bucket) FROM prices_1m)),
-              ('prices_15m',      (SELECT min(bucket) FROM prices_15m)),
-              ('prices_1h',       (SELECT min(bucket) FROM prices_1h)),
-              ('prices_4h',       (SELECT min(bucket) FROM prices_4h)),
-              ('prices_1d',       (SELECT min(bucket) FROM prices_1d)),
-              ('prices_1w',       (SELECT min(bucket) FROM prices_1w)),
-              ('prices_1mo',      (SELECT min(bucket) FROM prices_1mo)),
-              ('twap_1h',         (SELECT min(bucket) FROM twap_1h)),
-              ('twap_1d',         (SELECT min(bucket) FROM twap_1d))
-     ),
-     j AS (
-       SELECT v.view_name,
-              (CASE WHEN b.tmin IS NOT NULL
-                     AND b.tmin < now() - interval '2 days'
-                     AND (v.vmin IS NULL
-                          OR v.vmin > greatest(b.tmin,
-                                               now() - COALESCE(r.drop_after, interval '100 years'))
-                                      + interval '1 day')
-                    THEN 1 ELSE 0 END) AS missing
-         FROM v
-         CROSS JOIN base b
-         LEFT JOIN ret r ON r.view_name = v.view_name
-     )
-SELECT 'stellarindex_cagg_history_missing{view="'||view_name||'"} '||missing::text
-  FROM j WHERE view_name LIKE 'prices%'
-UNION ALL
-SELECT 'stellarindex_twap_history_missing{view="'||view_name||'"} '||missing::text
-  FROM j WHERE view_name LIKE 'twap%';
-SQL
-then
-  echo "data-freshness: emptied-continuous-aggregate detector query failed — its gauges skipped this tick, others unaffected" >&2
+# `stellarindex-ops cagg-history` measures every registered view from its materialisation
+# hypertable (a real-time view's own min(bucket) reads its unmaterialised tail as history)
+# against its source, a documented floor and any armed retention, and writes the
+# start/expected/gap gauges plus the legacy 0/1 history_missing gauges. It writes its
+# textfile only on success, so a failed run appends nothing: its gauges go absent this tick.
+CAGG_PROM="$(mktemp "${TMP}.XXXXXX")"
+if "$OPS" cagg-history -config "$CONFIG" -textfile "$CAGG_PROM" </dev/null >/dev/null; then
+  cat "$CAGG_PROM" >> "$TMP"
+else
+  echo "data-freshness: emptied-continuous-aggregate detector (stellarindex-ops cagg-history) failed — its gauges skipped this tick, others unaffected" >&2
   PROBE_FAILED=$((PROBE_FAILED + 1))
 fi
+rm -f "$CAGG_PROM"
 
 # A verdict can read complete=true while its watermark lags the network head (mid-walk stall,
 # small manual -to). Emit per-source lag (ingest cursor tip - verdict watermark) so that is

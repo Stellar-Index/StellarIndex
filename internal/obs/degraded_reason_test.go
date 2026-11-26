@@ -1,6 +1,7 @@
 package obs
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -77,5 +78,50 @@ func TestDegradedReasonOf(t *testing.T) {
 	}
 	if got := DegradedReasonOf(httptest.NewRecorder()); got != "" {
 		t.Errorf("DegradedReasonOf on an unrecorded writer = %q, want empty", got)
+	}
+}
+
+// Causes noted from the request context resolve by the documented precedence whatever order they arrive in, and the
+// per-reason counter sums to the flagged "degraded" series.
+func TestNoteDegradedCause_precedenceAndSum(t *testing.T) {
+	order := []string{
+		DegradedCheckUnread, DegradedSectionDropped, DegradedPartialRead, DegradedRefreshFailed,
+		DegradedRefreshOverrun, DegradedRefreshRefused,
+	}
+	for i := range order {
+		route := "/t/prec" + order[i]
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET "+route, func(w http.ResponseWriter, r *http.Request) {
+			for j := len(order) - 1; j >= i; j-- { // lowest precedence first
+				NoteDegradedCause(r.Context(), order[j])
+			}
+			MarkResponseFlags(w, true, true)
+		})
+		beforeFlagged := testutil.ToFloat64(APIFlaggedResponsesTotal.WithLabelValues(route, "degraded"))
+		HTTPMetrics(mux).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, route, nil))
+		sum := 0.0
+		for _, reason := range append([]string{DegradedProvisional, DegradedRequestCanceled, DegradedOther}, order...) {
+			n := testutil.ToFloat64(APIDegradedResponsesTotal.WithLabelValues(route, reason))
+			if want := map[bool]float64{true: 1, false: 0}[reason == order[i]]; n != want {
+				t.Errorf("%s reason=%s = %v, want %v", route, reason, n, want)
+			}
+			sum += n
+		}
+		if flagged := testutil.ToFloat64(APIFlaggedResponsesTotal.WithLabelValues(route, "degraded")) - beforeFlagged; sum != flagged {
+			t.Errorf("%s reasons sum %v != degraded series %v", route, sum, flagged)
+		}
+	}
+}
+
+func TestNoteDegradedCause_healthyAndUnwiredRecordNothing(t *testing.T) {
+	NoteDegradedCause(context.Background(), DegradedCheckUnread) // no recorder: must not panic
+	const route = "/t/healthy-note"
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET "+route, func(_ http.ResponseWriter, r *http.Request) {
+		NoteDegradedCause(r.Context(), DegradedRefreshRefused)
+	})
+	HTTPMetrics(mux).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, route, nil))
+	if n := testutil.ToFloat64(APIDegradedResponsesTotal.WithLabelValues(route, DegradedRefreshRefused)); n != 0 {
+		t.Errorf("a noted cause on a response that is not degraded was counted: %v", n)
 	}
 }

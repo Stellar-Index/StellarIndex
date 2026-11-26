@@ -561,6 +561,7 @@ lane_d() { # everything else
     echo "=== Ansible Postgres DSN encoding self-test ===" && ./scripts/ci/ansible-postgres-dsn-test.sh
     echo "=== Ansible API env file render self-test ===" && ./scripts/ci/ansible-api-env-test.sh
     echo "=== Ansible validated stellarindex.toml write self-test ===" && ./scripts/ci/ansible-config-check-test.sh
+    echo "=== Ansible USD-peg network gate self-test ===" && ./scripts/ci/ansible-usd-peg-network-gate-test.sh
     echo "=== Ansible Postgres WAL archiving render self-test ===" && ./scripts/ci/ansible-postgres-archive-test.sh
     echo "=== Ansible nftables per-source SSH rate-limit self-test ===" && ./scripts/ci/ansible-ssh-rate-limit-test.sh
     echo "=== Ansible prometheus archival-host guard self-test ===" && ./scripts/ci/ansible-prometheus-host-guard-test.sh
@@ -570,6 +571,7 @@ lane_d() { # everything else
     echo "=== Ansible ZFS ARC cap self-test ===" && ./scripts/ci/ansible-zfs-arc-cap-test.sh
     echo "=== Ansible Postgres log size-cap self-test ===" && ./scripts/ci/ansible-pg-logrotate-cap-test.sh
     echo "=== Ansible prometheus port var self-test ===" && ./scripts/ci/ansible-prometheus-port-var-test.sh
+    echo "=== Ansible local prometheus rules self-test ===" && ./scripts/ci/ansible-local-prometheus-rules-test.sh
     echo "=== Ansible patroni etcd TLS self-test ===" && ./scripts/ci/ansible-patroni-etcd-tls-test.sh
     echo "=== Patroni credential quoting self-test ===" && ./scripts/ci/lint-patroni-basic-auth-quoting-test.sh
     echo "=== Ansible node-exporter-collectors install self-test ===" && ./scripts/ci/ansible-node-exporter-collectors-install-test.sh
