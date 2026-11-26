@@ -20,7 +20,7 @@ func TestProjectedRebuildRefresh(t *testing.T) {
 	var out bytes.Buffer
 	call := func(source string, write, refresh bool, runErr error) error {
 		out.Reset()
-		r := projectedRebuildRefresh("/etc/si.toml", source, write, refresh, 100, 200)
+		r := projectedRebuildRefresh("/etc/si.toml", source, write, refresh, 100, 200, nil)
 		return refreshAfterRebuild(context.Background(), &out, r, func(context.Context) error {
 			ranges = append(ranges, [2]uint32{r.lo, r.hi})
 			return runErr
@@ -46,6 +46,32 @@ func TestProjectedRebuildRefresh(t *testing.T) {
 	err := call("soroswap", true, true, errors.New("lock timeout"))
 	if err == nil || !strings.Contains(err.Error(), wantRefreshFollowUp) {
 		t.Fatalf("failed refresh: err=%v, want an error naming %q", err, wantRefreshFollowUp)
+	}
+}
+
+// An -only-kinds run that keeps no trade kind writes no row an aggregate is built on: it skips the refresh and says so
+// rather than printing a follow-up as owed. One that keeps the trade kind refreshes as an unfiltered run does.
+func TestProjectedRebuildRefresh_OnlyKinds(t *testing.T) {
+	refreshes := 0
+	var out bytes.Buffer
+	call := func(source string, write, refresh bool, only kindFilter) error {
+		out.Reset()
+		r := projectedRebuildRefresh("/etc/si.toml", source, write, refresh, 100, 200, only)
+		return refreshAfterRebuild(context.Background(), &out, r, func(context.Context) error { refreshes++; return nil })
+	}
+
+	if err := call("aquarius", true, true, kindFilter{"aquarius.liquidity"}); err != nil || refreshes != 0 ||
+		!strings.Contains(out.String(), "aggregate refresh SKIPPED, nothing owed") {
+		t.Fatalf("liquidity-only -write: err=%v refreshes=%d out=%q, want no refresh and the stated skip", err, refreshes, out.String())
+	}
+	if err := call("aquarius", true, false, kindFilter{"aquarius.liquidity"}); err != nil || strings.Contains(out.String(), "OWED") {
+		t.Fatalf("liquidity-only -refresh-caggs=false: err=%v out=%q, nothing is owed", err, out.String())
+	}
+	if err := call("aquarius", true, true, kindFilter{"aquarius.liquidity", "aquarius.trade"}); err != nil || refreshes != 1 {
+		t.Fatalf("filter keeping aquarius.trade: err=%v refreshes=%d, want the refresh", err, refreshes)
+	}
+	if err := call("band", true, true, kindFilter{"band.update"}); err != nil || refreshes != 2 {
+		t.Fatalf("oracle source filter: err=%v refreshes=%d, want the refresh (oracle_updates feeds the aggregates)", err, refreshes)
 	}
 }
 

@@ -517,13 +517,13 @@ No `exhausted` counterpart exists; exhaustion is covered by `stellarindex_ingest
 
 Gauge, label `source`.
 
-Factory children admitted to a decoder gate whose row (`protocol_contracts`, `soroswap_pairs`, `sushiswap_v3_pools`) has not been written: the write failed and is retried every 5 s. Above 0, a restart loses the child. Alerted by `stellarindex_gate_admission_unpersisted`.
+Factory children admitted to a decoder gate whose row (`protocol_contracts`, `soroswap_pairs`, `sushiswap_v3_pools`, `aquarius_pools`) has not been written: the write failed and is retried every 5 s. A write refused permanently (an `aquarius_pools` type conflict) is counted in the failures total and dropped, not kept here. Above 0, a restart loses the child. Alerted by `stellarindex_gate_admission_unpersisted`.
 
 ### `stellarindex_gate_admission_persist_failures_total`
 
 Counter, label `source`.
 
-Failed writes of a live gate admission, first attempts and retries.
+Failed writes of a live gate admission, first attempts and retries, including `aquarius_pools` writes refused for a pool type that contradicts the in-code pool lists or the stored type.
 
 ### `stellarindex_source_insert_errors_total`
 
@@ -643,9 +643,9 @@ Any increase matters; it is zero when healthy. A climb tracking `stellarindex_ch
 
 ### `stellarindex_supply_flow_skipped_total`
 
-Counter, label `reason` (`not_token_shaped` | `judged_non_token` | `amount_not_i128` | `body_unparseable`). Every reason is seeded at zero. `judged_non_token` is a contract recorded in `judgedNonToken` as no token, for its recorded reason only; like `not_token_shaped` it loses no supply.
+Counter, label `reason` (`topic_not_token_shaped` | `not_token_shaped` | `judged_non_token` | `topic_unparseable` | `amount_not_i128` | `body_unparseable`). Every reason is seeded at zero. `judged_non_token` is a contract recorded in `judgedNonToken` as no token, for its recorded reason only; like the two not-token-shaped reasons it loses no supply.
 
-Mint, burn and clawback events the lake extract wrote to `contract_events` with no `supply_flows` row. `not_token_shaped` is a foreign contract's body that is neither a bare i128 nor a map carrying `amount` (an NFT's u32 token id): no supply is lost. `amount_not_i128` and `body_unparseable` are a token-shaped body whose amount did not decode, so that token's supply sum is short. Alert `stellarindex_supply_flow_skipped` (reasons other than `not_token_shaped`).
+Mint, burn and clawback events the lake extract wrote to `contract_events` with no `supply_flows` row. `topic_not_token_shaped` is an event without an Address at topic 1 (topics 1 and 2 for a transfer), such as a pool's one-topic `mint`; `not_token_shaped` is token-shaped topics with a body that is neither a bare i128 nor a map carrying `amount` (an NFT's u32 token id): no supply is lost. `topic_unparseable` is a topic that is not ScVal XDR; `amount_not_i128` and `body_unparseable` are a token-shaped body whose amount did not decode; each may short a token's supply sum. Alert `stellarindex_supply_flow_skipped` (reasons other than the two not-token-shaped ones and `judged_non_token`).
 
 ### `stellarindex_sink_undrained_rows_total`
 

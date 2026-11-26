@@ -9,7 +9,7 @@ import (
 )
 
 // hashesWithoutFixture is the count of attested hashes with no captured-event fixture; it may only fall.
-const hashesWithoutFixture = 127
+const hashesWithoutFixture = 125
 
 // A newly attested hash must ship a captured event under test/fixtures/<source>/<hash>/ (wasm-audits README §3).
 func TestManifest_NewHashNeedsFixture(t *testing.T) {

@@ -1,0 +1,14 @@
+{
+  "contract_id": "CBQ6AGQYE5HCDK7VIDUH6756IFPBTLF2HNQH57DAFMOHK3CVDH4CAMXO",
+  "wasm_hash": "155a17b9929ffb1f9e84bd6ef5c00a4d613c1ab5f4ad4c502d84515250cc2907",
+  "ledger": 65675489,
+  "tx_hash": "c755184d1e95d5bafbc25f33b7543e680f11b36121be85286c1ebd363bc0dedf",
+  "op_index": 0,
+  "event_index": 6,
+  "ledger_closed_at": "2026-11-26T03:25:09Z",
+  "topics": [
+    "AAAADwAAAApwb29sX3N0YXRlAAA="
+  ],
+  "value": "AAAAEAAAAAEAAAADAAAACwAAAAAAAAAAAAAAAAAAAAAAAAAAA3lEM2gt5Wb6piKUAAAABP/+sAwAAAAKAAAAAAAAAAAAAAAAZyMf8w==",
+  "event_name": "pool_state"
+}

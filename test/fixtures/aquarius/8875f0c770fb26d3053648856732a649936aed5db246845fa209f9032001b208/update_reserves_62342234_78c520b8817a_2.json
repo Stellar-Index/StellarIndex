@@ -1,0 +1,14 @@
+{
+  "contract_id": "CA4HTZNY2RBZWEQE5GBMNREZMFRPAZSVJ6OGPC7T3VM7NHRJYFAVID2S",
+  "wasm_hash": "8875f0c770fb26d3053648856732a649936aed5db246845fa209f9032001b208",
+  "ledger": 62342234,
+  "tx_hash": "78c520b8817ac944ddb17fa763a6b842e7897d03f40529f1bfb86797a777fa4f",
+  "op_index": 0,
+  "event_index": 2,
+  "ledger_closed_at": "2026-04-29T15:58:02Z",
+  "topics": [
+    "AAAADwAAAA91cGRhdGVfcmVzZXJ2ZXMA"
+  ],
+  "value": "AAAAEAAAAAEAAAACAAAACgAAAAAAAAAAAAAAWmUsKksAAAAKAAAAAAAAAAAAAHHMchFyWg==",
+  "event_name": "update_reserves"
+}

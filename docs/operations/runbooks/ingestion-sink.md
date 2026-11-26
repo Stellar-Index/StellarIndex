@@ -254,9 +254,9 @@ Fix: if lost, restore the row with the per-label command in [stellarindex_gate_a
 
 ## stellarindex_gate_admission_unpersisted
 
-Symptom: `stellarindex_gate_admissions_unpersisted{source=...}` above 0 for 5 minutes. A factory created a child (a Blend pool, a Soroswap pair, a SushiSwap pool) and the row that records it (`protocol_contracts`, `soroswap_pairs`, `sushiswap_v3_pools`) was not written. The indexer holds the child in memory and retries the write every 5 s.
+Symptom: `stellarindex_gate_admissions_unpersisted{source=...}` above 0 for 5 minutes. A factory created a child (a Blend pool, a Soroswap pair, a SushiSwap pool) and the row that records it (`protocol_contracts`, `soroswap_pairs`, `sushiswap_v3_pools`, `aquarius_pools`) was not written. The indexer holds the child in memory and retries the write every 5 s. A permanently refused `aquarius_pools` write (a type contradicting the in-code pool lists or the stored row) is not kept: it raises `stellarindex_gate_admission_persist_failures_total{source="aquarius_pools"}` and an ERROR (`refused permanently` or `contradicts the in-code pool list`), never this gauge; recover it with the SQL in step 2.
 
-Do NOT restart or deploy the indexer while this fires. After a restart the creation event is behind the cursor, so only the row re-admits the child; without it every later event of that contract is dropped as foreign, with no error counter.
+Do NOT restart or deploy the indexer while this fires (exception: `source="aquarius_pools"` once its row is restored by the step 2 SQL, since the warm then re-admits the pool from the table). After a restart the creation event is behind the cursor, so only the row re-admits the child; without it every later event of that contract is dropped as foreign, with no error counter.
 
 Check:
 
@@ -271,6 +271,12 @@ Fix:
 2. If the indexer was restarted while the gauge was above 0 (journal: `gate admission LOST at shutdown`, its `source=` is the gauge label), restore the lost row per label, then restart the indexer so the gate warms from the table, and re-derive the affected range ([replay decision rule](../../architecture/ingest-pipeline.md#the-replay-decision-rule)). Every command is a dry run until `-write` is added, and needs `-config`:
    - `soroswap` (`soroswap_pairs`): `stellarindex-ops seed-soroswap-pairs -config /etc/stellarindex.toml -write` (reads the factory over stellar-rpc, insert-only).
    - A gated factory source (`blend`, `blnt`, `aquarius`, `comet`, `phoenix`, `spectra`, ...; `protocol_contracts`): `stellarindex-ops seed-protocol-contracts -config /etc/stellarindex.toml -source <label> -write`. The tool rejects any name outside the gated-source registry (`gatedSources` in `internal/pipeline/gated_registry.go`).
+   - `aquarius_pools` (`aquarius_pools`): no command rewrites this table. Every row is trusted into the gate at boot, so write only a pool the router's `add_pool` announced, with its type verbatim from that event. The boot warm WARNs "NO liquidity layout" for a pool with no layout, and ERRORs naming a pool whose row contradicts the in-code lists (that pool's liquidity is refused; the indexer still starts). Fix one of:
+     - a lost row for a pool in neither list (the cheap path): `INSERT INTO aquarius_pools (contract_id, pool_type, first_ledger) VALUES ('<pool>', '<add_pool type>', <add_pool ledger>) ON CONFLICT DO NOTHING;`
+     - a row contradicting the in-code lists: `DELETE FROM aquarius_pools WHERE contract_id = '<pool>';` (the in-code list types the pool afterwards);
+     - or add the pool to `aquarius.MainnetPools` / `MainnetConcentratedPools` by its type, or run `stellarindex-ops projector-replay -config /etc/stellarindex.toml -source aquarius -from <add_pool ledger> -write` so the live indexer re-records it.
+
+     Then restart the indexer so the warm reads the table.
    - `sushiswap_v3_pools` (`sushiswap_v3_pools`): no command rewrites this table. `seed-protocol-contracts -source sushiswap_v3 -write` restores only the `protocol_contracts` row, not the pool's token attributes the decoder seeds from. Escalate; do not close the incident on that command.
 
 ## Related

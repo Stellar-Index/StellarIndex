@@ -3,6 +3,7 @@ package aquarius
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -23,8 +24,34 @@ func NewDecoder(opts ...contractid.Option) *Decoder {
 	base := []contractid.Option{
 		contractid.WithFactories([]string{MainnetRouter}),
 		contractid.WithSeed(MainnetGatedSet()),
+		contractid.WithAttrSeed(mainnetLayoutSeed()),
 	}
 	return &Decoder{reg: contractid.New(append(base, opts...)...)}
+}
+
+// mainnetLayoutSeed types the in-code pools; the curated set predates concentrated pools.
+func mainnetLayoutSeed() map[string]contractid.Attrs {
+	seed := make(map[string]contractid.Attrs, len(MainnetPools)+len(MainnetConcentratedPools))
+	for _, p := range MainnetPools {
+		seed[p] = contractid.Attrs{AttrLiquidityLayout: LayoutSharesLast}
+	}
+	for _, p := range MainnetConcentratedPools {
+		seed[p] = contractid.Attrs{AttrLiquidityLayout: LayoutConcentrated}
+	}
+	return seed
+}
+
+// admitPool registers an announced pool. The first layout wins: a re-announcement implying another layout, or none,
+// keeps the pool's attributes, since changing the layout of a live pool would decode its later bodies in a wrong order.
+func (d *Decoder) admitPool(pool, poolType string, ev *events.Event) {
+	attrs := PoolAttrs(poolType)
+	if have := d.reg.AttrsOf(pool)[AttrLiquidityLayout]; have != "" && have != attrs[AttrLiquidityLayout] {
+		slog.Warn("aquarius: add_pool re-announced a pool with a different type; keeping its first layout",
+			"pool", pool, "pool_type", poolType, "layout", have, "ledger", ev.Ledger)
+		d.reg.Seed(pool, ev.ContractID, ev.Ledger)
+		return
+	}
+	d.reg.SeedWithAttrs(pool, ev.ContractID, ev.Ledger, attrs)
 }
 
 // Name implements [dispatcher.Decoder].
@@ -32,6 +59,18 @@ func (*Decoder) Name() string { return SourceName }
 
 // GatedContractSet returns the current gate (router plus every registered pool) as the contract-id prefilter for the completeness re-derive; it reflects only pools registered so far, so seed the registry first for in-window pools.
 func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
+
+// UnlayeredPools lists the gated pools (router excluded) that have no liquidity layout yet, from neither an in-code list,
+// an aquarius_pools row nor an add_pool this decoder has seen; their deposits and withdraws are refused.
+func (d *Decoder) UnlayeredPools() []string {
+	var out []string
+	for _, id := range d.reg.GatedSet() {
+		if id != MainnetRouter && d.reg.AttrsOf(id)[AttrLiquidityLayout] == "" {
+			out = append(out, id)
+		}
+	}
+	return out
+}
 
 // Matches implements [dispatcher.Decoder], gating on contract identity, not topic bytes (ADR-0035/0040): a pool `trade` matches only from a registered pool (the bare Symbol("trade") topic is forgeable by look-alike routers and forks), the router's `add_pool` only from the canonical router (trust root); an unregistered real pool fails closed into a recognition gap.
 func (d *Decoder) Matches(ev events.Event) bool {
@@ -77,13 +116,13 @@ func isNotATrade(err error) bool {
 // Decode implements [dispatcher.Decoder], returning one TradeEvent per successful pool-trade decode (single-pair); a router `add_pool` registers the new pool in the gate and emits nothing ((nil, nil)), and Seed fires the persistence hook.
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	if isAddPool(&ev) {
-		pool, err := decodeAnnouncedPool(&ev)
+		pool, poolType, err := decodeAnnouncedPool(&ev)
 		if err != nil {
 			return nil, err
 		}
 		// Matches() guaranteed the emitter is the canonical router, so the announced address
 		// is a genuine pool; ev.ContractID is the provenance.
-		d.reg.Seed(pool, ev.ContractID, ev.Ledger)
+		d.admitPool(pool, poolType, &ev)
 		return nil, nil
 	}
 	closedAt, err := ev.EventClosedAt()
@@ -103,18 +142,8 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	case EventKillDeposit, EventUnkillDeposit, EventKillSwap, EventUnkillSwap,
 		EventKillClaim, EventUnkillClaim, EventKillGaugesClaim, EventUnkillGaugesClaim:
 		return emitKill(&ev, closedAt, kind)
-	case EventDepositLiquidity:
-		lq, err := decodeLiquidity(&ev, LiquidityDeposit, closedAt)
-		if err != nil {
-			return nil, err
-		}
-		return []consumer.Event{lq}, nil
-	case EventWithdrawLiquidity:
-		lq, err := decodeLiquidity(&ev, LiquidityWithdraw, closedAt)
-		if err != nil {
-			return nil, err
-		}
-		return []consumer.Event{lq}, nil
+	case EventDepositLiquidity, EventWithdrawLiquidity:
+		return d.emitLiquidity(&ev, closedAt, kind)
 	case EventPoolState, EventClaimReward, EventSetRewardsConfig, EventPositionUpdate,
 		EventGaugeDeposit, EventClaimFees, EventRewardsGaugeClaim, EventGaugeClaim,
 		EventRewardsGaugeScheduleReward, EventSetRewardsState, EventRewardsGaugeAdd,
@@ -156,6 +185,31 @@ func emitFee(ev *events.Event, closedAt time.Time, kind string) ([]consumer.Even
 		return nil, err
 	}
 	return []consumer.Event{fe}, nil
+}
+
+// emitLiquidity decodes a liquidity event in the emitting pool's registered body layout. An unknown layout fails loud:
+// both layouts have the same arity, so decoding in a default order would write plausible wrong amounts.
+func (d *Decoder) emitLiquidity(ev *events.Event, closedAt time.Time, kind string) ([]consumer.Event, error) {
+	action := LiquidityDeposit
+	if kind == EventWithdrawLiquidity {
+		action = LiquidityWithdraw
+	}
+	var (
+		lq  LiquidityEvent
+		err error
+	)
+	switch layout := d.reg.AttrsOf(ev.ContractID)[AttrLiquidityLayout]; layout {
+	case LayoutSharesLast:
+		lq, err = decodeLiquidity(ev, action, closedAt)
+	case LayoutConcentrated:
+		lq, err = decodeConcentratedLiquidity(ev, action, closedAt)
+	default:
+		err = fmt.Errorf("%w: %s from %s", ErrUnknownLiquidityLayout, kind, ev.ContractID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return []consumer.Event{lq}, nil
 }
 
 // emitKill builds a KillEvent for a pool circuit-breaker toggle. These carry no body (SCV_VOID), so

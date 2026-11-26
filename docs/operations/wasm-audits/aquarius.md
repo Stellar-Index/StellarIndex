@@ -104,13 +104,18 @@ body (a 4-tuple fails the arity check: fail-loud).
 ### Pool-type orthogonality
 
 Volatile / stableswap / concentrated pools all publish the same
-4-topic + 3-tuple-body shape, so one decoder covers all three.
-**Concentrated pools** (feature-branch, no live mainnet
-pools) have no decoder guard: the router's `add_pool` registers any
-announced pool without a WASM-hash or pool-type check, and a
-registered pool's 4-topic, 3×i128 `trade` decodes. If concentrated
-pools ship live, re-verify the trade event shape first (the body
-might gain concentrated-tick info).
+4-topic + 3-tuple `trade` body, so one trade decoder covers all three.
+**Concentrated pools are live**: 63 router `add_pool` events, the first at
+ledger 62,339,683, announce type `concentrated` (census 2026-11-26). On
+`CABOSWXYBLE2UJKYWITFRICR37D4UOB75CNXIH7VI5ZKKL526GFHXAUI` the one
+`trade` (ledger 65,678,793) is `[sold, bought, fee]` and moves
+`update_reserves` accordingly, but `deposit_liquidity` and
+`withdraw_liquidity` are `[liquidity, amount0, amount1]` rather than the
+classic `[amount0, amount1, shares]` with the same arity. The decoder
+therefore decodes liquidity by the pool's layout from `add_pool` and
+refuses a pool whose layout is unknown; see
+[docs/protocols/aquarius.md](../../protocols/aquarius.md#concentrated-liquidity-pools)
+and the 2026-11-26 event-shape check below.
 
 ## Failure modes specific to Aquarius
 
@@ -124,10 +129,11 @@ might gain concentrated-tick info).
    check; every trade dropped (fail-loud).
 5. **i128 → u128 amount type swap** — `scval.AsAmountFromI128` is
    strict; errors per trade. Unlikely.
-6. **New pool type with extended body** — concentrated/v2 pools might
-   publish a longer body or different topics. Nothing refuses a new family
-   whose body is still 3×i128; this audit is the only check, so new
-   pool types need new audit entries.
+6. **New pool type with a reordered or extended body** — concentrated
+   pools reorder `deposit_liquidity` / `withdraw_liquidity` at the same arity (above). Liquidity
+   decoding is keyed on the pool's announced layout, but `trade` and
+   `update_reserves` are not, so a new pool type still needs a new audit
+   entry.
 7. **User topic moved or removed** — topic[3] is
    `Address(user)`; removal changes arity 4 → 3 (fail-loud).
 
@@ -390,8 +396,8 @@ Byte offsets in the base64-decoded XDR (big-endian words):
 | | body[2] u64 | 72 – 83 | 1,795,666,520 |
 
 The two `add_pool` events announce pools of type `concentrated`; the decoder
-registers each announced address in its contract-identity gate and emits no
-event, and does not branch on pool type. The two announced pools are not
+registers each announced address in its contract-identity gate with the
+`concentrated` liquidity layout and emits no event. The two announced pools are not
 `CBTOQ7X7TLDBRHJW4UYUDR7WR4NAYESZA7FYUZVLAN2JLQG5ZXWJJIG6`.
 
 Pool-side anchor: in the same transaction (ledger 65,667,281, `9ec5f48b…99cf`)
@@ -424,6 +430,76 @@ same change in the pool and router together, and it is not a token transfer.
 This is a string, shape and six-event decode check only; the decoder was not
 re-run against a replay. The hash is in `audited_wasm.json`.
 
+## Event-shape check — concentrated pools on `155a17b9…`, 2026-11-26
+
+`155a17b9929ffb1f9e84bd6ef5c00a4d613c1ab5f4ad4c502d84515250cc2907` was already
+in `audited_wasm.json` from the 2026-10-08 string check (41 contracts then).
+On 2026-11-26 it runs on 79 contracts (`stellar.contract_instance_changes`):
+all 63 router-announced concentrated pools plus 16 the router never
+announced. No concentrated pool runs another hash today. Over the 63 pools'
+instance history they ran four builds, all in `audited_wasm.json`:
+
+| hash | pools | first – last instance change |
+| --- | ---: | --- |
+| `8875f0c7…` | 9 | 62,339,683 – 62,475,443 |
+| `1d728cc0…` | 13 | 62,433,116 – 62,877,765 |
+| `12fca5a7…` | 37 | 62,875,836 – 64,799,639 |
+| `155a17b9…` | 63 | 64,736,662 – 65,680,336 |
+
+All four emit the concentrated body order: 400 deposit transactions sampled
+from 62,341,446 – 64,577,704 (the three earlier builds) have body[0] equal
+to the same-tx `position_update` delta, and 300 withdraws from
+62,341,437 – 62,413,470 have body[0] equal to minus it.
+
+**Correction, 2026-11-26.** The 2026-04-29 sign-off of `8875f0c7…`
+("rewards-enhanced variant", "matches current decoder", Per-hash review
+findings above) and the 2026-10-08 string check of `1d728cc0…`, `12fca5a7…`
+and `155a17b9…` passed these builds for a decoder that read every
+`deposit_liquidity` / `withdraw_liquidity` body as `[amount_0, amount_1,
+shares]`. For these concentrated builds that was wrong: the body is
+`[liquidity, amount0, amount1]`. A string check cannot see body order, and the
+2026-10-08 lake check of N+1 amounts covered only the four builds without
+`update_reserves`. The evidence now is the 400 deposits and 300 withdraws
+above plus the fixtures below.
+
+Byte search of the `155a17b9…` blob (base64 length 147,132), 2026-11-26:
+every listed literal is present — `position_update`, `pool_state`,
+`claim_reward`, `claim_fees`, `set_rewards_config`, `concentrated`, `tick`,
+`sqrt_price`, `deposit_liquidity`, `withdraw_liquidity`, `update_reserves`,
+`trade`.
+
+Fixtures: `test/fixtures/aquarius/155a17b9…/` holds every `deposit_liquidity`
+the two pools emitted (four), each with the same-transaction
+`update_reserves`, `position_update` and `pool_state`, and `CABOSWXY…`'s one
+`trade` with its `update_reserves` and `pool_state`; the router's third
+concentrated `add_pool` (65,675,330) is under `2f8e7d7f…/`.
+`TestConcentratedDeposit_fixturesCrossCheckAgainstSameTxEvents` asserts, per
+deposit transaction, that body[0] equals the `position_update` delta and that
+`update_reserves` equals the running sums of body[1] and body[2];
+`TestConcentratedTrade_reserveMovesByBoughtAmount` asserts the trade lowers
+reserve[0] by exactly the bought amount. The trade (fee 13 on 12,635 sold, the
+pool's `add_pool` announcing 10 bps) is too small to tell the gross and net fee
+conventions apart, so it is not in the fee census.
+
+First-build fixtures: `test/fixtures/aquarius/8875f0c7…/` holds three real
+`withdraw_liquidity` transactions with their `update_reserves` and
+`position_update` — single-sided token1 (62,341,437 `CCV2X5TH…`), single-sided
+token0 (62,342,234 `CA4HTZNY…`) and two-sided (62,342,237 `CA4HTZNY…`) — and
+`CCV2X5TH…`'s deposit at 62,341,446. All four are before 62,433,116, the
+first instance change to any other build, so they ran `8875f0c7…`.
+`TestConcentratedDeposit_firstBuildCrossCheck` asserts the deposit's body[0]
+equals its `position_update` delta and that reserves rise from the 62,341,437
+withdraw by exactly its amounts. No fixture pins `1d728cc0…` or `12fca5a7…`:
+the sampled rows do not say which build each pool ran at a given ledger.
+`TestConcentratedWithdraw_fixturesCrossCheckAgainstSameTxEvents` asserts the
+hand-decoded values and body[0] == −(`position_update` delta);
+`TestConcentratedWithdraw_reservesFallByAmounts` asserts `CA4HTZNY…`'s
+reserves fall between its two consecutive withdraws by exactly the second
+one's body[1] and body[2]. The same body[0] == −delta relation holds in all
+300 withdraw transactions sampled from 62,341,437 – 62,413,470.
+
+Not established: what the 16 unannounced contracts on this hash are.
+
 ## Caveats
 
 - **Per-pool WASM history walked end-to-end as of 2026-04-30.**
@@ -434,12 +510,13 @@ re-run against a replay. The hash is in `audited_wasm.json`.
   pool WASM compiled from the aquarius-amm tree.
 - **New pools deployed after 2026-04-29 not in this audit.**
   Re-run the enumeration when extending `last_verified`.
-- **No pool-type gate.** Classification doesn't gate on
+- **Pool type gates liquidity decoding only.** Classification doesn't gate on
   pool type or WASM hash — it matches
   topic[0] = Symbol("trade") regardless of variant. All
-  three pool types in production (including the 6
-  rewards-enhanced pools) emit the same trade-event shape via the
-  shared events crate, so the decoder works on all of them.
+  pool types in production (including the 6
+  rewards-enhanced pools) emit the same trade-event shape, as does the one
+  `trade` observed on a concentrated pool. `deposit_liquidity` / `withdraw_liquidity` are decoded
+  by the pool's layout (Pool-type orthogonality, above).
 
 ## References
 

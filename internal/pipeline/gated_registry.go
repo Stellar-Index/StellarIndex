@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
@@ -230,17 +232,9 @@ func gatedRegistryOptions(
 ) (map[string][]contractid.Option, error) {
 	out := make(map[string][]contractid.Option, len(gatedSources))
 	admissions := newGateAdmissions(hookCtx, logger)
-	sushiOpts, err := sushiswapPoolOptions(ctx, store, logger, admissions, withHook)
+	extra, aquaTyped, err := attrTableOptions(ctx, store, logger, admissions, withHook)
 	if err != nil {
 		return nil, err
-	}
-	spectraOpts, err := spectraMarketOptions(ctx, store, logger)
-	if err != nil {
-		return nil, err
-	}
-	extra := map[string][]contractid.Option{
-		sushiswap_v3.SourceName: sushiOpts,
-		spectra.SourceName:      spectraOpts,
 	}
 	for source, meta := range gatedSources {
 		ids, err := store.LoadProtocolContracts(ctx, source)
@@ -297,6 +291,7 @@ func gatedRegistryOptions(
 			"source", source, "factories", meta.Factories,
 			"children", len(ids), "curated", len(meta.CuratedSet),
 			"gated", len(seed), "reconciled", reconciled)
+		warnUnlayeredAquariusPools(logger, source, withoutContracts(ids, aquaTyped))
 
 		// Only a factory-anchored source without a curated set reaches this before its genesis walk: its gate is whatever the decoder seeds from code,
 		// so a missing child is dropped silently. The remedy works because such decoders admit children from creation events.
@@ -312,6 +307,124 @@ func gatedRegistryOptions(
 		out[source] = opts
 	}
 	return out, nil
+}
+
+// attrTableOptions warms the sources whose children carry attributes in a table of their own, keyed by source; it
+// also returns the aquarius pools that table types.
+func attrTableOptions(
+	ctx context.Context,
+	store protocolContractStore,
+	logger *slog.Logger,
+	admissions *gateAdmissions,
+	withHook bool,
+) (map[string][]contractid.Option, []string, error) {
+	sushiOpts, err := sushiswapPoolOptions(ctx, store, logger, admissions, withHook)
+	if err != nil {
+		return nil, nil, err
+	}
+	spectraOpts, err := spectraMarketOptions(ctx, store, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	aquaOpts, aquaTyped, err := aquariusPoolOptions(ctx, store, logger, admissions, withHook)
+	if err != nil {
+		return nil, nil, err
+	}
+	return map[string][]contractid.Option{
+		sushiswap_v3.SourceName: sushiOpts,
+		spectra.SourceName:      spectraOpts,
+		aquarius.SourceName:     aquaOpts,
+	}, aquaTyped, nil
+}
+
+// warnUnlayeredAquariusPools surfaces warmed aquarius pools in neither in-code list nor aquarius_pools with a mappable
+// type (ids excludes the latter); until typed, their deposit/withdraw events are refused as decode_error.
+func warnUnlayeredAquariusPools(logger *slog.Logger, source string, ids []string) {
+	if source != aquarius.SourceName {
+		return
+	}
+	if missing := aquarius.PoolsWithoutLayout(ids); len(missing) > 0 {
+		logger.Warn("aquarius pools warmed with NO liquidity layout — their deposit/withdraw events are refused "+
+			"until each is added to aquarius.MainnetPools or MainnetConcentratedPools by its add_pool type",
+			"source", source, "count", len(missing), "pools", missing)
+	}
+}
+
+// aquariusPoolStore is the aquarius_pools seam; *timescale.Store implements it. Optional, as sushiswapPoolStore is.
+type aquariusPoolStore interface {
+	LoadAquariusPools(ctx context.Context) ([]timescale.AquariusPool, error)
+	UpsertAquariusPool(ctx context.Context, p timescale.AquariusPool) error
+}
+
+// aquariusPoolOptions seeds each recorded pool's announced type and layout and, on the indexer path, persists each live
+// add_pool; it returns the recorded pools with a mappable type. A row contradicting the in-code list naming its pool is
+// seeded with NO layout (that pool's liquidity is refused, never decoded in a guessed order) and logged; a type that
+// would contradict the list is never written. Every table row is trusted into the gate, as sushiswap_v3_pools' are.
+func aquariusPoolOptions(
+	ctx context.Context,
+	store protocolContractStore,
+	logger *slog.Logger,
+	admissions *gateAdmissions,
+	withHook bool,
+) ([]contractid.Option, []string, error) {
+	ps, ok := store.(aquariusPoolStore)
+	if !ok {
+		return nil, nil, nil
+	}
+	rows, err := ps.LoadAquariusPools(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("gated registry warm %s pools: %w", aquarius.SourceName, err)
+	}
+	recorded := make(map[string]string, len(rows))
+	seed := make(map[string]contractid.Attrs, len(rows))
+	for _, r := range rows {
+		recorded[r.ContractID] = r.PoolType
+		seed[r.ContractID] = aquarius.PoolAttrs(r.PoolType)
+	}
+	bad := aquarius.LayoutConflicts(recorded)
+	for _, pool := range bad {
+		seed[pool] = contractid.Attrs{aquarius.AttrPoolType: recorded[pool]}
+	}
+	if len(bad) > 0 {
+		logger.Error("aquarius_pools rows contradict the in-code pool list; those pools have NO liquidity layout and "+
+			"their deposit/withdraw events are refused until the row or the list is corrected (ingestion-sink runbook)",
+			"source", aquarius.SourceName, "pools", bad)
+	}
+	var typed []string
+	for id, a := range seed {
+		if a[aquarius.AttrLiquidityLayout] != "" {
+			typed = append(typed, id)
+		}
+	}
+	logger.Info("aquarius pool table loaded", "pools", len(rows), "typed", len(typed), "contradicting", len(bad))
+	opts := []contractid.Option{contractid.WithAttrSeed(seed)}
+	if withHook {
+		opts = append(opts, contractid.WithAttrHook(aquariusPoolHook(ps, logger, admissions))) //nolint:contextcheck // the hook carries no context; the retrier holds the hook context it was built with
+	}
+	return opts, typed, nil
+}
+
+// aquariusPoolHook persists a live add_pool's raw type; a type contradicting the in-code list naming the pool is not
+// written, and a stored type the upsert refuses is terminal, not retried.
+func aquariusPoolHook(ps aquariusPoolStore, logger *slog.Logger, admissions *gateAdmissions) func(string, string, uint32, contractid.Attrs) {
+	const label = aquarius.SourceName + "_pools"
+	return func(pool, _ string, ledger uint32, a contractid.Attrs) { //nolint:contextcheck // the hook carries no context; the retrier holds the hook context it was built with
+		typ := a[aquarius.AttrPoolType]
+		if len(aquarius.LayoutConflicts(map[string]string{pool: typ})) > 0 {
+			obs.GateAdmissionPersistFailuresTotal.WithLabelValues(label).Inc()
+			logger.Error("aquarius add_pool type contradicts the in-code pool list; not recorded",
+				"pool", pool, "pool_type", typ, "ledger", ledger)
+			return
+		}
+		row := timescale.AquariusPool{ContractID: pool, PoolType: typ, FirstLedger: ledger}
+		admissions.persist(label, pool, func(wctx context.Context) error {
+			err := ps.UpsertAquariusPool(wctx, row)
+			if errors.Is(err, timescale.ErrAquariusPoolTypeConflict) {
+				return fmt.Errorf("%w: %w", errAdmissionTerminal, err)
+			}
+			return err
+		})
+	}
 }
 
 // withoutContracts returns ids minus drop, in order.

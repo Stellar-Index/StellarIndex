@@ -987,7 +987,8 @@ func chRebuildFeedsAggregates(written map[string]int) bool {
 type rebuildRefresh struct {
 	verb, cfgPath  string
 	write, refresh bool
-	feeds          bool // the run rewrites rows a continuous aggregate is built on
+	feeds          bool   // the run rewrites rows a continuous aggregate is built on
+	skipped        string // printed when feeds is false because the run was narrowed, so the skip is stated, not silent
 	lo, hi         uint32
 }
 
@@ -1002,6 +1003,9 @@ func (r rebuildRefresh) followUp() string {
 // rows are already written.
 func refreshAfterRebuild(ctx context.Context, w io.Writer, r rebuildRefresh, run func(context.Context) error) error {
 	if !r.feeds {
+		if r.skipped != "" {
+			_, _ = fmt.Fprintf(w, "%s: %s\n", r.verb, r.skipped)
+		}
 		return nil
 	}
 	switch {

@@ -1,5 +1,6 @@
-# stellarindex_supply_flow_skipped: only a reason other than not_token_shaped tickets, even for one isolated skip.
-# Lives outside deploy/monitoring/rules/ — see the header of archive-completeness_test.yml.
+# stellarindex_supply_flow_skipped: a reason that can short a token tickets, even for one isolated skip; the
+# not-token-shaped and judged reasons never do. Lives outside deploy/monitoring/rules/ — see the header of
+# archive-completeness_test.yml.
 
 rule_files:
   - ../rules/ingestion.yml
@@ -28,11 +29,37 @@ tests:
               summary: "Supply events written without a supply_flows row"
               description: |
                 stellarindex_supply_flow_skipped_total rose for a reason
-                other than not_token_shaped (amount_not_i128 or
-                body_unparseable) in the last 3 hours.
-                A token-shaped mint/burn/clawback body was not decoded, so
-                that token's supply_flows sum is short. The raw event is in
-                contract_events.
+                that can short a token (topic_unparseable, amount_not_i128
+                or body_unparseable) in the last 3 hours.
+                A mint/burn/clawback whose topics or body did not decode has
+                no supply_flows row, so that token's sum may be short. The
+                raw event is in contract_events.
+
+  # An undecodable topic leaves the event's shape unknown: a decoder gap, not foreign traffic.
+  - interval: 1m
+    name: an unparseable topic tickets
+    input_series:
+      - series: 'stellarindex_supply_flow_skipped_total{job="stellarindex-indexer",instance="r1:9464",reason="topic_unparseable"}'
+        values: '0 0 0 1+0x300'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_supply_flow_skipped
+        exp_alerts:
+          - exp_labels:
+              reason: topic_unparseable
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse.md#stellarindex_supply_flow_skipped
+              summary: "Supply events written without a supply_flows row"
+              description: |
+                stellarindex_supply_flow_skipped_total rose for a reason
+                that can short a token (topic_unparseable, amount_not_i128
+                or body_unparseable) in the last 3 hours.
+                A mint/burn/clawback whose topics or body did not decode has
+                no supply_flows row, so that token's sum may be short. The
+                raw event is in contract_events.
 
   # One isolated decode failure (a single step, then flat) must still fire.
   - interval: 1m
@@ -56,11 +83,11 @@ tests:
               summary: "Supply events written without a supply_flows row"
               description: |
                 stellarindex_supply_flow_skipped_total rose for a reason
-                other than not_token_shaped (amount_not_i128 or
-                body_unparseable) in the last 3 hours.
-                A token-shaped mint/burn/clawback body was not decoded, so
-                that token's supply_flows sum is short. The raw event is in
-                contract_events.
+                that can short a token (topic_unparseable, amount_not_i128
+                or body_unparseable) in the last 3 hours.
+                A mint/burn/clawback whose topics or body did not decode has
+                no supply_flows row, so that token's sum may be short. The
+                raw event is in contract_events.
       - eval_time: 300m
         alertname: stellarindex_supply_flow_skipped
         exp_alerts: []
@@ -69,6 +96,19 @@ tests:
     name: foreign-contract not_token_shaped traffic never tickets
     input_series:
       - series: 'stellarindex_supply_flow_skipped_total{job="stellarindex-indexer",instance="r1:9464",reason="not_token_shaped"}'
+        values: '0+5x300'
+      - series: 'stellarindex_supply_flow_skipped_total{job="stellarindex-indexer",instance="r1:9464",reason="amount_not_i128"}'
+        values: '0+0x300'
+    alert_rule_test:
+      - eval_time: 200m
+        alertname: stellarindex_supply_flow_skipped
+        exp_alerts: []
+
+  # A pool's one-topic mint carries no address topic, so it is no token's event.
+  - interval: 1m
+    name: foreign-contract topic_not_token_shaped traffic never tickets
+    input_series:
+      - series: 'stellarindex_supply_flow_skipped_total{job="stellarindex-indexer",instance="r1:9464",reason="topic_not_token_shaped"}'
         values: '0+5x300'
       - series: 'stellarindex_supply_flow_skipped_total{job="stellarindex-indexer",instance="r1:9464",reason="amount_not_i128"}'
         values: '0+0x300'

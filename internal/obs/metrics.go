@@ -678,7 +678,7 @@ func seedBoundedLabelSeriesTail() {
 	} {
 		ChLiveSinkReadUndercountTotal.WithLabelValues(kind)
 	}
-	for _, reason := range []string{"not_token_shaped", "amount_not_i128", "body_unparseable", "judged_non_token"} {
+	for _, reason := range []string{"topic_not_token_shaped", "not_token_shaped", "topic_unparseable", "amount_not_i128", "body_unparseable", "judged_non_token"} {
 		SupplyFlowSkippedTotal.WithLabelValues(reason)
 	}
 }
@@ -1501,7 +1501,7 @@ var MonthlyQuotaFailClosedTotal = prometheus.NewCounter(
 var GateAdmissionPersistFailuresTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_gate_admission_persist_failures_total",
-		Help: "Failed writes of a live factory-child gate admission (protocol_contracts, soroswap_pairs, sushiswap_v3_pools), per source.",
+		Help: "Failed writes of a live factory-child gate admission (protocol_contracts, soroswap_pairs, sushiswap_v3_pools, aquarius_pools), per source.",
 	},
 	[]string{"source"},
 )
@@ -3079,11 +3079,11 @@ var ChLiveSinkReadUndercountTotal = prometheus.NewCounterVec(
 )
 
 // SupplyFlowSkippedTotal counts mint/burn/clawback events the lake extract wrote to contract_events with no supply_flows row, by reason
-// (not_token_shaped, judged_non_token: no supply to lose; amount_not_i128|body_unparseable: a token-shaped body whose amount did not decode).
+// (topic_not_token_shaped, not_token_shaped, judged_non_token: no supply to lose; topic_unparseable, amount_not_i128, body_unparseable: may short a token).
 var SupplyFlowSkippedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_supply_flow_skipped_total",
-		Help: "Supply events (mint/burn/clawback) written without a supply_flows row, by reason (not_token_shaped|judged_non_token|amount_not_i128|body_unparseable).",
+		Help: "Supply events (mint/burn/clawback) written without a supply_flows row, by reason (topic_not_token_shaped|not_token_shaped|judged_non_token|topic_unparseable|amount_not_i128|body_unparseable).",
 	},
 	[]string{"reason"},
 )

@@ -18,7 +18,8 @@ status: current
 >   "Verification 2026-07-05" below.
 > - **Last verified:** 2026-07-05 (r1 lake, tip ledger 63,343,398).
 > - **Gate status:** ✅ GATED (ADR-0035/0040, shipped 2026-07-05): trust
->   root = the router; in-code seed = the 332 registry pools; live
+>   root = the router; in-code seed = the 395 router-announced pools
+>   (census 2026-11-26: 332 classic + 63 concentrated); live
 >   `add_pool` events self-register new pools. Deploy precondition: the
 >   re-derive + foreign-row cleanup below.
 
@@ -33,10 +34,13 @@ emits the trade event.
 
 ## Pools
 
-Pinned: **332 pools** — `aquarius.MainnetPools` in code, reproducible from
-the lake (decode `data.vec[0].address` of the canonical router's
-`add_pool` events) and byte-identical to the protocol's registry API. See
-"Verification 2026-07-05" for the census + flagged non-registry emitters.
+Pinned (census 2026-11-26, every canonical-router `add_pool` from the lake,
+decoding `data.vec[0].address` and the type Symbol `data.vec[1]`):
+**395 pools** — `constant` 281 and `stable` 51 in `aquarius.MainnetPools`
+(332), `concentrated` 63 in `aquarius.MainnetConcentratedPools`. The two
+lists are disjoint, and `internal/sources/aquarius/testdata/router_add_pool_census.tsv`
+pins every row's type to its list. See "Verification 2026-07-05" for the
+earlier registry cross-check + flagged non-registry emitters.
 
 ## ✅ Open question (2026-06-12) — RESOLVED 2026-07-05
 
@@ -206,7 +210,8 @@ has emitted **338 `add_pool` events announcing 332 distinct pools**
 sets are byte-for-byte identical**. The router IS the protocol's registry,
 so the gate anchors on it:
 
-- in-code seed: `aquarius.MainnetPools` (the 332);
+- in-code seed: `aquarius.MainnetPools` + `aquarius.MainnetConcentratedPools`
+  (395 at the 2026-11-26 census);
 - live fan-out: any future `add_pool` from the router registers the
   announced pool before its first trade (blend-style);
 - provenance persistence: `protocol_contracts` warm + live-upsert hook.
@@ -223,9 +228,49 @@ WASM. The per-hash inventory — the never-upgraded cohort on
 `ae0da5a8…` (volatile) / `f1077e0b…` (stableswap) / `8875f0c7…`
 (rewards-enhanced), the upgraded cohort's five-WASM chain, and the decoder
 verdict for each — is [wasm-audits/aquarius.md](../operations/wasm-audits/aquarius.md).
-No concentrated-liquidity pool has been observed. Nothing in the decoder
-would refuse one: a router-announced pool is registered without a WASM
-check, so a new family is caught only by re-running that audit.
+A router-announced pool is registered without a WASM check, so a new
+family is caught only by re-running that audit.
+
+### Concentrated-liquidity pools
+
+The router's `add_pool` body is `Vec[Address(pool), Symbol(pool_type), …]`.
+The 2026-11-26 census of all 395 `add_pool` events found exactly three type
+names: `constant` (281), `stable` (51) and `concentrated` (63, the first at
+ledger 62,339,683, `CCV2X5THRWCT7HCGJU42DMOVYLAARVIPEDG2LQOVVA2WGONF2MZY2OX6`).
+20 of the 63 had been in the curated `MainnetPools` and were decoded
+shares-last; they moved to `MainnetConcentratedPools`.
+
+On concentrated pools `trade` and `update_reserves` have the classic shape,
+but `deposit_liquidity` and `withdraw_liquidity` (3 topics, 3×i128, the same
+arity as a two-token classic pool) are ordered `[liquidity, amount0, amount1]`,
+not `[amount0, amount1, shares]`. In every deposit fixture `update_reserves`
+equals the running sums of `amount0` / `amount1` and `position_update`'s delta
+equals `liquidity`. In 400 deposit transactions sampled from
+62,341,446 – 64,577,704, `liquidity` equals the same-tx `position_update`
+delta; in all 300 withdraw transactions sampled from 62,341,437 – 62,413,470
+it equals minus that delta. The pools ran four builds over that history
+(`8875f0c7…`, `1d728cc0…`, `12fca5a7…`, now `155a17b9…` on all 63; see the
+WASM audit). Lake counts from 62,339,683: `deposit_liquidity`
+32,911 events on 63 pools, `withdraw_liquidity` 19,482 on 52 pools,
+`position_update` 52,393 on 63 pools, every body 3 elements.
+
+The decoder keeps a per-pool liquidity layout in the gate. A pool is
+`concentrated` when its `add_pool` names that type or it is in
+`MainnetConcentratedPools`; it is shares-last when its `add_pool` names
+`constant` / `stable` or it is in `MainnetPools`. Any other pool's liquidity
+events are refused (`ErrUnknownLiquidityLayout`); a refusal counts as
+projector `decode_error`, and the decode-failed log line carries the error.
+The live indexer records each `add_pool`'s raw type in `aquarius_pools`
+(migration 0237), and the boot warm restores the layout from it, so a pool
+learned live keeps its layout across a restart. A recorded type that
+contradicts the list naming the pool fails the warm (the indexer refuses to
+start) rather than picking one. A pool with no layout from either source (a
+`protocol_contracts` row in neither list, or a recorded type this binary
+cannot map) has its liquidity events refused, and the boot warm logs a WARN
+naming it ("NO liquidity layout").
+A concentrated pool's `aquarius_liquidity` rows carry the two token amounts
+and `shares` NULL: the pool mints no LP shares, and its liquidity is in the
+`position_update` row of `aquarius_rewards_events`.
 The two router-WASM deployments share code hash `06F4207B…`.
 
 ### ⚠️ Flagged — excluded from the gate (NOT silently dropped)
