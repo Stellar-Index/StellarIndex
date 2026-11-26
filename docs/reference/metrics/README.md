@@ -158,6 +158,12 @@ Gauge, no labels.
 
 Newest day in `stellar.contracts_census_daily` (UTC midnight, Unix seconds), set by the API each time the `/v1/contracts/stats` snapshot refreshes (hourly, while the page is read). `time() - value > 2*86400` means the census rollup has stalled; `/v1/contracts/stats` then serves `active_90d` as a lower bound. 0 until the first read. The gauge only moves when the page is read, so it is not alerted; a stalled rollup pages via `stellarindex_census_rollup_timer_stale`, which watches the timer.
 
+### `stellarindex_api_cache_fill_duration_seconds`
+
+Histogram, labels `cache`, `result`; buckets 10 ms to 30 s.
+
+How long the upstream call of a detached API cache fill took (the work behind a cold miss or a stale refresh). `cache` is the fill name, a fixed per-call-site string such as `api-markets-pairs-refresh`; never a key or asset id. `result`: `ok`, `error`, or `timeout` (the fill's own budget expired). A p99 near the 30 s fill budget means refreshes are close to running late. Not alerted.
+
 ### `stellarindex_api_cache_ops_total`
 
 Counter, labels `cache`, `op`, `result`.
