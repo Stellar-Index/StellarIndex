@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -13,8 +14,11 @@ import (
 // gateAdmissionRetryEvery is how often unpersisted admissions are retried.
 const gateAdmissionRetryEvery = 5 * time.Second
 
+// errAdmissionTerminal marks a write that can never succeed; it is counted and logged once, never retried.
+var errAdmissionTerminal = errors.New("gate admission refused permanently")
+
 // gateAdmissions persists live factory-child gate admissions (protocol_contracts, soroswap_pairs,
-// sushiswap_v3_pools). The in-memory gate already holds the child, so ingest looks healthy when the write fails;
+// sushiswap_v3_pools, aquarius_pools). The in-memory gate already holds the child, so ingest looks healthy when the write fails;
 // but after a restart the creation event is behind the cursor and only the table re-admits the child. A failed
 // write is therefore kept and retried until it lands, counted, and exposed as a gauge an alert watches.
 type gateAdmissions struct {
@@ -41,10 +45,19 @@ func newGateAdmissions(ctx context.Context, logger *slog.Logger) *gateAdmissions
 func (g *gateAdmissions) persist(source, id string, write func(context.Context) error) {
 	if err := g.attempt(g.ctx, write); err != nil {
 		obs.GateAdmissionPersistFailuresTotal.WithLabelValues(source).Inc()
+		if errors.Is(err, errAdmissionTerminal) {
+			g.logTerminal(source, id, err)
+			return
+		}
 		g.logger.Warn("gate admission not persisted; it will be retried",
 			"source", source, "contract", id, "err", err)
 		g.keep(pendingAdmission{source: source, id: id, write: write})
 	}
+}
+
+func (g *gateAdmissions) logTerminal(source, id string, err error) {
+	g.logger.Error("gate admission refused permanently and dropped; see the ingestion-sink runbook for this table",
+		"source", source, "contract", id, "err", err)
 }
 
 func (g *gateAdmissions) attempt(ctx context.Context, write func(context.Context) error) error {
@@ -104,16 +117,21 @@ func (g *gateAdmissions) retry(ctx context.Context, last bool) (drained bool) {
 
 	for k, p := range batch {
 		err := g.attempt(ctx, p.write)
-		if err != nil {
+		switch {
+		case errors.Is(err, errAdmissionTerminal):
+			obs.GateAdmissionPersistFailuresTotal.WithLabelValues(p.source).Inc()
+			g.logTerminal(p.source, p.id, err)
+		case err != nil:
 			obs.GateAdmissionPersistFailuresTotal.WithLabelValues(p.source).Inc()
 			if last {
-				g.logger.Error("gate admission LOST at shutdown: after the restart this contract's events are rejected "+
-					"as foreign until `stellarindex-ops seed-protocol-contracts` re-walks its factory",
+				g.logger.Error("gate admission LOST at shutdown: restore its row per the ingestion-sink runbook "+
+					"(stellarindex_gate_admission_unpersisted, step 2, by source label)",
 					"source", p.source, "contract", p.id, "err", err)
 			}
 			continue
+		default:
+			g.logger.Info("gate admission persisted on retry", "source", p.source, "contract", p.id)
 		}
-		g.logger.Info("gate admission persisted on retry", "source", p.source, "contract", p.id)
 		g.mu.Lock()
 		delete(g.pending, k)
 		g.publishLocked(p.source)

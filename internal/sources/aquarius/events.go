@@ -8,6 +8,7 @@ import (
 	"errors"
 	"slices"
 
+	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
@@ -114,6 +115,10 @@ func (p PoolType) String() string {
 
 // AttrLiquidityLayout is the pool-registry attribute naming the element order of a pool's liquidity-event body.
 const AttrLiquidityLayout = "liquidity_layout"
+
+// AttrPoolType is the pool-registry attribute holding the add_pool's raw pool-type Symbol, persisted to aquarius_pools
+// verbatim so a type name this binary cannot map is kept for one that can.
+const AttrPoolType = "pool_type"
 
 // Liquidity body layouts. Both have three i128s for a two-token pool, so the body alone cannot tell them apart.
 const (
@@ -615,6 +620,37 @@ func PoolsWithoutLayout(ids []string) []string {
 			out = append(out, id)
 		}
 	}
+	return out
+}
+
+// PoolAttrs is the registry attributes for a pool announced with poolType: the raw type always, the layout when known.
+func PoolAttrs(poolType string) contractid.Attrs {
+	a := contractid.Attrs{AttrPoolType: poolType}
+	if layout := LayoutForAnnouncement(poolType); layout != "" {
+		a[AttrLiquidityLayout] = layout
+	}
+	return a
+}
+
+// LayoutConflicts returns the pools whose recorded add_pool type implies a layout other than the in-code list naming
+// them (an unmappable type against a listed pool included), sorted; pools in neither list cannot conflict.
+func LayoutConflicts(recorded map[string]string) []string {
+	var out []string
+	for pool, typ := range recorded {
+		var want string
+		switch {
+		case slices.Contains(MainnetPools, pool):
+			want = LayoutSharesLast
+		case slices.Contains(MainnetConcentratedPools, pool):
+			want = LayoutConcentrated
+		default:
+			continue
+		}
+		if LayoutForAnnouncement(typ) != want {
+			out = append(out, pool)
+		}
+	}
+	slices.Sort(out)
 	return out
 }
 

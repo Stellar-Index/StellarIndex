@@ -265,6 +265,7 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	assertTableAbsent(t, db, ctx, "soroban_events")
 	assertTableAbsent(t, db, ctx, "fx_fixings")
 	assertTableAbsent(t, db, ctx, "sushiswap_v3_pools")
+	assertTableAbsent(t, db, ctx, "aquarius_pools")
 	assertTableAbsent(t, db, ctx, "spectra_events")
 	assertTableAbsent(t, db, ctx, "spectra_markets")
 	for _, cagg := range []string{
