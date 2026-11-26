@@ -33,7 +33,7 @@ test/integration/clickhouse_accounts_test.go:stellar.ledger_entry_changes  1 rea
 test/integration/clickhouse_entries_test.go:stellar.ledger_entry_changes  1 read: #3978072410 count() only tests whether the lake is empty, which a duplicate cannot change
 test/integration/clickhouse_reads_test.go:stellar.ledger_entry_changes  1 read: #1324793229 counts the physical versions of one key: the precondition that the stale twin exists unmerged
 test/integration/clickhouse_reads_test.go:stellar.entry_history_watermark  1 read: #1607824007 asserts a lower mark wrote no physical row; FINAL would hide the extra version under test
-internal/storage/clickhouse/account_op_type_counts.go:#interp  6 reads: #592162455 table is the rollup's own source or staging table, spliced from a closed set; the aggregating read carries FINAL and the count()s compare staging against live rollups
+internal/storage/clickhouse/account_op_type_counts.go:#interp  6 reads: #3185835732 table is the rollup's own source or staging table, spliced from a closed set; the aggregating read carries FINAL and the count()s compare staging against live rollups
 internal/storage/clickhouse/asset_holders_rollup.go:#interp  2 reads: #3505179232 shrink guard counts rows of the staging and live rollup tables on the same basis; not a lake read
 internal/storage/clickhouse/entry_changes_read.go:#interp  1 read: #1604612876 non-aggregating per-key LIMIT arm over ledger_entry_changes; table is a closed constant
 internal/storage/clickhouse/raw_census.go:#interp  1 read: #4285288506 census compares count() with system.parts, which counts un-merged duplicates too; FINAL would break the comparison

@@ -1519,7 +1519,7 @@ func checkLiRows(t *testing.T, ctx context.Context, conn driver.Conn, pool, asse
 		if i >= len(want) {
 			t.Fatalf("extra row at %s", hour)
 		}
-		if !hour.Equal(first.Add(time.Duration(i)*time.Hour)) || fl != firstLedgers[i] || ll != lastLedgers[i] || rev != 2 || feeMismatch != 0 {
+		if !hour.Equal(first.Add(time.Duration(i)*time.Hour)) || fl != firstLedgers[i] || ll != lastLedgers[i] || rev != 3 || feeMismatch != 0 {
 			t.Errorf("row %d: %s ledgers %d-%d rev %d fee mismatches %d", i, hour, fl, ll, rev, feeMismatch)
 		}
 		w := &want[i]
@@ -1665,9 +1665,9 @@ func TestChEntryHistoryLending_InterestEvents(t *testing.T) {
 	_ = q.Close()
 	h := func(n int) time.Time { return time.Date(2027, 2, 21, n, 0, 0, 0, time.UTC) }
 	want := []cls{
-		{h(11), 1, 1, 0, "-62201350", "-62201350", "0", 2}, // the fill's lot, exactly
-		{h(12), 1, 0, 0, "-1234", "0", "0", 2},             // no event: unexplained
-		{h(13), 0, 0, 0, "0", "0", "0", 2},
+		{h(11), 1, 1, 0, "-62201350", "-62201350", "0", 3}, // the fill's lot, exactly
+		{h(12), 1, 0, 0, "-1234", "0", "0", 3},             // no event: unexplained
+		{h(13), 0, 0, 0, "0", "0", "0", 3},
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("rows\n%+v\nwant\n%+v", got, want)
@@ -1679,7 +1679,7 @@ func TestChEntryHistoryLending_InterestEvents(t *testing.T) {
 	exec(`ALTER TABLE stellar.lending_interest_hourly UPDATE derive_rev = 1 WHERE contract_id = ? AND hour = ? SETTINGS mutations_sync = 2`,
 		pool, h(11))
 	out, gauge, err = liProve(t, addr)
-	if err == nil || !strings.Contains(err.Error(), "INCOMPLETE") || gauge != "0" || !strings.Contains(out, "derive_rev 1, this binary derives 2") {
+	if err == nil || !strings.Contains(err.Error(), "INCOMPLETE") || gauge != "0" || !strings.Contains(out, "derive_rev 1, this binary derives 3") {
 		t.Fatalf("prove over a revision-1 row: err %v gauge %s\n%s", err, gauge, out)
 	}
 }

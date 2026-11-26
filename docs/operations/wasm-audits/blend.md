@@ -526,7 +526,41 @@ Open before the table is served:
 3. Check the attribution of both V1 residuals against their real
    `fill_auction` events with the prove pass (the 53013801 test uses a
    synthetic event at the golden version's transaction).
-4. Unexplained by design until their amount relation is reproduced:
-   `defaulted_debt` (V2 cuts b_rate by `fixed_div_ceil(to_asset_from_d_token
-   (d_tokens_burnt), b_supply)`; the fold's supply_residual is not that
-   amount), `bad_debt`, and V1 `update_pool`'s retroactive bstop_rate.
+4. V2 `defaulted_debt` (topics `[Symbol, asset]`, body `d_tokens_burnt`
+   i128). `User::default_liabilities` runs on a reserve `load_reserve` has
+   already accrued, burns the d-tokens from `d_supply` with nothing repaid,
+   and sets `b_rate = max(0, b_rate − fixed_div_ceil(fixed_mul_ceil(
+   d_tokens_burnt, d_rate, S), b_supply, S))`, `S` = 1e12; `b_supply` and
+   `d_rate` do not move, so a transaction's defaults compose by applying each
+   in event order, and the per-event ceilings do not sum to one cut over the
+   summed d-tokens. `blend.DefaultedBRate` (`internal/sources/blend/default.go`,
+   `default_test.go`) implements it, transcribed from v2.0.0
+   `pool/src/pool/user.rs` (no contract source is in this repo).
+   **Reproduced on 8 production versions (2026-11-26).** All 8 versions the
+   full-history proof left unexplained are b_rate mismatches in the
+   transactions of 8 such events, one per asset: pool `CCCCIQSD…` ledgers
+   61,341,315 (2) and 61,342,113 (3), pool `CBYOBT7Z…` ledger 64,534,597
+   (3). Accrual, then the cut, gives each stored b_rate exactly
+   (`TestDefaultedBRate_ReproducesMainnet` over the lake's XDR in
+   `internal/sources/blend/testdata/defaulted_debt/`): the 64,534,597
+   `CDIKURWH…` cut exceeds b_rate and stores 0 (the clamp), and the
+   61,341,315 USDC reserve's `b_supply` grew in the same transaction yet
+   the cut divides by the pre-transaction `b_supply` (the supply ran after
+   it; with the final `b_supply` it does not reproduce). A floor in the
+   second step fails 7 of the 8, in the first 2. In production the fold
+   reads each pool's bstop_rate from its stored Config versions, as for
+   every pair. Only the fixture test, which has no Config, pins the two
+   pools' rates (0.2 and 0.5): each is the one rate at which every
+   reserve's `backstop_credit` delta is exactly accrual's share, and one
+   unit either side leaves a residual. The fold explains such a version and
+   records its `supply_residual` in `default_loss` (`default_versions`
+   counts them) when the version is otherwise classified.
+5. Unexplained by design until their amount relation is reproduced:
+   `bad_debt` (liabilities moved to the backstop, documented above; it moves
+   no reserve rate), V1 `defaulted_debt`, and V1 `update_pool`'s retroactive
+   bstop_rate.
+6. Open: BLNT pools' `defaulted_debt` events are read into the event census
+   but explain nothing (the cause is V2-only). If a BLNT default cuts b_rate,
+   that version stays unexplained and fires
+   `stellarindex_lending_interest_unexplained_versions`, which fails safe;
+   reproducing BLNT's relation against a real version would close it.

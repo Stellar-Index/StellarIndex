@@ -1898,3 +1898,100 @@ func TestClickHouseContractEventsRecentPartialBackfill(t *testing.T) {
 		t.Fatalf("served event at ledger %d, want %d", rows[0].Seq, ledger)
 	}
 }
+
+// TestOpTypeCountsRollup_ResurrectedBuildIsNotServedAndHeals: REPLACE PARTITION leaves the replaced parts outdated but uncovered on
+// disk, and reloading the table (as a server restart does) brings them back active beside the new build. The reader must not sum the
+// two builds, and the next rollup run must replace the partition without -shrink-ok.
+func TestOpTypeCountsRollup_ResurrectedBuildIsNotServedAndHeals(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+	conn := dialClickHouse(t, ctx, "stellar")
+	const part, account = 97, "GRESURRECTEDOPTYPES"
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if err := conn.Exec(ctx, q, args...); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	t.Cleanup(func() {
+		for _, q := range []string{
+			`ALTER TABLE stellar.account_op_types DROP PARTITION ID '97'`,
+			`ALTER TABLE stellar.account_op_type_counts DROP PARTITION ID '97'`,
+			`TRUNCATE TABLE stellar.account_op_types_coverage`,
+		} {
+			_ = conn.Exec(context.Background(), q)
+		}
+	})
+	exec(`INSERT INTO stellar.account_op_types_coverage (covered_from, covered_to) VALUES (2, 98000000)`)
+	seedOp := func(ledger uint32, opType string) {
+		exec(`INSERT INTO stellar.account_op_types (account, ledger_seq, tx_index, op_index, op_type) VALUES (?, ?, 0, 0, ?)`,
+			account, ledger, opType)
+	}
+	w := chstore.OpTypeRollupPartition{Part: part, Through: (part + 1) * 1_000_000, Reason: "test"}
+	build := func() {
+		t.Helper()
+		if err := chstore.OpTypeCountsRollup.RunPartition(ctx, addr, w, false, t.Logf); err != nil {
+			t.Fatalf("RunPartition: %v", err)
+		}
+	}
+	seedOp(97_000_001, "payment")
+	seedOp(97_000_002, "payment")
+	seedOp(97_000_003, "create_account")
+	seedOp(97_000_004, "payment")
+	// Two identical builds, as a timer re-run of a closed partition makes: the resurrected one carries the same fingerprint, so
+	// only the sentinel count can tell the partition is doubled.
+	build()
+	build()
+
+	sentinels := func() uint64 {
+		t.Helper()
+		var n uint64
+		if err := conn.QueryRow(ctx, `SELECT count() FROM stellar.account_op_type_counts WHERE part = 97 AND account = ''`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	want := map[string]int64{"payment": 3, "create_account": 1}
+	served := func(stage string) {
+		t.Helper()
+		r, err := chstore.NewExplorerReader(ctx, addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = r.Close() }()
+		counts, err := r.AccountOperationTypeCounts(ctx, account)
+		if err != nil {
+			t.Fatalf("%s: AccountOperationTypeCounts: %v", stage, err)
+		}
+		got := map[string]int64{}
+		for _, c := range counts {
+			got[c.OpType] = c.Count
+		}
+		if len(got) != len(want) || got["payment"] != want["payment"] || got["create_account"] != want["create_account"] {
+			t.Fatalf("%s: served %v, want %v", stage, got, want)
+		}
+	}
+
+	served("built")
+	exec(`DETACH TABLE stellar.account_op_type_counts`)
+	exec(`ATTACH TABLE stellar.account_op_type_counts`)
+	if n := sentinels(); n != 2 {
+		t.Fatalf("after reload the partition holds %d sentinel(s); want 2 (the resurrection this test reproduces)", n)
+	}
+	served("resurrected")
+
+	build()
+	if n := sentinels(); n != 1 {
+		t.Fatalf("after the heal the partition holds %d sentinel(s), want 1", n)
+	}
+	var rolled uint64
+	if err := conn.QueryRow(ctx, `SELECT toUInt64(sum(n)) FROM stellar.account_op_type_counts WHERE part = 97 AND account = ?`, account).
+		Scan(&rolled); err != nil {
+		t.Fatal(err)
+	}
+	if rolled != 4 {
+		t.Fatalf("healed rollup holds %d op(s) for the account, want 4", rolled)
+	}
+	served("healed")
+}

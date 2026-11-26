@@ -108,8 +108,12 @@ type HourRow struct {
 	BRateMismatches      uint32
 	BackstopResidual     *big.Int
 	SupplyResidual       *big.Int
-	FeeMismatches        uint32
-	FeeCreditResidual    *big.Int
+	// DefaultLoss is SupplyResidual's part from classified versions whose b_rate mismatch is their transaction's
+	// V2 defaults, DefaultVersions their count: the suppliers' socialised loss, never interest.
+	DefaultLoss       *big.Int
+	DefaultVersions   uint32
+	FeeMismatches     uint32
+	FeeCreditResidual *big.Int
 	// Every unreconciled version is explained, attributed or unexplained, with its backstop residual; the
 	// unexplained pair is not stored (each is the row's residual or unreconciled count less the other two).
 	ResidualExplained, ResidualAttributed, ResidualUnexplained *big.Int

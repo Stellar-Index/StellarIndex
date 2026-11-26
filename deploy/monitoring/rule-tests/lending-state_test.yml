@@ -168,6 +168,46 @@ tests:
         alertname: stellarindex_lending_interest_proof_failed
         exp_alerts: []
 
+  - interval: 1m
+    name: unexplained lending interest versions fire after an hour and clear when a proof counts none
+    input_series:
+      - series: 'stellarindex_lending_interest_unexplained_versions{job="node_exporter",instance="r1:9100",ops_job="ch-entry-history-lending-interest-prove-full"}'
+        values: '0x10 8x90 0x10'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: stellarindex_lending_interest_unexplained_versions
+        exp_alerts: []
+      - eval_time: 80m
+        alertname: stellarindex_lending_interest_unexplained_versions
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+              ops_job: ch-entry-history-lending-interest-prove-full
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#lending-interest-unexplained-versions
+              summary: "lending interest rows hold reserve versions no event explains"
+              description: |
+                The last ch-entry-history-lending-interest-prove-full run counted 8 versions in
+                stellar.lending_interest_hourly whose b_rate, fee entry or backstop
+                credit moved outside accrual with no same-transaction pool event
+                that states the move exactly. Those hours' interest totals are not
+                the reserve's whole movement; the runbook's query lists the rows.
+      - eval_time: 105m
+        alertname: stellarindex_lending_interest_unexplained_versions
+        exp_alerts: []
+
+  - interval: 1m
+    name: unexplained lending interest versions stay quiet where the proof never ran
+    input_series:
+      - series: 'stellarindex_lending_interest_proof_failed{job="node_exporter",instance="r1:9100",ops_job="ch-entry-history-lending-interest-prove"}'
+        values: '0x120'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_lending_interest_unexplained_versions
+        exp_alerts: []
+
   # Finished at t=0 (unix 0); time() at eval_time is the seconds since.
   - interval: 1m
     name: a lending interest proof whose last finished run is over two days old fires
