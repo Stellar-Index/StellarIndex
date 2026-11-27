@@ -64,7 +64,11 @@ const lendingEarningsNote = "accrued is current_value - net_flow, served only wh
 	"the reserve's last on-chain rate update (rate_as_of), and accrued is withheld (rate_behind) when that update predates the " +
 	"leg's newest folded event. net_flow is " +
 	"underlying deposited minus withdrawn (supply), borrowed minus repaid (borrow), or backstop tokens deposited minus " +
-	"withdrawn (backstop); a backstop's accrued includes emissions claimed into it. A BLNT clawback counts as a withdrawal, so " +
+	"withdrawn (backstop). Claimed backstop emissions count in net_flow when a deposit event carries them and in accrued when " +
+	"none does. A Blend V2 backstop claim pays backstop LP tokens (not BLND) deposited by a deposit event in its own " +
+	"transaction, so a Blend V2 backstop's accrued excludes claimed emissions; a BLNT backstop claim pays backstop LP tokens " +
+	"(not BLNT) with no deposit event, so a BLNT backstop's accrued includes them; for a Blend V1 backstop claim both are " +
+	"unverified. A BLNT clawback counts as a withdrawal, so " +
 	"accrued does not include the clawed-back amount as a loss. Emission claims are sums of the " +
 	"claim events projected so far and are a lower bound. USD values use the price /v1/lending/pools/{pool}/reserves serves for " +
 	"the reserve; a backstop leg is unpriced. A leg without a USD value is left out of supplied_usd and borrowed_usd, which " +

@@ -821,7 +821,7 @@ func (s *Store) lendingAuctionBlocks(ctx context.Context, blk *BespokeBlock, sin
 func (s *Store) lendingBackstopKPIs(ctx context.Context, blk *BespokeBlock, since string, windowDays int) error {
 	// The `amount` column carries different units per event_kind: deposit/withdraw are underlying
 	// tokens, queue_withdrawal/dequeue_withdrawal are backstop-LP shares, and
-	// distribute/gulp_emissions/claim/donate are BLND emissions. Summing across kinds yields a
+	// claim is backstop LP tokens, and distribute/gulp_emissions/donate are BLND emissions. Summing across kinds yields a
 	// mixed-unit figure dominated by the most frequent kind, so this token-volume KPI sums only the
 	// two token-denominated kinds. The event count leaves out admin and emission kinds, as BLNT's does.
 	var backstopVol canonical.Amount
