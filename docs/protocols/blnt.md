@@ -129,11 +129,22 @@ backstop's per-pool allocation has no on-chain per-tier split; and the API
 reads current `EmisData`/`BEmisData` only. Pools deployed by the factory after
 the two listed above are covered by the factory gate but are not named here.
 
-Unverified until the lake census: whether the eps in each
-`reserve_emission_update` equals the `EmisData` written in the same
-transaction, and whether storage eps ever changes without that event. No
-fixture holds an `EmisData` entry from chain. Settled by the same
-event-vs-storage comparison as Blend's question C.
+Settled by the lake census (2026-11-27,
+[`blend.md`](blend.md#settled-by-the-lake-census-2026-11-27)): event eps
+equals the `EmisData` written in the same transaction, but 4 of 9 current keys
+were rewritten +14 to +719 above their last event (at most 1.4e-10 relative)
+by user actions with no event: the writes sit at ledgers
+65,694,368–65,694,563, which are `repay`, `withdraw_collateral` and `claim`
+ledgers. Events therefore rebuild the BLNT schedule exactly only to dust (at
+most about 44 base units per reserve-week); an exact schedule must read the
+`EmisData` writes. In five traced backstop claims `lp_amount` equals the
+Comet `mint`, and the claim emits no backstop `deposit`, so the account
+earnings route counts the claimed LP tokens in `accrued`, not `net_flow`.
+Pool claims naming one reserve id are 26.3% of claims and 10.8% of the
+claimed amount; two or more ids, 73.7% and 89.2%.
+
+Still open: why the pool WASM `0e4f8f45…` rewrites eps on user actions;
+likely a recomputation that carries dust, not checked.
 
 ## Primary evidence
 
