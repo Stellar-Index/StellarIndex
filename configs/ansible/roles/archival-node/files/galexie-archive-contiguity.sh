@@ -41,6 +41,35 @@ BUCKET="${BUCKET:-local/galexie-archive}"
 # strict mode and must not fall back to the default trim.
 EXPECTED_TRIM="${EXPECTED_TRIM-64000-49983999}"
 
+# A test net reset and re-ingested from ledger 2 has nothing to archive: the expected range
+# [1, first-live - 1] is below one file and nothing writes the bucket. Accepted only when
+# the archive listing succeeded with no row at all (no partition, no manifest) AND the
+# oldest live object starts at or below this bound. Same rule as galexie-archive-tip-lag.sh.
+LIVE_BUCKET="${LIVE_BUCKET:-local/galexie-live}"
+EMPTY_ARCHIVE_MAX_LIVE_FIRST=64
+
+# oldest_live_ledger — first ledger of the oldest live object (names sort newest-first, so
+# the last row is the oldest). Returns 1 with no output when it cannot be measured.
+oldest_live_ledger() {
+  local parts_raw part objs_raw name
+  parts_raw=$(mc ls "$LIVE_BUCKET/") || return 1
+  part=$(awk '/\/$/{p=$NF} END{print p}' <<<"$parts_raw" | sed 's:/$::')
+  [ -n "$part" ] || return 1
+  objs_raw=$(mc ls "$LIVE_BUCKET/$part/") || return 1
+  name=$(awk 'NF{n=$NF} END{print n}' <<<"$objs_raw")
+  if [[ "$name" =~ ^[0-9A-Fa-f]+--([0-9]+)(-[0-9]+)?\.xdr\.zstd?$ ]]; then
+    echo "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  return 1
+}
+
+archive_empty_by_design() {
+  local first
+  first=$(oldest_live_ledger 2>/dev/null) || return 1
+  [ "$first" -le "$EMPTY_ARCHIVE_MAX_LIVE_FIRST" ]
+}
+
 # Buffer the listing before parsing (mc ls + early-exiting pipe reader -> SIGPIPE under
 # pipefail; see galexie-archive-tip-lag.sh).
 #
@@ -64,6 +93,7 @@ fi
 # gaps" and a dead read a DR-corruption page pointing at the wrong runbook.
 # galexie_archive_scan_ok speaks for a run that could not look.
 scan_ok=0
+expected_empty=0
 count=""
 first=""
 last=""
@@ -81,7 +111,13 @@ if [ "$read_rc" -eq 0 ]; then
   if [ -z "$ranges" ]; then
     # A SUCCESSFUL read with no partitions (empty bucket, or mc output the parser no longer
     # matches) is a DR event and keeps the shape that FIRES; a FAILED read never lands here.
+    # The one exception is an archive that is empty by design (see archive_empty_by_design):
+    # nothing is expected, so no gap exists.
     count=0; first=0; last=0; unexpected=1
+    if [ "$listing_lines" -eq 0 ] && archive_empty_by_design; then
+      expected_empty=1
+      unexpected=0
+    fi
   else
     read -r trim_start trim_end <<< "$(printf '%s' "$EXPECTED_TRIM" | tr '-' ' ')"
     result=$(printf '%s\n' "$ranges" | awk -v ts="${trim_start:-}" -v te="${trim_end:-}" '
@@ -145,6 +181,9 @@ fi
 #                       leaves fresh-looking scrapes of a frozen zero-gaps verdict.
 #                       stellarindex_galexie_archive_scan_degraded reads all three.
 cat >> "$TMP" <<EOF
+# HELP galexie_archive_expected_empty 1 when the archive is empty because its expected range [1, first live ledger - 1] is empty (reset test net); the partition series then report an empty, gap-free mirror.
+# TYPE galexie_archive_expected_empty gauge
+galexie_archive_expected_empty $expected_empty
 # HELP galexie_archive_scan_ok Whether the bucket listing this scan is derived from exited 0 (1 = yes). 0 means the partition series above were not written.
 # TYPE galexie_archive_scan_ok gauge
 galexie_archive_scan_ok $scan_ok

@@ -233,8 +233,16 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 			priorHighWater, effectiveFrom, *safetyOverlap)
 	}
 
+	// An archive that is empty because its expected range is empty has no ledgers to walk and no manifest to load; see archiveEmptyByDesign for the exact condition.
+	walkable := doChain || doCheckpoint
+	if walkable && archiveBucketEmptyByDesign(context.Background(), cfg, bucket) {
+		fmt.Fprintf(os.Stderr, "verify-archive: archive bucket %s is empty by design (no objects; live starts at or below ledger %d) — nothing to walk\n",
+			bucket, emptyArchiveMaxLiveFirst)
+		walkable = false
+	}
+
 	// Tier A + B (LCM walk via ledgerstream). Skipped when tier=peers.
-	if doChain || doCheckpoint {
+	if walkable {
 		// verifyArchiveLCMWalk owns the state file's InProgress section during the walk, writing a per-chunk update so a SIGTERMed run resumes at a chunk boundary; priorState is passed for plan matching.
 		walkTier := "chain"
 		if doCheckpoint && !doChain {
