@@ -103,10 +103,15 @@ func TestFillFromMinuteSums_UnresolvedSeamMinuteKeepsCappedRead(t *testing.T) {
 	o := coverageOrch(t, s, 100, 4)
 	var logs bytes.Buffer
 	o.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	wideCtr := obs.AggregatorWindowWideMinutesUnresolvedTotal.WithLabelValues(pair.String(), "1h")
+	before := testutil.ToFloat64(wideCtr)
 
 	got, weights, coveredFrom, err := o.fetchTradesDetectTruncation(context.Background(), pair, pair, time.Hour, from, to)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if d := testutil.ToFloat64(wideCtr) - before; d != 1 {
+		t.Errorf("wide-minutes-unresolved counter advanced by %v, want 1", d)
 	}
 	if !coveredFrom.Equal(cf) || len(got) != 100 || weights != nil {
 		t.Errorf("coveredFrom=%v rows=%d weights=%d; want the capped read from %v", coveredFrom, len(got), len(weights), cf)
