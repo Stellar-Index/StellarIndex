@@ -271,8 +271,8 @@ func TestDayRollup_BudgetCutChangesCarryOver(t *testing.T) {
 		}
 		before := f.cursor
 		st := f.cycle(t)
-		if st.PoolDays > lendingRevenueRollupPoolDays || f.cursor == before {
-			t.Fatalf("cycle %d: %d pool-days, cursor %d -> %d", c, st.PoolDays, before, f.cursor)
+		if st.Queued > lendingRevenueRollupPoolDays || f.cursor == before {
+			t.Fatalf("cycle %d: %d pool-days, cursor %d -> %d", c, st.Queued, before, f.cursor)
 		}
 		if c == 0 && f.cursor >= lendingRevenueRollupForcedDays {
 			t.Fatalf("first cycle took %d changes past the forced share", f.cursor)

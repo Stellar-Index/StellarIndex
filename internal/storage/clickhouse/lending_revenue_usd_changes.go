@@ -44,10 +44,17 @@ func (r *ExplorerReader) LendingInterestChangedDays(ctx context.Context, after L
 		if err := rows.Scan(&d.Pool, &d.Asset, &d.Day, &d.DerivedAt); err != nil {
 			return nil, fmt.Errorf("clickhouse: scan lending interest changed day: %w", err)
 		}
-		d.Day, d.DerivedAt = d.Day.UTC(), d.DerivedAt.UTC()
+		d.Day, d.DerivedAt = dateDay(d.Day), d.DerivedAt.UTC()
 		out = append(out, d)
 	}
 	return out, rows.Err()
+}
+
+// dateDay is the UTC midnight of a scanned Date column's calendar day. The driver decodes a Date at the server's (or
+// the query's) local midnight, so on a server outside UTC the instant is hours off the day it names.
+func dateDay(t time.Time) time.Time {
+	y, m, d := t.Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
 }
 
 // lendingInterestPoolDaysQuery is one pool's days over [from, before): FINAL as the revenue read, so derived_at is the
@@ -75,7 +82,7 @@ func (r *ExplorerReader) LendingInterestPoolDays(ctx context.Context, pool strin
 		if err := rows.Scan(&d.Asset, &d.Day, &d.DerivedAt, &d.StaleRows); err != nil {
 			return nil, fmt.Errorf("clickhouse: scan lending interest day %s: %w", pool, err)
 		}
-		d.Day, d.DerivedAt = d.Day.UTC(), d.DerivedAt.UTC()
+		d.Day, d.DerivedAt = dateDay(d.Day), d.DerivedAt.UTC()
 		out = append(out, d)
 	}
 	return out, rows.Err()

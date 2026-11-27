@@ -69,6 +69,17 @@ func TestProtocolRevenue_EmptyTableIsNullNotZero(t *testing.T) {
 	}
 }
 
+// Inside coverage a day with no row is a day with nothing to value, so a covered window holding no row is an exact zero,
+// not not_valued: the rollup is what keeps that true (TestLendingRevenueRollup_UnvaluedHoursHoldCoverage).
+func TestProtocolRevenue_CoveredWindowWithoutRowsIsZero(t *testing.T) {
+	out := foldProtocolRevenue(revIn(v2Pool, []timescale.LendingRevenueUSDCoverage{revCov("CP2", 40, 0)}))
+	for _, w := range []LendingProtocolRevenueWindow{out.Day, out.Week, out.Month, out.AllTime} {
+		if deref(w.InterestAccruedUSD) != "0.00" || w.USDReason != nil || w.LowerBound || len(w.Excluded) != 0 {
+			t.Fatalf("covered window with no rows served %+v, excluded %+v; want an exact 0.00", w.LendingProtocolRevenueAmounts, w.Excluded)
+		}
+	}
+}
+
 func TestProtocolRevenue_CompleteWindowsAndBuckets(t *testing.T) {
 	out := foldProtocolRevenue(revIn(v2Pool, []timescale.LendingRevenueUSDCoverage{revCov("CP2", 40, 0)},
 		revGroup("CP2", "CA", 0, "1.005"), revGroup("CP2", "CA", 1, "2"), revGroup("CP2", "CA", 2, "3"), revGroup("CP2", "CA", 3, "4")))

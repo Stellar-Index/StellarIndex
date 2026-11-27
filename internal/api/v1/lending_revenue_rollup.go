@@ -61,9 +61,11 @@ type lendingRevenueRollupLake interface {
 
 // LendingRevenueRollupStats is what one cycle did.
 type LendingRevenueRollupStats struct {
-	Held                                  bool // false: another process holds the lock; the cycle did nothing
-	PoolDays, Written, Unchanged, Skipped int
-	Mismatches, Degraded, Refused         int
+	Held bool // false: another process holds the lock; the cycle did nothing
+	// Queued pool-days were read; Empty of them held no interest hour; ReserveDays reached a decision.
+	Queued, Empty                            int
+	ReserveDays, Written, Unchanged, Skipped int
+	Mismatches, Degraded, Refused            int
 }
 
 // LendingRevenueRollup keeps lending_revenue_usd_daily: one row per (pool, asset, UTC day), each hour valued at the price a
@@ -314,17 +316,12 @@ func (r *LendingRevenueRollup) executeRun(ctx context.Context, c *rollupCycle, r
 			rr.hours[k] = append(rr.hours[k], h)
 		}
 	}
-	var writes []timescale.LendingRevenueUSDDay
-	for _, info := range infos {
-		t, queued := c.tasks[poolDay{pool, info.Day}]
-		if !queued || !inRun(info.Day) {
-			continue
-		}
-		row, write, final := valueRevenueRollupDay(ctx, c, &rr, t, info)
-		finished[info.Day] = finished[info.Day] && final
-		if write {
-			writes = append(writes, row)
-		}
+	writes, decided, err := rr.value(ctx, c, infos, inRun, finished)
+	if err != nil {
+		return nil, err
+	}
+	if err := rr.account(c, run, inRun, decided); err != nil {
+		return nil, err
 	}
 	if err := r.store.UpsertLendingRevenueUSDDays(ctx, writes); err != nil {
 		return nil, err
@@ -339,6 +336,54 @@ type rollupRun struct {
 	pool  string
 	have  map[reserveDay]timescale.LendingRevenueUSDDay
 	hours map[reserveDay][]clickhouse.LendingRevenueBucket
+}
+
+// value decides each queued in-run interest day, returning the rows to write and the reserve-days decided. A final
+// outcome with no row stored or to write is an error: nothing would then back the day coverage claims.
+func (rr *rollupRun) value(ctx context.Context, c *rollupCycle, infos []clickhouse.LendingInterestDay, inRun func(time.Time) bool,
+	finished map[time.Time]bool,
+) ([]timescale.LendingRevenueUSDDay, map[reserveDay]bool, error) {
+	var writes []timescale.LendingRevenueUSDDay
+	decided := map[reserveDay]bool{}
+	for _, info := range infos {
+		t, queued := c.tasks[poolDay{rr.pool, info.Day}]
+		if !queued || !inRun(info.Day) {
+			continue
+		}
+		row, write, final := valueRevenueRollupDay(ctx, c, rr, t, info)
+		k := reserveDay{rr.pool, info.Asset, info.Day}
+		if _, held := rr.have[k]; final && !write && !held {
+			return nil, nil, fmt.Errorf("lending revenue rollup: %s reserve %s day %s: final with no row stored or to write",
+				rr.pool, info.Asset, info.Day.Format(time.DateOnly))
+		}
+		decided[k] = true
+		finished[info.Day] = finished[info.Day] && final
+		if write {
+			writes = append(writes, row)
+		}
+	}
+	return writes, decided, nil
+}
+
+// account checks every hour the run read returned for a queued in-run day reached a decision, and counts the days that
+// held none: a day counts as one with nothing to value only when the read, too, holds nothing of it.
+func (rr *rollupRun) account(c *rollupCycle, run []poolDay, inRun func(time.Time) bool, decided map[reserveDay]bool) error {
+	for k := range rr.hours {
+		if _, queued := c.tasks[poolDay{rr.pool, k.day}]; queued && inRun(k.day) && !decided[k] {
+			return fmt.Errorf("lending revenue rollup: %s reserve %s day %s: the run read holds interest hours the interest days do not",
+				rr.pool, k.asset, k.day.Format(time.DateOnly))
+		}
+	}
+	valued := map[time.Time]bool{}
+	for k := range decided {
+		valued[k.day] = true
+	}
+	for _, pd := range run {
+		if inRun(pd.day) && !valued[pd.day] {
+			c.st.Empty++
+		}
+	}
+	return nil
 }
 
 var revenueRollupRows = rollupRows[timescale.LendingRevenueUSDDay]{equal: revenueDayRowsEqual, unexplained: revenueRowsUnexplained}

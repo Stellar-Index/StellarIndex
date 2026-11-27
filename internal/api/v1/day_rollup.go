@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"sort"
@@ -42,7 +43,8 @@ type dayRollupSource struct {
 	exclusionsChangedSince func(ctx context.Context, since time.Time) ([][2]time.Time, error)
 	walk                   func(ctx context.Context, asset string, day time.Time) reserveUSDRead
 	// valueRun values one run of a pool's consecutive queued days, each through [decideRollupDay], stores what it writes
-	// and returns the days that reached a final outcome.
+	// and returns the days that reached a final outcome. A day with no decision is final only when the run's read holds
+	// nothing of it; a read holding what no decision reached is an error, so coverage stays put.
 	valueRun      func(ctx context.Context, c *rollupCycle, run []poolDay) (map[time.Time]bool, error)
 	storeCoverage func(ctx context.Context, pool string, sp rollupSpan, through time.Time) error
 	started       func(at time.Time)
@@ -129,7 +131,7 @@ func (d *dayRollup) runCycle(ctx context.Context) {
 		d.logger.Warn(d.src.name+" cycle failed", "err", err)
 	case err == nil && st.Held:
 		d.src.succeeded(d.now(), st)
-		d.logger.Info(d.src.name+" cycle", "pool_days", st.PoolDays, "written", st.Written,
+		d.logger.Info(d.src.name+" cycle", "queued", st.Queued, "empty", st.Empty, "reserve_days", st.ReserveDays, "written", st.Written,
 			"mismatches", st.Mismatches, "degraded", st.Degraded, "refused", st.Refused)
 	}
 }
@@ -432,7 +434,7 @@ type rollupDayValue[R any] struct {
 // decideRollupDay values one queued key-day: write is true for a row to store, final when the day reached a final
 // outcome. A degraded or unrepresentable day is never written; a refused one is written unpriced.
 func decideRollupDay[R any](c *rollupCycle, rows rollupRows[R], v rollupDayValue[R]) (row R, write, final bool) {
-	c.st.PoolDays++
+	c.st.ReserveDays++
 	if v.task.changeOnly && v.exists && v.current {
 		c.st.Skipped++
 		return row, false, true
@@ -492,11 +494,17 @@ func (d *dayRollup) executePool(ctx context.Context, c *rollupCycle, days []pool
 	maxRun := d.src.budget.maxRun
 	sort.Slice(days, func(i, j int) bool { return days[i].day.Before(days[j].day) })
 	var unfinished time.Time
+	for _, pd := range days {
+		if !pd.day.Equal(pd.day.Truncate(day24)) {
+			return unfinished, fmt.Errorf("%s: %s queued %s, not a UTC midnight", d.src.name, pd.pool, pd.day.Format(time.RFC3339))
+		}
+	}
 	for i := 0; i < len(days); {
 		j := i + 1
 		for j < len(days) && j-i < maxRun && days[j].day.Sub(days[i].day) < time.Duration(maxRun)*day24 {
 			j++
 		}
+		c.st.Queued += j - i
 		finished, err := d.src.valueRun(ctx, c, days[i:j])
 		if err != nil {
 			return unfinished, err
