@@ -1347,6 +1347,13 @@ jobs:
         run: ./scripts/ci/lint-numeric-mask.sh
       - name: lint-numeric-mask self-test
         run: ./scripts/ci/lint-numeric-mask-test.sh
+      - name: lint-ch-day-zone
+        # Production's ClickHouse runs outside UTC: zone-less today(), a calendar
+        # function of now(), or toDateTime of a Date names the server's day, not
+        # the UTC day the API serves.
+        run: ./scripts/ci/lint-ch-day-zone.sh
+      - name: lint-ch-day-zone self-test
+        run: ./scripts/ci/lint-ch-day-zone-test.sh
       - name: lint-lake-dedup
         # stellar.transactions and stellar.operations are ReplacingMergeTree
         # archives whose duplicates are not merged away: on r1 every distinct

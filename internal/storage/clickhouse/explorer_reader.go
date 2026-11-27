@@ -1584,7 +1584,7 @@ func (r *ExplorerReader) ContractActivitySummaryFor(ctx context.Context, contrac
 		return s, true, nil
 	}
 	rows, err := r.conn.Query(ctx, `
-		SELECT toDate(close_time) AS d, toUInt64(uniqExact(ledger_seq))
+		SELECT toDateTime(toDate(close_time), 'UTC') AS d, toUInt64(uniqExact(ledger_seq))
 		FROM stellar.contract_active_ledgers
 		WHERE contract_id = ? AND ledger_seq >= ? AND close_time >= now() - INTERVAL ? DAY
 		GROUP BY d ORDER BY d`, contractID, sinceLedger, days)
@@ -1597,6 +1597,7 @@ func (r *ExplorerReader) ContractActivitySummaryFor(ctx context.Context, contrac
 		if err := rows.Scan(&d.Date, &d.ActiveLedgers); err != nil {
 			return ContractActivitySummary{}, false, fmt.Errorf("clickhouse: scan activity day: %w", err)
 		}
+		d.Date = d.Date.UTC()
 		s.Daily = append(s.Daily, d)
 	}
 	return s, true, rows.Err()
@@ -2193,7 +2194,7 @@ const recentContractsCensusQuery = `SELECT contract_id, toInt64(sum(e)) AS event
 func (r *ExplorerReader) recentContractsFromCensus(ctx context.Context, limit int, sinceLedger uint32) ([]ContractDirectoryRow, bool, error) {
 	// Resolve the window floor's UTC day from the ledger sequence (pruned read on the ledgers PK).
 	dayRows, err := r.conn.Query(ctx,
-		`SELECT toDate(close_time) FROM stellar.ledgers WHERE ledger_seq >= ? ORDER BY ledger_seq ASC LIMIT 1`,
+		`SELECT toDateTime(toDate(close_time), 'UTC') FROM stellar.ledgers WHERE ledger_seq >= ? ORDER BY ledger_seq ASC LIMIT 1`,
 		sinceLedger)
 	if err != nil {
 		return nil, false, fmt.Errorf("clickhouse: census day floor: %w", err)
@@ -2220,7 +2221,8 @@ func (r *ExplorerReader) recentContractsFromCensus(ctx context.Context, limit in
 	// be fresh, or a stalled rollup would serve a stale ranking stamped as current. today() is read from the SAME server as the census to
 	// avoid app/DB clock skew.
 	covRows, err := r.conn.Query(ctx,
-		`SELECT min(day), max(day), today() FROM stellar.contracts_census_daily`)
+		`SELECT toDateTime(min(day), 'UTC'), toDateTime(max(day), 'UTC'), toDateTime(toDate(now('UTC')), 'UTC')
+		 FROM stellar.contracts_census_daily`)
 	if err != nil {
 		return nil, false, fmt.Errorf("clickhouse: census coverage: %w", err)
 	}
@@ -2246,7 +2248,8 @@ func (r *ExplorerReader) recentContractsFromCensus(ctx context.Context, limit in
 		return nil, false, nil
 	}
 
-	rows, err := r.conn.Query(ctx, recentContractsCensusQuery, floor, limit)
+	// A date string compares with the Date column as a calendar day, in no zone.
+	rows, err := r.conn.Query(ctx, recentContractsCensusQuery, floor.UTC().Format(time.DateOnly), limit)
 	if err != nil {
 		return nil, false, fmt.Errorf("clickhouse: recent contracts (census): %w", err)
 	}

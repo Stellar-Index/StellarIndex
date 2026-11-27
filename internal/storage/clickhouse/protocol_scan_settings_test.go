@@ -68,7 +68,7 @@ func TestProtocolEventBreakdownQuery_WindowIsOptionalAndBound(t *testing.T) {
 // TestProtocolContractActivityQuery_ExcludesPartialDay: the roster reader must share the complete-days-only
 // bound of its sibling queries, or the still-accumulating current day makes the count wobble on every read.
 func TestProtocolContractActivityQuery_ExcludesPartialDay(t *testing.T) {
-	if !strings.Contains(protocolContractActivityQuery, "close_time < toStartOfDay(now())") {
+	if !strings.Contains(protocolContractActivityQuery, "close_time < toStartOfDay(now('UTC'))") {
 		t.Errorf("protocolContractActivityQuery lost its complete-days-only bound — "+
 			"the per-contract roster would include the current partial day, "+
 			"unlike protocolEventBreakdownQuery and protocolDailyActivityQuery:\n%s",

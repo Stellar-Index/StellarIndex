@@ -137,7 +137,7 @@ func protocolEventBreakdownQuery(windowed bool) string {
 		-- from that series — the breakdown must cover the same days.
 		FROM stellar.contract_events FINAL
 		WHERE contract_id IN (?) AND event_type = 'contract'
-		  AND close_time < toStartOfDay(now())`
+		  AND close_time < toStartOfDay(now('UTC'))`
 	if windowed {
 		q += ` AND ledger_seq >= ?`
 	}
@@ -246,7 +246,7 @@ func decodeTopicName(b64 string) (string, bool) {
 const protocolDailyActivityQuery = `SELECT toString(toDate(close_time)) AS d, count() AS c
 		FROM stellar.contract_events FINAL
 		WHERE contract_id IN (?) AND event_type = 'contract' AND ledger_seq >= ?
-		  AND close_time < toStartOfDay(now())
+		  AND close_time < toStartOfDay(now('UTC'))
 		GROUP BY d ORDER BY d ASC` + protocolRawScanRowCeiling
 
 // ProtocolDailyActivity returns ascending daily event counts from sinceLedger (>0 required), complete days only so the partial current day does not render as a phantom cliff.
@@ -276,16 +276,16 @@ func (r *ExplorerReader) ProtocolDailyActivity(ctx context.Context, contractIDs 
 const protocolContractActivityQuery = `SELECT contract_id, count() AS c, max(close_time) AS last_seen
 		FROM stellar.contract_events FINAL
 		WHERE contract_id IN (?) AND event_type = 'contract' AND ledger_seq >= ?
-		  AND close_time < toStartOfDay(now())
+		  AND close_time < toStartOfDay(now('UTC'))
 		GROUP BY contract_id ORDER BY c DESC` + protocolRawScanRowCeiling
 
 // protocolContractActivityFastQuery is protocolContractActivityQuery over the daily pre-aggregation; uncapped for the same reason.
 const protocolContractActivityFastQuery = `SELECT contract_id,
 		       toUInt64(uniqCombinedMerge(17)(events)) AS c,
-		       toDateTime(max(day)) AS last_seen
+		       toDateTime(max(day), 'UTC') AS last_seen
 		FROM stellar.contract_events_daily
 		WHERE contract_id IN (?) AND event_type = 'contract' AND day >= ?
-		  AND day < toDate(now())
+		  AND day < toDate(now('UTC'))
 		GROUP BY contract_id ORDER BY c DESC`
 
 // ProtocolContractActivity returns per-contract event counts and last-seen from sinceLedger (>0 required, an all-time scan blows the 30 s budget), descending, complete days only.
@@ -346,7 +346,7 @@ func (r *ExplorerReader) protocolDailyActivityFast(ctx context.Context, contract
 	const q = `SELECT toString(day) AS d, uniqCombinedMerge(17)(events) AS c
 		FROM stellar.contract_events_daily
 		WHERE contract_id IN (?) AND event_type = 'contract' AND day >= ?
-		  AND day < toDate(now())
+		  AND day < toDate(now('UTC'))
 		GROUP BY day ORDER BY day ASC`
 	rows, err := r.conn.Query(ctx, q, contractIDs, sinceDay)
 	if err != nil {
@@ -406,7 +406,7 @@ func (r *ExplorerReader) protocolEventBreakdownFast(ctx context.Context, contrac
 		SELECT topic_0_sym, t1_xdr, t0_xdr, toUInt64(uniqCombinedMerge(17)(events)) AS c
 		FROM stellar.contract_events_daily
 		WHERE contract_id IN (?) AND event_type = 'contract' AND day >= ?
-		  AND day < toDate(now())
+		  AND day < toDate(now('UTC'))
 		GROUP BY topic_0_sym, t1_xdr, t0_xdr) ORDER BY c DESC` + protocolBreakdownGroupLimitSQL
 	rows, err := r.conn.Query(ctx, q, contractIDs, sinceDay)
 	if err != nil {

@@ -61,7 +61,7 @@ func CensusMaxDay(ctx context.Context, addr string) (time.Time, bool, error) {
 		return time.Time{}, false, err
 	}
 	defer func() { _ = conn.Close() }()
-	rows, err := conn.Query(ctx, `SELECT max(day), count() FROM stellar.contracts_census_daily`)
+	rows, err := conn.Query(ctx, `SELECT toDateTime(max(day), 'UTC'), count() FROM stellar.contracts_census_daily`)
 	if err != nil {
 		return time.Time{}, false, fmt.Errorf("clickhouse: census max day: %w", err)
 	}
@@ -74,7 +74,7 @@ func CensusMaxDay(ctx context.Context, addr string) (time.Time, bool, error) {
 	if err := rows.Scan(&maxDay, &n); err != nil {
 		return time.Time{}, false, err
 	}
-	return maxDay, n > 0, rows.Err()
+	return maxDay.UTC(), n > 0, rows.Err()
 }
 
 // ContiguousThroughDay returns the UTC day of the highest hole-free ledger from the start of fromDay, the last day a census recompute may read; ok=false when fromDay's first ledger is missing.
@@ -198,7 +198,7 @@ func EarliestEventDay(ctx context.Context, addr string) (time.Time, error) {
 		return time.Time{}, err
 	}
 	defer func() { _ = conn.Close() }()
-	rows, err := conn.Query(ctx, `SELECT toDate(min(close_time)) FROM stellar.contract_events`)
+	rows, err := conn.Query(ctx, `SELECT toDateTime(toDate(min(close_time)), 'UTC') FROM stellar.contract_events`)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("clickhouse: earliest event day: %w", err)
 	}
@@ -210,5 +210,5 @@ func EarliestEventDay(ctx context.Context, addr string) (time.Time, error) {
 	if err := rows.Scan(&d); err != nil {
 		return time.Time{}, err
 	}
-	return d, rows.Err()
+	return d.UTC(), rows.Err()
 }
