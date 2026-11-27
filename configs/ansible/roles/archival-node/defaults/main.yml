@@ -166,7 +166,7 @@ zfs_datasets:
     atime: "off"
     logbias: "latency"
     primarycache: "all"
-    refreservation: "68719476736"   # 64 GiB, 4x r1's max_wal_size
+    refreservation: "274877906944"   # 256 GiB: must exceed pgbackrest_archive_push_queue_max
     mountpoint: "/var/lib/postgresql/wal"
   # "core" (stellar-core bucket dir, /var/lib/stellar-core) is NOT in this list
   # while run_stellar_core=false. Add it back and re-apply the zfs tag when flipping

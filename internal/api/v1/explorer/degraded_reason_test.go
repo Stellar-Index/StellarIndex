@@ -24,19 +24,23 @@ func TestServedFreshness_degradedReasonCounted(t *testing.T) {
 		get    func() servedFreshness
 		reason string
 	}{
-		{"failed or refused refresh", func() servedFreshness {
+		{"failed refresh", func() servedFreshness {
 			var f perKeyFlight
-			return swrFreshness(old, ttl, budget, true, &f, "k")
+			return swrFreshness(old, ttl, budget, true, &f, "k", false)
 		}, obs.DegradedRefreshFailed},
+		{"refused refresh", func() servedFreshness {
+			var f perKeyFlight
+			return swrFreshness(old, ttl, budget, false, &f, "k", true)
+		}, obs.DegradedRefreshRefused},
 		{"overrun refresh", func() servedFreshness {
 			var f perKeyFlight
 			fl, _ := f.begin("k")
 			fl.started = time.Now().Add(-budget - time.Second)
-			return swrFreshness(old, ttl, budget, false, &f, "k")
+			return swrFreshness(old, ttl, budget, false, &f, "k", false)
 		}, obs.DegradedRefreshOverrun},
 		{"provisional payload", func() servedFreshness {
 			var c contractDetailCache
-			return c.freshness("ev:C1", contractDetailEntry{v: provisionalTestPayload{}, cachedAt: time.Now()})
+			return c.freshness("ev:C1", contractDetailEntry{v: provisionalTestPayload{}, cachedAt: time.Now()}, false)
 		}, obs.DegradedProvisional},
 		{"cold op-type panel dropped", func() servedFreshness {
 			var c opTypeStatsCache
@@ -45,10 +49,10 @@ func TestServedFreshness_degradedReasonCounted(t *testing.T) {
 		}, obs.DegradedSectionDropped},
 		{"age-only stale", func() servedFreshness {
 			var f perKeyFlight
-			return swrFreshness(old, ttl, budget, false, &f, "k")
+			return swrFreshness(old, ttl, budget, false, &f, "k", false)
 		}, ""},
 	}
-	all := []string{obs.DegradedRefreshFailed, obs.DegradedRefreshOverrun, obs.DegradedProvisional, obs.DegradedSectionDropped, obs.DegradedOther}
+	all := []string{obs.DegradedRefreshFailed, obs.DegradedRefreshRefused, obs.DegradedRefreshOverrun, obs.DegradedProvisional, obs.DegradedSectionDropped, obs.DegradedOther}
 	for _, tc := range verdicts {
 		t.Run(tc.name, func(t *testing.T) {
 			route := "/t/" + strings.ReplaceAll(tc.name, " ", "-")

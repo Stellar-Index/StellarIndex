@@ -37,7 +37,7 @@ const contractDetailRefreshTimeout = 3 * time.Minute
 type contractDetailEntry struct {
 	v        any
 	cachedAt time.Time
-	// refreshFailed: the last refresh of this entry failed or was skipped; only a put clears it.
+	// refreshFailed: the last refresh of this entry that ran failed or panicked; only a put clears it, a refusal leaves it.
 	refreshFailed bool
 }
 
@@ -113,10 +113,10 @@ func (e contractDetailEntry) servedStale(key string) bool {
 	return e.refreshFailed || time.Since(e.cachedAt) > detailStaleAfterForKey(key)
 }
 
-// freshness is e's verdict served for key past its TTL ([servedFreshness]): a provisional payload, like a failed or overrun
-// refresh, is degraded; age past [detailStaleAfterForKey] alone is only stale.
-func (c *contractDetailCache) freshness(key string, e contractDetailEntry) servedFreshness {
-	fr := expiredFreshness(e.servedStale(key), e.refreshFailed, c.flight.overran(key, contractDetailRefreshTimeout))
+// freshness is e's verdict served for key past its TTL ([servedFreshness]): a provisional payload, like a failed, overrun or
+// refused refresh, is degraded; age past [detailStaleAfterForKey] alone is only stale.
+func (c *contractDetailCache) freshness(key string, e contractDetailEntry, refused bool) servedFreshness {
+	fr := expiredFreshness(e.servedStale(key), e.refreshFailed, c.flight.overran(key, contractDetailRefreshTimeout), refused)
 	if p, ok := e.v.(provisionalPayload); ok && p.provisional() {
 		if !fr.degraded {
 			fr.reason = obs.DegradedProvisional
@@ -126,7 +126,7 @@ func (c *contractDetailCache) freshness(key string, e contractDetailEntry) serve
 	return fr
 }
 
-// markRefreshFailed records on key's entry, if any, that its refresh failed or was skipped.
+// markRefreshFailed records on key's entry, if any, that its refresh failed.
 func (c *contractDetailCache) markRefreshFailed(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -137,9 +137,9 @@ func (c *contractDetailCache) markRefreshFailed(key string) {
 	}
 }
 
-// endContractDetailRefresh ends key's flight, first recording a failure on its entry so the next serve is flagged.
+// endContractDetailRefresh ends key's flight, first recording a failure (not a refusal) on its entry so the next serve is flagged.
 func (h *Handler) endContractDetailRefresh(key string, fl *keyFlight, err error) {
-	if err != nil {
+	if err != nil && !refreshRefused(err) {
 		h.contractDetail.markRefreshFailed(key)
 	}
 	h.contractDetail.flight.end(key, fl, err)
@@ -317,11 +317,11 @@ func (h *Handler) contractDetailCached(ctx context.Context, key string, compute 
 	if e, ok, fresh := h.contractDetail.get(key); ok {
 		if !fresh {
 			// Stale path: an entry is served either way, so skip rather than wait.
-			h.refreshContractDetail(key, compute, tryAdmit) //nolint:contextcheck // intentional detach — see refreshContractDetail
+			fl := h.refreshContractDetail(key, compute, tryAdmit) //nolint:contextcheck // intentional detach — see refreshContractDetail
 			if cur, ok, _ := h.contractDetail.get(key); ok {
-				e = cur // a refresh skipped just now is already a known failure
+				e = cur
 			}
-			fr = h.contractDetail.freshness(key, e)
+			fr = h.contractDetail.freshness(key, e, fl.refused())
 		}
 		return e.v, e.cachedAt, fr, nil
 	}

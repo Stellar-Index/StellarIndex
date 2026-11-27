@@ -22,7 +22,7 @@ func TestSWRFreshness_AgeIsStaleFailureIsDegraded(t *testing.T) {
 		{"just past ttl, healthy refresh", ttl + time.Second, false, time.Millisecond, servedFreshness{}},
 		{"past bound, refresh just started", bound + time.Hour, false, time.Millisecond, servedFreshness{stale: true}},
 		{"past bound, no refresh in flight", bound + time.Hour, false, 0, servedFreshness{stale: true}},
-		{"inside bound, last refresh failed or refused", ttl + time.Second, true, 0, servedFreshness{stale: true, degraded: true, reason: obs.DegradedRefreshFailed}},
+		{"inside bound, last refresh failed", ttl + time.Second, true, 0, servedFreshness{stale: true, degraded: true, reason: obs.DegradedRefreshFailed}},
 		{"past bound, last refresh failed", bound + time.Hour, true, time.Millisecond, servedFreshness{stale: true, degraded: true, reason: obs.DegradedRefreshFailed}},
 		{"refresh running past its budget", bound + time.Hour, false, budget + time.Second, servedFreshness{stale: true, degraded: true, reason: obs.DegradedRefreshOverrun}},
 	}
@@ -34,7 +34,7 @@ func TestSWRFreshness_AgeIsStaleFailureIsDegraded(t *testing.T) {
 				fl.started = time.Now().Add(-tc.flightAge)
 				defer f.end("k", fl, nil)
 			}
-			if got := swrFreshness(time.Now().Add(-tc.age), ttl, budget, tc.refreshFailed, &f, "k"); got != tc.want {
+			if got := swrFreshness(time.Now().Add(-tc.age), ttl, budget, tc.refreshFailed, &f, "k", false); got != tc.want {
 				t.Errorf("swrFreshness = %+v, want %+v", got, tc.want)
 			}
 		})
@@ -54,7 +54,7 @@ func TestContractDetailFreshness_AgeIsStaleFailureIsDegraded(t *testing.T) {
 		}{
 			{"just past ttl, healthy refresh", "v", detailTTLForKey(key) + time.Second, false, time.Millisecond, servedFreshness{}},
 			{"past bound, refresh just started", "v", bound + time.Minute, false, time.Millisecond, servedFreshness{stale: true}},
-			{"last refresh failed or refused", "v", detailTTLForKey(key) + time.Second, true, 0, servedFreshness{stale: true, degraded: true, reason: obs.DegradedRefreshFailed}},
+			{"last refresh failed", "v", detailTTLForKey(key) + time.Second, true, 0, servedFreshness{stale: true, degraded: true, reason: obs.DegradedRefreshFailed}},
 			{"refresh running past its budget", "v", bound + time.Hour, false, contractDetailRefreshTimeout + time.Second, servedFreshness{stale: true, degraded: true, reason: obs.DegradedRefreshOverrun}},
 			{"provisional payload", provisionalTestPayload{}, time.Second, false, 0, servedFreshness{stale: true, degraded: true, reason: obs.DegradedProvisional}},
 		}
@@ -67,7 +67,7 @@ func TestContractDetailFreshness_AgeIsStaleFailureIsDegraded(t *testing.T) {
 					defer c.flight.end(key, fl, nil)
 				}
 				e := contractDetailEntry{v: tc.v, cachedAt: time.Now().Add(-tc.age), refreshFailed: tc.refreshFailed}
-				if got := c.freshness(key, e); got != tc.want {
+				if got := c.freshness(key, e, false); got != tc.want {
 					t.Errorf("freshness = %+v, want %+v", got, tc.want)
 				}
 			})

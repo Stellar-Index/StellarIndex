@@ -340,13 +340,13 @@ func TestDetachedRefreshGate_SaturationSkipsNotQueues(t *testing.T) {
 		t.Fatalf("post-release fill ran %d scans, want 1", got)
 	}
 
-	// The skipped key stays degraded until a refresh succeeds; the put clears the failure memory.
+	// A skip is not a failure: once a slot is free the skipped key's serve is judged on its age alone while its refresh runs.
 	usdc := "USDC-" + validTestAccount
 	reader.holdersBlock = make(chan struct{}) // hold the refresh so the serve reads the skipped entry
 	_, _, _, fr, _ = h.assetHoldersCached(context.Background(), usdc, 10)
 	close(reader.holdersBlock)
-	if !fr.degraded {
-		t.Error("post-release serve of a key whose refresh was skipped came back clean before any refresh landed")
+	if fr.degraded {
+		t.Errorf("post-release serve of a key whose refresh was only skipped: %+v, want not degraded", fr)
 	}
 	waitFlightIdle(t, &h.assetHolders.flight, usdc)
 	if _, _, _, fr, _ := h.assetHoldersCached(context.Background(), usdc, 10); fr.degraded {
