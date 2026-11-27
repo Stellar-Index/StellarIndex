@@ -47,6 +47,9 @@
 #   write_gate_class_test.go instant): gated ops commands pass -write/-dry-run.
 #   .go/.sql under internal/ lint-numeric-mask (whole scope, instant): no
 #   cmd/ pkg/ deploy/ migr.  to_char with a fixed-width numeric mask.
+#   .go under internal/ cmd/ lint-ch-day-zone (whole scope, instant): no
+#   pkg/ scripts/, deploy/   ClickHouse calendar read in the server's zone.
+#   clickhouse/*.sql
 #   *.go / *.sql naming a    lint-lake-dedup (whole tree; it pre-filters on
 #   duplicate-bearing table  the same two table names this trigger uses).
 #   deploy/clickhouse/*.sql  lint-ch-apply-scope (whole tree, instant). Both
@@ -183,7 +186,7 @@ fi
 # ── Classification ──────────────────────────────────────────────────────────
 sh_files=(); test_scripts=(); go_files=(); go_dirs=(); wf_files=()
 mig_files=(); md_files=(); baseline_files=(); lake_files=(); parity=0; other=()
-rules_files=(); ansible_files=(); ch_files=(); sysd_files=(); apienv_files=(); cfgchk=0; edgeprobe=0; op_corpus=0; budget=0; opsdoc=0; nummask=0
+rules_files=(); ansible_files=(); ch_files=(); sysd_files=(); apienv_files=(); cfgchk=0; edgeprobe=0; op_corpus=0; budget=0; opsdoc=0; nummask=0; chzone=0
 present=()
 
 add_unique() { # add_unique <value> — appends to go_dirs if absent
@@ -223,6 +226,10 @@ for f in "${changed[@]}"; do
     case "$f" in
         internal/*.go|cmd/*.go|pkg/*.go|internal/*.sql|cmd/*.sql|pkg/*.sql|deploy/*.sql|migrations/*.sql|scripts/ci/lint-numeric-mask.sh)
             nummask=1; hit=1 ;;
+    esac
+    case "$f" in
+        internal/*.go|cmd/*.go|pkg/*.go|scripts/*.go|deploy/clickhouse/*.sql|scripts/ci/lint-ch-day-zone.sh)
+            chzone=1; hit=1 ;;
     esac
     case "$f" in
         .github/workflows/*.yml|.github/workflows/*.yaml|*/.github/workflows/*.yml|*/.github/workflows/*.yaml)
@@ -478,6 +485,10 @@ fi
 
 if [ "$nummask" -eq 1 ]; then
     add_step "lint-numeric-mask" "" "$ci_dir/lint-numeric-mask.sh"
+fi
+
+if [ "$chzone" -eq 1 ]; then
+    add_step "lint-ch-day-zone" "" "$ci_dir/lint-ch-day-zone.sh"
 fi
 
 if [ "$chunkfn" -eq 1 ]; then

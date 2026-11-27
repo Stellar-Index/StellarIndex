@@ -269,6 +269,8 @@ echo "=== Ops runbook -write flags ===" && ./scripts/ci/lint-ops-write-flag.sh
 echo "=== Ops runbook -write flags self-test ===" && ./scripts/ci/lint-ops-write-flag-test.sh
 echo "=== to_char numeric masks ===" && ./scripts/ci/lint-numeric-mask.sh
 echo "=== to_char numeric masks self-test ===" && ./scripts/ci/lint-numeric-mask-test.sh
+echo "=== ClickHouse calendar zone ===" && ./scripts/ci/lint-ch-day-zone.sh
+echo "=== ClickHouse calendar zone self-test ===" && ./scripts/ci/lint-ch-day-zone-test.sh
 echo "=== Completeness-staleness calibration ===" && ./scripts/ci/lint-completeness-staleness.sh
 echo "=== Source enablement (tracked ⇒ run, or declared) ===" && ./scripts/ci/lint-source-enablement.sh
 echo "=== Source enablement self-test ===" && ./scripts/ci/lint-source-enablement-test.sh
