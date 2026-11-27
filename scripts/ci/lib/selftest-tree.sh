@@ -35,9 +35,16 @@ selftest_tree() {
   # not, so a gate that reads only the index sees what it sees in the real tree.
   # tar keeps modes; the copy must be writable even where the source is not.
   _selftest_copy -c
-  if ! { chmod -R u+w "$SELFTEST_TREE" && git -C "$SELFTEST_TREE" init -q &&
-    git -C "$SELFTEST_TREE" add -A; }; then
+  if ! { chmod -R u+w "$SELFTEST_TREE" && git -C "$SELFTEST_TREE" init -q; }; then
     echo "$name: could not build the fixture repo in $SELFTEST_TREE" >&2
+    exit 1
+  fi
+  case "$(git -C "$SELFTEST_TREE" rev-parse --absolute-git-dir)" in
+    "$(cd "$SELFTEST_TREE" && pwd -P)"/*) ;;
+    *) echo "$name: fixture repo escaped $SELFTEST_TREE — refusing to continue" >&2; exit 1 ;;
+  esac
+  if ! git -C "$SELFTEST_TREE" add -A; then
+    echo "$name: could not stage the copy in $SELFTEST_TREE" >&2
     exit 1
   fi
   _selftest_copy -o --exclude-standard
