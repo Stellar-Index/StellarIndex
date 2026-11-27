@@ -28,6 +28,7 @@ func (s *Server) registerLendingHistoryRoutes() {
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/backstop/history", s.handleLendingBackstopHistory)
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/revenue", s.handleLendingPoolRevenue)
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/bad-debt", s.handleLendingPoolBadDebt)
+	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/emissions/history", s.handleLendingPoolEmissionsHistory)
 }
 
 const (
