@@ -20,6 +20,27 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.143.0] - 2026-11-27
+
+Tested against Stellar protocol 27. No migration (schema version stays 239). No `pkg/*` break (no change under `pkg/`). No ClickHouse DDL change. API additions only: one new endpoint and new optional fields on it.
+
+### Added
+
+- **api:** `GET /v1/lending/pools/{pool}/emissions/history` serves a Blend V1, Blend V2 or BLNT pool's emissions per hour or UTC day in token units: the emission schedule per reserve line, pool claims in total and by reserve, the backstop allocation and BLNT backstop tiers. Each stream is bounded by its own writer's progress, and emitted and claimed amounts are separate layers that are never summed (#4441).
+- **api:** the same endpoint values each stream and bucket in USD (`usd` object, `price_max_age_hours`) with the revenue price rule: the hourly VWAP at or before the hour, at most 6 h old. A bucket not fully priced is a lower bound or null with a `usd_reason` (`no_price_within_bound`, `withheld`, `amount_unread`, `reads_disagree`, `hourly_read_failed`, `emission_token_unread`, `emission_token_unverified`), never zero. Daily buckets are valued hour by hour from a read that shares one snapshot with the daily amounts, and a served USD figure never exceeds what the served token amount supports. Blend V1 claims carry no USD; the BLNT schedule's USD is marked `approximate` (#4444).
+- **monitoring:** counter `stellarindex_aggregator_window_wide_minutes_unresolved_total{pair,window}` separates a window left partial by over-spread minutes from one that hit the row cap (#4445).
+- **ci:** `check-selftest-runners.sh` fails a self-test that runs a mutating git command on the real repository without first building a throwaway one (#4443).
+
+### Changed
+
+- **api:** the per-day USD valuation and the rollup cycle behind the lending revenue worker are shared code (`usd_day_valuer.go`, `day_rollup.go`) so a second rollup supplies only its own reads and rows. Revenue output is byte-identical; the worker's cursor, exclusion and gauge paths gained unit tests (#4442).
+
+### Fixed
+
+- **aggregator:** a capped VWAP window no longer stays partial when more than ten of its older minutes have prints spread wider than the outlier band. Those minutes are now re-read raw in packed, set-based reads (`TradesInMinutes`, one index probe per minute, at most ten reads of `MaxTradesPerWindow` rows per leg and tick), not one query per minute capped at ten. Before, every tick re-read the same ten minutes and the window stayed flagged truncated; on production the XLM/USD 24 h window covered about 8.5 hours. A window whose over-spread minutes exceed the row budget stays flagged with its true `covered_from` (#4445).
+- **ci:** six gate self-tests (doc links, attribution, agents file, docs, runbook annotations, external channels) run in a throwaway copy of the tree. They used to write fixtures into the real working tree, edit and restore tracked files, and one made and reset a real commit; a parallel lane saw a fixture directory vanish mid-scan and the release pre-tag check failed (#4440, #4443).
+- **tests:** explorer unit tests drain react-query notifications before each test ends, so a late notification no longer reaches a torn-down environment (#4439).
+
 ## [v0.142.0] - 2026-11-27
 
 Tested against Stellar protocol 27. One additive migration, 0239 (schema version 239): the new tables `lending_revenue_usd_daily` and `lending_revenue_usd_coverage`, applied automatically by the deploy; it also re-creates `apply_api_role_grants()` so the API role can insert and update both. No `pkg/*` break (only a spec-contract test under `pkg/client` changed). No ClickHouse DDL change, so no operator DDL. Operators: the lending revenue rollup worker is new and off by default (`[lending_revenue_rollup] enabled`; ansible `stellarindex_lending_revenue_rollup_enabled`, default false). Until it is enabled, the `revenue` windows on `/v1/lending/protocols` read `not_valued` on every host. To enable: deploy with migration 0239 applied, set the variable; the self-fill takes about 5.5 h, and until it finishes the windows are lower bounds naming the days not yet valued. New ticket alerts `stellarindex_lending_revenue_rollup_stalled` and `stellarindex_lending_revenue_rollup_sweep_mismatch` cover the worker; do not enable it on a host that serves readers without them.
@@ -116,20 +137,3 @@ Tested against Stellar protocol 27. No migrations (schema version stays 236). No
 - **api:** `/v1/price/batch` rows walk the quote asset's aliases as `/v1/price` does, so an XLM-quoted batch matches the single-price answer (#4398).
 - **supply:** a `mint`, `burn`, `clawback` or `transfer` event without the address topics a token event carries is classified `not_token_shaped` before its amount is read, in the live sink, `ch-cap67-movements` and `ch-supply -seed-flows`. A pool's one-topic `mint` no longer raises the supply-skipped alerts, and no `supply_flows` row is written for such an event (#4406).
 - **ci:** test-net explorer builds use their own network's API key (#4392).
-
-## [v0.138.0] - 2026-11-25
-
-Tested against Stellar protocol 27. No migrations (schema version stays 236). No `pkg/*` break (no change under `pkg/`). No ClickHouse DDL change; an existing host needs `stellar.lending_interest_hourly` from `deploy/clickhouse/lending_interest.sql` (`si-apply-scope: operator`) if it has not been applied since v0.136.0. New metric: `stellarindex_api_degraded_responses_total`. `stellarindex_lending_interest_unexplained_versions` changes meaning (see Fixed).
-
-### Changed
-
-- **api:** `/v1/price/batch` reads the first stage of a request's data as set statements before its rows run: the cached triangulated price, the latest closed 1m bucket and the guard's trailing buckets. A prefetched answer is used only within 2 s and only for the exact key it was read for; anything else is read as before. Requests under 8 ids are not prefetched and only the first 200 ids are. Responses are unchanged (#4387).
-- **api:** a `fiat:USD` `/v1/price/batch` also prefetches each asset's 24h-ago anchor bucket and its guard baseline, keyed on the anchor's minute, beneath the per-minute change-24h cache. Responses are unchanged (#4388).
-
-### Added
-
-- **api:** `stellarindex_api_degraded_responses_total{route,reason}` and a `degraded_reason` field on the request log line say why a response was flagged degraded: `refresh_failed`, `refresh_overrun`, `provisional`, `section_dropped` or `other` (#4390).
-
-### Fixed
-
-- **lending:** the interest pass window line reports explained, attributed and unexplained versions separately, with up to five samples of unexplained rows. `stellarindex_lending_interest_unexplained_versions` and the proof report no longer count attributed versions (a Blend V1 interest-auction fill, whose event carries no amount) as unexplained (#4389).
