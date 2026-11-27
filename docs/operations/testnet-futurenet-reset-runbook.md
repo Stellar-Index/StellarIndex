@@ -142,12 +142,52 @@ nets and `cap67-movements` runs `-floor-ledger 1`, so the derive never floors ab
 - The daily `fleet-release-drift.yml` reports the host `DEGRADED` while the
   region API is down; the tracking issue closes itself once it serves r1's release.
 
-Expected on a new cycle: `stellarindex_galexie_archive_tip_lag_metric_stale`
-(`deploy/monitoring/rules/galexie-archive.yml`) fires while the archive bucket has no
-tip, because the tip-lag probe reports `probe_success 0` when it cannot read both tips.
-The archive mirrors only complete 64,000-ledger partitions, so worry only if it persists
-after the first one exists. Daily jobs that need
+### The archive bucket after a reset
+
+The wipe leaves `galexie-archive` empty and nothing writes it on a test net
+(`galexie-archive-fill` is pubnet-only); it is only ever filled by an operator-run
+`galexie scan-and-fill` of `[1, first-live - 1]`, which is empty when live starts at ledger 2.
+An archive empty for that reason is healthy, and the checks say so instead of failing:
+
+- Condition (all three checks): the archive listing succeeded and returned no object
+  at all (no ledger file, no `.config.json`), and the oldest live object starts at or
+  below ledger 64.
+- `galexie-archive-tip-lag`: `probe_success 1`, `galexie_archive_tip_lag_expected_empty 1`,
+  the live tip published, the archive tip and lag absent.
+- `galexie-archive-contiguity`: `galexie_archive_expected_empty 1`, `unexpected_gaps 0`,
+  `partition_count 0`.
+- `verify-archive-tier-a`: logs "archive bucket ... is empty by design" and exits 0 without walking.
+- Still failing, as before: archive bucket unreadable, archive holding any object
+  (a lone manifest included), a live bucket starting above ledger 64 (the archive range is then
+  non-empty and unfilled), or a live start that cannot be measured.
+
+Once an operator fills the archive, the normal checks apply.
+
+Daily jobs that need
 chain data fail or alert until the chain fills; worry if one still fails after the first
 daily cycle with activity on chain.
+
+### A source reports incomplete after a reset
+
+Read the verdict's `detail`, which names the per-target delta and window or says PENDING
+(`stellarindex_completeness_incomplete`, [data-freshness runbook](./runbooks/data-freshness.md#stellarindex_completeness_incomplete)):
+
+```sh
+sudo -u postgres psql -d stellarindex -c \
+ "SELECT source, complete, watermark_ledger, detail FROM (SELECT DISTINCT ON (source) * \
+  FROM completeness_snapshots ORDER BY source, computed_at DESC) s WHERE NOT complete;"
+```
+
+Floors from the old chain live in two PostgreSQL tables, created by migrations 0116 and 0125:
+`completeness_target_floors` (lowest ledger each target was ever verified from; it only falls,
+so an old-chain value above the new start would be read as loss) and `projection_dirty_windows`
+(old-cycle replay windows). Neither is in the preserved-table list, and the drop and recreate of the
+`stellarindex` DB with migrations re-run leaves both empty, so no old-chain floor survives a
+full wipe. They survive only after a partial wipe (DB kept): check with
+`SELECT source, target_table, projection_verified_from FROM completeness_target_floors;` and
+`SELECT * FROM projection_dirty_windows;`. The remedy is the full wipe above, not editing
+rows. After the wipe, the first `compute-completeness` run seeds fresh floors; to re-verify a
+source sooner use the existing command, `stellarindex-ops compute-completeness -config
+/etc/stellarindex.toml -ch -source <X> -from <recent> -write`.
 
 Code: `cmd/stellarindex-indexer/main.go` `resolveStartLedger` (forward-only resume).
