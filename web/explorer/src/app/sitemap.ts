@@ -9,6 +9,7 @@ import { loadOperationsDocs } from '@/lib/operations';
 import { loadIncidents } from '@/lib/incidents';
 import { hrefFor } from '@/lib/hrefFor';
 import { fiatSlugFor } from '@/lib/fiat-slugs';
+import { CONTRACT_ID_RE } from '@/lib/preload/manifest';
 import { PROTOCOLS } from './protocols/registry';
 import {
   buildAssetConvertParams,
@@ -81,6 +82,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     '/dexes',
     '/lending',
     '/lending/rates',
+    '/lending/blend',
+    '/lending/blnt',
     '/amm',
     '/yield',
     '/convert',
@@ -335,7 +338,8 @@ async function fetchLendingPools(): Promise<string[]> {
   // `/lending/undefined` into the sitemap — a 404 Google penalises.
   const rows =
     (await buildFetchData<{ pool: string }[]>('/v1/lending/pools')) ?? [];
-  return rows.map((p) => p.pool).filter(Boolean);
+  // Same contract-id filter as /lending/[pool]'s generateStaticParams.
+  return rows.map((p) => p.pool).filter((id) => CONTRACT_ID_RE.test(id ?? ''));
 }
 
 async function fetchMarketPairs(): Promise<string[]> {

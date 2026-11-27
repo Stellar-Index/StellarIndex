@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 
 vi.mock('@/lib/buildFetch', async () => {
   const actual =
@@ -23,7 +23,7 @@ vi.mock('./TopAccountsPanel', () => ({ TopAccountsPanel: () => <div /> }));
 vi.mock('./PoolHeadlineStats', () => ({ PoolHeadlineStats: () => <div /> }));
 
 import { buildFetchData } from '@/lib/buildFetch';
-import LendingPoolPage from './page';
+import LendingPoolPage, { generateStaticParams } from './page';
 
 // A curated Blend contract that carries a label but never appears in the
 // auction listing.
@@ -115,6 +115,17 @@ describe('LendingPoolPage auction stats', () => {
     expect(screen.queryByText(/Blend/)).toBeNull();
   });
 
+  it('links the breadcrumb to its protocol page', async () => {
+    vi.mocked(buildFetchData).mockResolvedValue([
+      { protocol: 'blnt', pool: BLNT_POOL, auctions_total: 2 },
+    ]);
+    await renderPool(BLNT_POOL);
+    const crumbs = screen.getByRole('navigation', { name: /breadcrumb/i });
+    expect(
+      within(crumbs).getByRole('link', { name: 'BLNT V3' }),
+    ).toHaveAttribute('href', '/lending/blnt');
+  });
+
   it('takes the protocol of an uncurated pool from its listing row', async () => {
     vi.mocked(buildFetchData).mockResolvedValue([
       { protocol: 'blnt', pool: 'CNEWPOOL', auctions_total: 1 },
@@ -123,5 +134,22 @@ describe('LendingPoolPage auction stats', () => {
     expect(
       screen.getByRole('link', { name: 'BLNT V3 protocol' }),
     ).toBeInTheDocument();
+  });
+});
+
+describe('generateStaticParams', () => {
+  it('emits only contract ids, so no pool can shadow /lending/blend or /lending/blnt', async () => {
+    vi.mocked(buildFetchData).mockResolvedValue([
+      { protocol: 'blend', pool: POOL_1 },
+      { protocol: 'blend', pool: 'blend' },
+      { protocol: 'blnt', pool: 'blnt' },
+      { protocol: 'blend', pool: 'rates' },
+    ]);
+    const pools = (await generateStaticParams()).map((p) => p.pool);
+    expect(pools).toContain(POOL_1);
+    expect(pools).toContain('shell');
+    expect(pools).not.toContain('blend');
+    expect(pools).not.toContain('blnt');
+    expect(pools).not.toContain('rates');
   });
 });
