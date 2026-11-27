@@ -388,8 +388,11 @@ func TestContractDetailCached_ExpiredWithinBoundServedClean(t *testing.T) {
 	h.contractDetail.put("ev:C1", "old")
 	ageContractDetail(h, "ev:C1", contractDetailTTL+time.Minute)
 
+	// Hold the detached refresh so the serve reads the expired entry, not one the refresh already replaced.
+	hold := make(chan struct{})
 	v, asOf, fr, err := h.contractDetailCached(context.Background(), "ev:C1",
-		func(context.Context) (any, error) { return "new", nil })
+		func(context.Context) (any, error) { <-hold; return "new", nil })
+	close(hold)
 	if err != nil || v != "old" || fr != (servedFreshness{}) {
 		t.Fatalf("serve 1m past ttl: v=%v %+v err=%v, want old and unflagged", v, fr, err)
 	}
