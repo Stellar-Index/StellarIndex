@@ -76,7 +76,7 @@ func valueRevenueDay(day time.Time, hours []clickhouse.LendingRevenueBucket, wal
 func revenueDayRow(pool, asset string, info clickhouse.LendingInterestDay, sums clickhouse.LendingRevenueSums, d revenueDay) (timescale.LendingRevenueUSDDay, bool) {
 	row := timescale.LendingRevenueUSDDay{
 		Pool: pool, Asset: asset, Day: info.Day, InterestDeriveRev: int16(lendinginterest.DeriveRev), ValuationRev: lendingRevenueValuationRev, //nolint:gosec // a small revision number
-		InterestDerivedAt: info.DerivedAt, PricedHours: d.sum.priced, UnpricedHours: d.sum.unpriced, PriceCarriedHours: d.sum.carried,
+		InterestDerivedAt: info.DerivedAt, HoursValued: d.sum.priced, HoursUnvalued: d.sum.unpriced, HoursCarried: d.sum.carried,
 		BasisHours: map[string]int{}, StaleRows: int64(info.StaleRows), //nolint:gosec // an hour-row count
 		AccrualExcluded: sums.UnorderedVersions + sums.AccrualErrors,
 	}
@@ -140,7 +140,7 @@ func revenueDayRowsEqual(a, b timescale.LendingRevenueUSDDay) bool {
 
 // revenueDayValuesEqual compares the USD a row states: the legs exactly, the hour counts, the bases and the reason.
 func revenueDayValuesEqual(a, b timescale.LendingRevenueUSDDay) bool {
-	if a.PricedHours != b.PricedHours || a.UnpricedHours != b.UnpricedHours || a.PriceCarriedHours != b.PriceCarriedHours ||
+	if a.HoursValued != b.HoursValued || a.HoursUnvalued != b.HoursUnvalued || a.HoursCarried != b.HoursCarried ||
 		(a.WalkReason == nil) != (b.WalkReason == nil) || (a.WalkReason != nil && *a.WalkReason != *b.WalkReason) ||
 		len(a.BasisHours) != len(b.BasisHours) {
 		return false

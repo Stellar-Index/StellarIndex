@@ -20,8 +20,8 @@ type LendingRevenueUSDDay struct {
 	InterestDeriveRev, ValuationRev int16
 	InterestDerivedAt               time.Time
 	Legs                            [7]*string
-	PricedHours, UnpricedHours      int
-	PriceCarriedHours               int
+	HoursValued, HoursUnvalued      int
+	HoursCarried                    int
 	BasisHours                      map[string]int
 	StaleRows, AccrualExcluded      int64
 	UnexplainedLoss                 int64
@@ -38,7 +38,7 @@ type LendingRevenueUSDCoverage struct {
 
 const lendingRevenueUSDDayCols = `pool, asset, day, interest_derive_rev, valuation_rev, interest_derived_at,
 	interest_accrued_usd, supplier_share_usd, supplier_credited_usd, backstop_take_usd, protocol_fee_usd,
-	backstop_drawn_usd, default_loss_usd, priced_hours, unpriced_hours, price_carried_hours, price_basis_hours,
+	backstop_drawn_usd, default_loss_usd, hours_valued, hours_unvalued, hours_carried, price_basis_hours,
 	stale_rows, accrual_excluded_versions, unexplained_loss_versions, walk_reason, valued_at`
 
 // LendingRevenueUSDDays reads a pool's stored days in [from, through], ascending.
@@ -57,8 +57,8 @@ func (s *Store) LendingRevenueUSDDays(ctx context.Context, pool string, from, th
 		var basis []byte
 		var reason sql.NullString
 		if err := rows.Scan(&d.Pool, &d.Asset, &d.Day, &d.InterestDeriveRev, &d.ValuationRev, &d.InterestDerivedAt,
-			&legs[0], &legs[1], &legs[2], &legs[3], &legs[4], &legs[5], &legs[6], &d.PricedHours, &d.UnpricedHours,
-			&d.PriceCarriedHours, &basis, &d.StaleRows, &d.AccrualExcluded, &d.UnexplainedLoss, &reason, &d.ValuedAt); err != nil {
+			&legs[0], &legs[1], &legs[2], &legs[3], &legs[4], &legs[5], &legs[6], &d.HoursValued, &d.HoursUnvalued,
+			&d.HoursCarried, &basis, &d.StaleRows, &d.AccrualExcluded, &d.UnexplainedLoss, &reason, &d.ValuedAt); err != nil {
 			return nil, fmt.Errorf("timescale: scan lending revenue usd day: %w", err)
 		}
 		for i, l := range legs {
@@ -100,7 +100,7 @@ func (s *Store) UpsertLendingRevenueUSDDays(ctx context.Context, rows []LendingR
 		for _, l := range d.Legs {
 			args = append(args, l)
 		}
-		args = append(args, d.PricedHours, d.UnpricedHours, d.PriceCarriedHours, string(basis), d.StaleRows, d.AccrualExcluded,
+		args = append(args, d.HoursValued, d.HoursUnvalued, d.HoursCarried, string(basis), d.StaleRows, d.AccrualExcluded,
 			d.UnexplainedLoss, d.WalkReason)
 		if _, err := tx.ExecContext(ctx, `INSERT INTO lending_revenue_usd_daily (`+lendingRevenueUSDDayCols+`)
 			VALUES ($1, $2, $3::date, $4, $5, $6, $7::numeric, $8::numeric, $9::numeric, $10::numeric, $11::numeric,
@@ -111,8 +111,8 @@ func (s *Store) UpsertLendingRevenueUSDDays(ctx context.Context, rows []LendingR
 				supplier_share_usd = EXCLUDED.supplier_share_usd, supplier_credited_usd = EXCLUDED.supplier_credited_usd,
 				backstop_take_usd = EXCLUDED.backstop_take_usd, protocol_fee_usd = EXCLUDED.protocol_fee_usd,
 				backstop_drawn_usd = EXCLUDED.backstop_drawn_usd, default_loss_usd = EXCLUDED.default_loss_usd,
-				priced_hours = EXCLUDED.priced_hours, unpriced_hours = EXCLUDED.unpriced_hours,
-				price_carried_hours = EXCLUDED.price_carried_hours, price_basis_hours = EXCLUDED.price_basis_hours,
+				hours_valued = EXCLUDED.hours_valued, hours_unvalued = EXCLUDED.hours_unvalued,
+				hours_carried = EXCLUDED.hours_carried, price_basis_hours = EXCLUDED.price_basis_hours,
 				stale_rows = EXCLUDED.stale_rows, accrual_excluded_versions = EXCLUDED.accrual_excluded_versions,
 				unexplained_loss_versions = EXCLUDED.unexplained_loss_versions, walk_reason = EXCLUDED.walk_reason,
 				valued_at = now()`, args...); err != nil {

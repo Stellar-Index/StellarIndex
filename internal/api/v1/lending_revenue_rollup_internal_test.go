@@ -253,7 +253,7 @@ func TestLendingRevenueRollup_RefusedDayIsStoredUnpriced(t *testing.T) {
 		t.Fatalf("cycle %+v; want day 2 refused and all 10 days written", st)
 	}
 	row, ok := h.row("P", 2)
-	if !ok || row.PricedHours != 0 || row.UnpricedHours != 1 || row.WalkReason == nil || *row.WalkReason != exclusionPriceWithheld {
+	if !ok || row.HoursValued != 0 || row.HoursUnvalued != 1 || row.WalkReason == nil || *row.WalkReason != exclusionPriceWithheld {
 		t.Fatalf("refused row %+v (stored=%v); want unpriced with reason %q", row, ok, exclusionPriceWithheld)
 	}
 	for i, l := range row.Legs {

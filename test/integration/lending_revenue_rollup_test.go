@@ -155,13 +155,13 @@ func TestLendingRevenueRollup_FillChangesAndLock(t *testing.T) {
 		t.Fatalf("first fill: %+v; want 20 rows written", st)
 	}
 	first := stored(asset)
-	if len(first) != 10 || first[day(3)].WalkReason == nil || *first[day(3)].WalkReason != "decimals_unknown" || first[day(3)].UnpricedHours != 1 {
+	if len(first) != 10 || first[day(3)].WalkReason == nil || *first[day(3)].WalkReason != "decimals_unknown" || first[day(3)].HoursUnvalued != 1 {
 		t.Fatalf("first fill rows: %d, day 3 %+v", len(first), first[day(3)])
 	}
 	firstXLM := stored(xlm)
 	for d := range 10 {
 		r := firstXLM[day(d)]
-		if r.PricedHours != 1 || r.UnpricedHours != 0 || r.WalkReason != nil {
+		if r.HoursValued != 1 || r.HoursUnvalued != 0 || r.WalkReason != nil {
 			t.Fatalf("XLM day %d: %+v; want one priced hour", d, r)
 		}
 		for i, units := range xlmLegs(d) {
@@ -208,7 +208,7 @@ func TestLendingRevenueRollup_FillChangesAndLock(t *testing.T) {
 		VALUES ('soroswap', $1, $2, 'test', 'test')`, day(4), day(7)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, `UPDATE lending_revenue_usd_daily SET unpriced_hours = 2 WHERE pool = $1`, pool); err != nil {
+	if _, err := db.ExecContext(ctx, `UPDATE lending_revenue_usd_daily SET hours_unvalued = 2 WHERE pool = $1`, pool); err != nil {
 		t.Fatal(err)
 	}
 	if st := cycle(w); st.Written != 14 || st.Mismatches != 2 {
@@ -216,12 +216,12 @@ func TestLendingRevenueRollup_FillChangesAndLock(t *testing.T) {
 	}
 	for _, a := range []string{asset, xlm} {
 		for d, r := range stored(a) {
-			if want := d.Equal(day(2)) || !d.Before(day(4)); (r.UnpricedHours != 2) != want {
-				t.Errorf("exclusion cycle: %s day %s re-valued=%v, want %v", a, d.Format(time.DateOnly), r.UnpricedHours != 2, want)
+			if want := d.Equal(day(2)) || !d.Before(day(4)); (r.HoursUnvalued != 2) != want {
+				t.Errorf("exclusion cycle: %s day %s re-valued=%v, want %v", a, d.Format(time.DateOnly), r.HoursUnvalued != 2, want)
 			}
 		}
 	}
-	if _, err := db.ExecContext(ctx, `UPDATE lending_revenue_usd_daily SET unpriced_hours = CASE WHEN asset = $2 THEN 1 ELSE 0 END
+	if _, err := db.ExecContext(ctx, `UPDATE lending_revenue_usd_daily SET hours_unvalued = CASE WHEN asset = $2 THEN 1 ELSE 0 END
 		WHERE pool = $1`, pool, asset); err != nil {
 		t.Fatal(err)
 	}

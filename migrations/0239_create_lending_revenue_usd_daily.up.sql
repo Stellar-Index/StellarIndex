@@ -45,9 +45,9 @@ CREATE TABLE lending_revenue_usd_daily (
     protocol_fee_usd          numeric,
     backstop_drawn_usd        numeric,
     default_loss_usd          numeric,
-    priced_hours              integer      NOT NULL, -- lint-money:ok an hour count
-    unpriced_hours            integer      NOT NULL, -- lint-money:ok an hour count
-    price_carried_hours       integer      NOT NULL, -- lint-money:ok an hour count
+    hours_valued              integer      NOT NULL,
+    hours_unvalued            integer      NOT NULL,
+    hours_carried             integer      NOT NULL,
     price_basis_hours         jsonb        NOT NULL DEFAULT '{}'::jsonb,
     stale_rows                bigint       NOT NULL DEFAULT 0,
     accrual_excluded_versions bigint       NOT NULL DEFAULT 0,
@@ -56,10 +56,10 @@ CREATE TABLE lending_revenue_usd_daily (
     valued_at                 timestamptz  NOT NULL DEFAULT now(),
     PRIMARY KEY (pool, asset, day),
     CONSTRAINT lending_revenue_usd_daily_hours_nonneg
-        CHECK (priced_hours >= 0 AND unpriced_hours >= 0
-               AND price_carried_hours >= 0 AND price_carried_hours <= priced_hours),
+        CHECK (hours_valued >= 0 AND hours_unvalued >= 0
+               AND hours_carried >= 0 AND hours_carried <= hours_valued),
     CONSTRAINT lending_revenue_usd_daily_legs_together
-        CHECK ((interest_accrued_usd IS NULL) = (priced_hours = 0 AND unpriced_hours > 0)
+        CHECK ((interest_accrued_usd IS NULL) = (hours_valued = 0 AND hours_unvalued > 0)
            AND (interest_accrued_usd IS NULL) = (supplier_share_usd IS NULL)
            AND (interest_accrued_usd IS NULL) = (supplier_credited_usd IS NULL)
            AND (interest_accrued_usd IS NULL) = (backstop_take_usd IS NULL)
