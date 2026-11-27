@@ -52,31 +52,13 @@ type LendingRevenueUSDExclusion struct {
 	Count  int    `json:"count"`
 }
 
-// revenueUSDSum is exact USD per leg; v is nil until an hour is valued. bases counts priced hours per basis, "" fiat.
-type revenueUSDSum struct {
-	v                         [revenueUSDLegCount]*big.Rat
-	priced, unpriced, carried int
-	bases                     map[string]int
-}
+// revenueUSDLegRats are the revenue legs' exact USD in wire order.
+type revenueUSDLegRats [revenueUSDLegCount]*big.Rat
 
-func (t *revenueUSDSum) add(o *revenueUSDSum) {
-	for i, x := range o.v {
-		if x == nil {
-			continue
-		}
-		if t.v[i] == nil {
-			t.v[i] = new(big.Rat)
-		}
-		t.v[i].Add(t.v[i], x)
-	}
-	t.priced, t.unpriced, t.carried = t.priced+o.priced, t.unpriced+o.unpriced, t.carried+o.carried
-	for b, n := range o.bases {
-		if t.bases == nil {
-			t.bases = map[string]int{}
-		}
-		t.bases[b] += n
-	}
-}
+func (a *revenueUSDLegRats) slice() []*big.Rat { return a[:] }
+
+// revenueUSDSum is the revenue legs' exact USD, through the valuer every per-day USD rollup shares.
+type revenueUSDSum = usdSum[revenueUSDLegRats, *revenueUSDLegRats]
 
 // revenueUSDLegs are the valued amounts in wire order, losses and draws as the magnitudes the base units serve.
 func revenueUSDLegs(s clickhouse.LendingRevenueSums) [revenueUSDLegCount]*big.Int {
@@ -86,108 +68,32 @@ func revenueUSDLegs(s clickhouse.LendingRevenueSums) [revenueUSDLegCount]*big.In
 	}
 }
 
-func legsNonZero(legs [revenueUSDLegCount]*big.Int) bool {
-	for _, a := range legs {
-		if a.Sign() != 0 {
-			return true
-		}
-	}
-	return false
+func revenueUSDAmounts(s clickhouse.LendingRevenueSums) []*big.Int {
+	legs := revenueUSDLegs(s)
+	return legs[:]
 }
 
-// valueHour adds one hour's legs at that hour's price; an hour without a price within the bound is counted unpriced.
-func (t *revenueUSDSum) valueHour(u reserveUSDSeries, at time.Time, legs [revenueUSDLegCount]*big.Int) {
-	p, ok := u.priceAt(at)
-	if u.reason != "" || !ok {
-		t.unpriced++
-		return
-	}
-	basis := u.basis
-	if basis == "" && u.stableAt[p.Bucket.UTC()] {
-		basis = priceBasisStablecoinProxy
-	}
-	h := revenueUSDSum{priced: 1, bases: map[string]int{basis: 1}}
-	for i, a := range legs {
-		v, err := usdValueRat(a, p.VWAP, u.dec)
-		if err != nil {
-			t.unpriced++
-			return
-		}
-		h.v[i] = v
-	}
-	if at.Sub(p.Bucket) > u.step {
-		h.carried = 1
-	}
-	t.add(&h)
-}
-
-// wire rounds once, here; reason (or no hour valued against an unpriced one) nulls every figure.
-func (t *revenueUSDSum) wire(reason string, lowerBound bool) LendingRevenueUSD {
-	out := LendingRevenueUSD{
-		PricedHours: t.priced, UnpricedHours: t.unpriced, PriceCarriedHours: t.carried, LowerBound: lowerBound || t.unpriced > 0,
-	}
-	if reason == "" && t.priced == 0 && t.unpriced > 0 {
-		reason = lendingUSDNoPriceInBound
-	}
-	if reason != "" {
-		out.USDReason = strRef(reason)
-		return out
-	}
-	for i, f := range []**string{
-		&out.InterestAccruedUSD, &out.SupplierShareUSD, &out.SupplierCreditedUSD, &out.BackstopTakeUSD,
-		&out.ProtocolFeeUSD, &out.BackstopDrawnUSD, &out.DefaultLossUSD,
-	} {
-		x := t.v[i]
-		if x == nil {
-			x = new(big.Rat)
-		}
-		*f = strRef(ratString(x, 2))
-	}
-	for b, n := range t.bases {
-		switch {
-		case b == "":
-		case n == t.priced:
-			out.PriceBasis = b
-		default:
-			if out.PriceBasisHours == nil {
-				out.PriceBasisHours = map[string]int{}
-			}
-			out.PriceBasisHours[b] = n
-		}
+// revenueHours are hour rows as the valuer's hours.
+func revenueHours(rows []clickhouse.LendingRevenueBucket) []usdAmountHour {
+	out := make([]usdAmountHour, len(rows))
+	for i, h := range rows {
+		out[i] = usdAmountHour{start: h.Start, amounts: revenueUSDAmounts(h.Sums)}
 	}
 	return out
 }
 
-func legsEqual(a, b [revenueUSDLegCount]*big.Int) bool {
-	for i := range a {
-		if a[i].Cmp(b[i]) != 0 {
-			return false
-		}
+// revenueUSDWire is t's served figures, null together with usd_reason when nothing of them could be valued.
+func revenueUSDWire(t *revenueUSDSum, reason string, lowerBound bool) LendingRevenueUSD {
+	w := t.wire(reason, lowerBound)
+	out := LendingRevenueUSD{
+		PricedHours: w.priced, UnpricedHours: w.unpriced, PriceCarriedHours: w.carried, PriceBasis: w.basis,
+		PriceBasisHours: w.basisHours, LowerBound: w.lowerBound, USDReason: w.reason,
 	}
-	return true
-}
-
-// valueRevenueBucket values bucket b from hours[h:] that fall inside it and returns the index past them; whatever of b
-// those hours do not account for counts as one unpriced hour.
-func valueRevenueBucket(b clickhouse.LendingRevenueBucket, hours []clickhouse.LendingRevenueBucket, h int, u reserveUSDSeries, width time.Duration) (revenueUSDSum, int) {
-	var sum revenueUSDSum
-	seen := revenueUSDLegs(clickhouse.NewLendingRevenueSums())
-	for ; h < len(hours) && hours[h].Start.Before(b.Start.Add(width)); h++ {
-		if hours[h].Start.Before(b.Start) {
-			continue
-		}
-		legs := revenueUSDLegs(hours[h].Sums)
-		for i, a := range legs {
-			seen[i].Add(seen[i], a)
-		}
-		if legsNonZero(legs) {
-			sum.valueHour(u, hours[h].Start, legs)
-		}
+	if w.legs != nil {
+		out.InterestAccruedUSD, out.SupplierShareUSD, out.SupplierCreditedUSD, out.BackstopTakeUSD = w.legs[0], w.legs[1], w.legs[2], w.legs[3]
+		out.ProtocolFeeUSD, out.BackstopDrawnUSD, out.DefaultLossUSD = w.legs[4], w.legs[5], w.legs[6]
 	}
-	if !legsEqual(seen, revenueUSDLegs(b.Sums)) {
-		sum.unpriced++
-	}
-	return sum, h
+	return out
 }
 
 // valueRevenueReserve values one reserve's points and totals from its hour rows. Whatever of a bucket its hours do not
@@ -196,9 +102,9 @@ func valueRevenueBucket(b clickhouse.LendingRevenueBucket, hours []clickhouse.Le
 func valueRevenueReserve(rv *LendingRevenueReserveView, res clickhouse.LendingRevenueReserve, u reserveUSDSeries, width time.Duration) (revenueUSDSum, []revenueUSDSum) {
 	var total revenueUSDSum
 	buckets := make([]revenueUSDSum, len(res.Buckets))
-	h := 0
+	hours, h := revenueHours(res.Hours), 0
 	for j, b := range res.Buckets {
-		buckets[j], h = valueRevenueBucket(b, res.Hours, h, u, width)
+		buckets[j], h = valueUSDBucket[revenueUSDLegRats](b.Start, revenueUSDAmounts(b.Sums), hours, h, u, width)
 		total.add(&buckets[j])
 	}
 	reason := u.reason
@@ -214,10 +120,10 @@ func valueRevenueReserve(rv *LendingRevenueReserveView, res clickhouse.LendingRe
 			if pr != revenueUSDAmountsExcluded && buckets[j].priced+buckets[j].unpriced == 0 {
 				pr = ""
 			}
-			rv.Points[j].USD = buckets[j].wire(pr, false)
+			rv.Points[j].USD = revenueUSDWire(&buckets[j], pr, false)
 		}
 	}
-	rv.USD = total.wire(reason, rv.LowerBound)
+	rv.USD = revenueUSDWire(&total, reason, rv.LowerBound)
 	return total, buckets
 }
 
@@ -264,14 +170,14 @@ func valueRevenueView(v *LendingRevenueView, rev clickhouse.LendingRevenue, seri
 		reason = revenueUSDAmountsExcluded
 	}
 	pool.bases = nil // a basis describes one token's series, not a sum across reserves
-	v.TotalsUSD.LendingRevenueUSD = pool.wire(reason, v.LowerBound || len(v.TotalsUSD.Excluded) > 0)
+	v.TotalsUSD.LendingRevenueUSD = revenueUSDWire(&pool, reason, v.LowerBound || len(v.TotalsUSD.Excluded) > 0)
 	return pool, reserves
 }
 
 // revenueValuedSpan is the first and last hour of res carrying a valued amount; ok false when none does.
 func revenueValuedSpan(res clickhouse.LendingRevenueReserve) (first, last time.Time, ok bool) {
 	for _, h := range res.Hours {
-		if !legsNonZero(revenueUSDLegs(h.Sums)) {
+		if !amountsNonZero(revenueUSDAmounts(h.Sums)) {
 			continue
 		}
 		if !ok {

@@ -138,6 +138,31 @@ slowest writer's cursor, is behind it), because a half-written ledger would show
 event is at that ledger. In `totals_usd` a
 part's sum over reserves is a lower bound when `excluded` names a reserve left out.
 
+## Emissions history: `GET /v1/lending/pools/{pool}/emissions/history`
+
+A pool's emissions per hour or UTC day, in base units of the emission token (BLND for Blend). No USD yet. Four streams
+describe the same tokens at different stages, so they are separate fields and are never added together.
+
+| Stream | What it means |
+|---|---|
+| `reserves` | **Scheduled**: per reserve token id, the announced rate times time, `Σ eps × seconds / 10^7`, exact. Rebuilt from `reserve_emission_update` events; the rate in force when the window opens is each id's last update at or before `from`. For V2 the event rate equals the stored rate exactly. Holders accrue it only while the side has supply; hours with an empty side are not detected yet, so it can include tokens nobody accrued. V1: null (`v1_emission_schedule_unverified`), because V1 does not store eps the V2 way and its scale is unverified. |
+| `pool_claims` | **Claimed** from the pool: claims, `amount_claimed` and distinct claimers per bucket. `by_reserve` holds only claims naming exactly one reserve id. Claims naming several (79.6% of the V2 amount, 93.2% of V1) are in the pool total but listed in `excluded` for `by_reserve` (`claim_names_several_reserves`), never split. V1 and V2. |
+| `backstop_alloc` | **Allocated**: the backstop's `gulp_emissions` naming the pool, `new_backstop_emissions` and `new_pool_emissions`. V2 only; V1 is null (`v1_backstop_unaudited`). |
+| `backstop_claims` | Null (`backstop_claim_names_no_pool`): the backstop `claim` names no pool, and its amount is backstop LP tokens, not BLND. |
+
+A token id with no update at or before `to` is not listed. A listed id's `points` holds only buckets with tokens
+scheduled, so a missing bucket is a zero rate, not a gap. Any exclusion names itself in `excluded` and sets
+`lower_bound` on its stream: the writer's projection not verified back to its first ledger, unread amounts, a window
+past the lake tip (`window_past_lake_tip`) or an unread tip (`lake_tip_unknown`).
+
+A bucket is served as complete only when both the lake and the stream's own Postgres writer have passed it. Each stream
+ends at its own `served_through`: the earliest of `to`, now, the lake tip and its writer's committed ledger (the `blend`
+projection for `reserves` and `pool_claims`, `blend_backstop` for `backstop_alloc`). A writer short of the lake is
+`writer_behind_lake`; one whose cursor cannot be placed is `writer_cursor_unread`, and then the schedule is withheld,
+because past an unknown cursor a missed update would run the old rate on. Blend records no transaction order within a
+ledger, so two updates to one token id from different transactions in one ledger are ordered by transaction hash and the
+line is flagged `approximate` (`same_ledger_update_order_unknown`).
+
 ## Pool factories (trust roots)
 
 A contract's events are attributed to Blend only if the contract is one of

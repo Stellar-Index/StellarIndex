@@ -18,12 +18,12 @@ const lendingRevenueValuationRev int16 = 1
 // 2s, and one cut short anyway is degraded and never stored.
 const lendingRevenueDayWalkBudget = 30 * time.Second
 
-type revenueDayOutcome int
+type revenueDayOutcome = usdDayOutcome
 
 const (
-	revenueDayValued   revenueDayOutcome = iota
-	revenueDayDegraded                   // a read failed or was cut short: nothing stored, retried
-	revenueDayRefused                    // a read-time verdict refused the reserve: stored unpriced, walk_reason withheld
+	revenueDayValued   = usdDayValued
+	revenueDayDegraded = usdDayDegraded
+	revenueDayRefused  = usdDayRefused
 )
 
 // revenueDayRefusedRow reports whether row records a verdict refusal; only a verdict gives the withheld reason.
@@ -33,11 +33,7 @@ func revenueDayRefusedRow(row timescale.LendingRevenueUSDDay) bool {
 
 // revenueDay is one reserve's USD for one UTC day: each hour at the price a walk of that UTC day gives. reason is the
 // price data's own reason no hour could be valued (unpriced, decimals_unknown, price_scale_mismatch).
-type revenueDay struct {
-	sum     revenueUSDSum
-	reason  string
-	outcome revenueDayOutcome
-}
+type revenueDay = usdDay[revenueUSDLegRats, *revenueUSDLegRats]
 
 // revenueDayRead walks assetC's USD series over the UTC day starting at day (the walk adds the price-age look-back).
 func (s *Server) revenueDayRead(ctx context.Context, assetC string, day time.Time, budget time.Duration) reserveUSDRead {
@@ -48,39 +44,11 @@ func (s *Server) revenueDayRead(ctx context.Context, assetC string, day time.Tim
 // valueRevenueDay values one day's hour rows with read, through the same bucket valuer as /revenue. A day with nothing
 // to value is zero without a read; walk is called only when one is needed.
 func valueRevenueDay(day time.Time, hours []clickhouse.LendingRevenueBucket, walk func() reserveUSDRead) revenueDay {
-	b := clickhouse.LendingRevenueBucket{Start: day, Sums: clickhouse.NewLendingRevenueSums()}
-	amountHours := 0
-	for _, h := range hours {
-		b.Sums.Add(h.Sums)
-		if legsNonZero(revenueUSDLegs(h.Sums)) {
-			amountHours++
-		}
+	d, err := valueUSDDay[revenueUSDLegRats](day, revenueHours(hours), walk)
+	if err != nil { // unreachable: revenueHours gives every hour all seven legs; never stored, retried
+		return revenueDay{outcome: usdDayDegraded}
 	}
-	if amountHours == 0 {
-		return revenueDay{}
-	}
-	r := walk()
-	switch revenueReadRefusal(r) {
-	case exclusionPriceWithheld:
-		// Every hour carrying an amount is unpriced, so the stored row's legs are NULL: a refusal is never a zero.
-		return revenueDay{outcome: revenueDayRefused, reason: r.series.reason, sum: revenueUSDSum{unpriced: amountHours}}
-	case exclusionPriceReadFailed:
-		return revenueDay{outcome: revenueDayDegraded}
-	}
-	sum, _ := valueRevenueBucket(b, hours, 0, r.series, 24*time.Hour)
-	return revenueDay{sum: sum, reason: r.series.reason}
-}
-
-// revenueReadRefusal is why a walked read refuses its reserve outright: withheld for a read-time verdict (a flagged
-// issuer, an operator withholding, a thin latest market), price_read_failed for a read that failed or was cut short.
-func revenueReadRefusal(r reserveUSDRead) string {
-	switch {
-	case r.verdict:
-		return exclusionPriceWithheld
-	case r.series.degraded || r.series.reason == exclusionPriceReadFailed:
-		return exclusionPriceReadFailed
-	}
-	return ""
+	return d
 }
 
 // revenueDayRow is the stored form of a valued day; ok is false when a leg is not a finite decimal (never, for decimal
@@ -89,7 +57,7 @@ func revenueDayRow(pool, asset string, info clickhouse.LendingInterestDay, sums 
 	row := timescale.LendingRevenueUSDDay{
 		Pool: pool, Asset: asset, Day: info.Day, InterestDeriveRev: int16(lendinginterest.DeriveRev), ValuationRev: lendingRevenueValuationRev, //nolint:gosec // a small revision number
 		InterestDerivedAt: info.DerivedAt, HoursValued: d.sum.priced, HoursUnvalued: d.sum.unpriced, HoursCarried: d.sum.carried,
-		BasisHours: map[string]int{}, StaleRows: int64(info.StaleRows), //nolint:gosec // an hour-row count
+		BasisHours: storedBasisHours(d.sum.bases), StaleRows: int64(info.StaleRows), //nolint:gosec // an hour-row count
 		AccrualExcluded: sums.UnorderedVersions + sums.AccrualErrors,
 	}
 	if sums.UnexplainedSupplyLoss.Sign() < 0 {
@@ -98,26 +66,9 @@ func revenueDayRow(pool, asset string, info clickhouse.LendingInterestDay, sums 
 	if d.reason != "" {
 		row.WalkReason = strRef(d.reason)
 	}
-	for b, n := range d.sum.bases {
-		if b == "" {
-			b = "fiat"
-		}
-		row.BasisHours[b] = n
-	}
-	if d.sum.priced == 0 && d.sum.unpriced > 0 {
-		return row, true
-	}
-	for i, x := range d.sum.v {
-		if x == nil {
-			x = new(big.Rat)
-		}
-		s, ok := ratExactDecimal(x)
-		if !ok {
-			return row, false
-		}
-		row.Legs[i] = &s
-	}
-	return row, true
+	legs, ok := d.storedLegs()
+	copy(row.Legs[:], legs)
+	return row, ok
 }
 
 // ratExactDecimal is r as an exact decimal string, false when its denominator has a prime factor other than 2 and 5.

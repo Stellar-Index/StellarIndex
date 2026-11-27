@@ -4,6 +4,7 @@ import (
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
+	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
 )
 
@@ -15,8 +16,9 @@ func aquariusReserveWriters(p config.ProjectorConfig) []v1.TVLWriterCursor {
 // lendingEventWriters names, per lending source, the cursors of whatever writes its event tables under this config.
 func lendingEventWriters(p config.ProjectorConfig) map[string][]v1.TVLWriterCursor {
 	return map[string][]v1.TVLWriterCursor{
-		blend.SourceName: projectedSourceWriters(p, blend.SourceName),
-		blnt.SourceName:  projectedSourceWriters(p, blnt.SourceName),
+		blend.SourceName:          projectedSourceWriters(p, blend.SourceName),
+		blend_backstop.SourceName: projectedSourceWriters(p, blend_backstop.SourceName),
+		blnt.SourceName:           projectedSourceWriters(p, blnt.SourceName),
 	}
 }
 
