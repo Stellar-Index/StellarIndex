@@ -33,7 +33,8 @@ func (o *Orchestrator) fetchTradesDetectTruncation(
 			coveredFrom = t[i].Timestamp
 		}
 	}
-	if filled, w, cf, ok := o.fillFromMinuteSums(ctx, fetch, from, to, t, coveredFrom); ok {
+	filled, w, cf, reason := o.fillFromMinuteSums(ctx, fetch, from, to, t, coveredFrom)
+	if filled != nil {
 		t, weights, coveredFrom = filled, w, cf
 	}
 	if !coveredFrom.IsZero() {
@@ -47,14 +48,17 @@ func (o *Orchestrator) fetchTradesDetectTruncation(
 			"from", from.UTC(),
 			"to", to.UTC(),
 			"covered_from", coveredFrom.UTC(),
+			"reason", reason,
 		)
 	}
 	return t, weights, coveredFrom, nil
 }
 
 // TradeSumsStore is the optional minute-sums read a Store may also implement; without it a capped leg stays truncated.
+// TradeSums1mLive computes the same rows from raw trades for the minutes the view has not materialised yet.
 type TradeSumsStore interface {
 	TradeSums1mInRange(ctx context.Context, p canonical.Pair, from, to time.Time) ([]timescale.TradeMinuteSum, time.Time, error)
+	TradeSums1mLive(ctx context.Context, p canonical.Pair, from, to time.Time) ([]timescale.TradeMinuteSum, error)
 }
 
 // tradeSumsHorizon is the longest window minute sums stand in for: trade_sums_1m re-materialises late inserts 26 hours back (0217).
@@ -69,28 +73,33 @@ const minuteSumTxPrefix = "sum1m:"
 // fillFromMinuteSums replaces a capped read's older part with one row per (source, minute) from trade_sums_1m. Raw rows are kept from
 // the minute after coveredFrom's, since the cap can cut inside a minute or a timestamp. A minute whose prints spread wider than the
 // outlier band is re-read raw (an off-price print must not hide inside honest volume); one that cannot be resolved ends coverage there.
-// ok=false leaves the raw read as is: no sums store, a window past the horizon or not minute-aligned, a read error, or an unmaterialised or invalidated range.
+// Unmaterialised or invalidated minutes up to the raw part are computed from raw trades ([Orchestrator.minuteSums]).
+// nil trades leave the raw read as is; reason then names the refusal, or else why coverage still ends at newCoveredFrom.
 func (o *Orchestrator) fillFromMinuteSums(
 	ctx context.Context, fetch canonical.Pair, from, to time.Time, raw []canonical.Trade, coveredFrom time.Time,
-) (trades []canonical.Trade, weights map[string]int64, newCoveredFrom time.Time, ok bool) {
+) (trades []canonical.Trade, weights map[string]int64, newCoveredFrom time.Time, reason string) {
 	ss, isSums := o.store.(TradeSumsStore)
-	if !isSums || to.Sub(from) > tradeSumsHorizon || !from.Equal(from.Truncate(time.Minute)) {
-		return nil, nil, time.Time{}, false
+	switch {
+	case !isSums:
+		return nil, nil, time.Time{}, "no minute-sums reader"
+	case to.Sub(from) > tradeSumsHorizon:
+		return nil, nil, time.Time{}, "window longer than the minute-sums horizon " + tradeSumsHorizon.String()
+	case !from.Equal(from.Truncate(time.Minute)):
+		return nil, nil, time.Time{}, "window start not minute-aligned"
 	}
 	m := coveredFrom.Truncate(time.Minute).Add(time.Minute)
 	if m.After(to) {
-		return nil, nil, time.Time{}, false
+		return nil, nil, time.Time{}, "raw part starts inside the window's last minute"
 	}
-	sums, watermark, err := ss.TradeSums1mInRange(ctx, fetch, from, m)
-	if err != nil {
-		o.logger.Warn("minute-sums read failed; leg stays truncated", "fetch_pair", fetch.String(), "err", err)
-		return nil, nil, time.Time{}, false
-	}
-	if watermark.Before(m) {
-		return nil, nil, time.Time{}, false
+	sums, reason := o.minuteSums(ctx, ss, fetch, from, m)
+	if reason != "" {
+		return nil, nil, time.Time{}, reason
 	}
 	rows := foldMinuteSums(sums)
 	cut, extra := o.resolveWideMinutes(ctx, fetch, rows)
+	if !cut.IsZero() {
+		reason = "wide minutes left unresolved (re-read budget, cap or error)"
+	}
 
 	weights = make(map[string]int64, len(rows))
 	trades = make([]canonical.Trade, 0, len(rows)+len(extra)+len(raw))
@@ -120,7 +129,7 @@ func (o *Orchestrator) fillFromMinuteSums(
 		}
 	}
 	sort.SliceStable(trades, func(i, j int) bool { return trades[i].Timestamp.Before(trades[j].Timestamp) })
-	return trades, weights, cut, true
+	return trades, weights, cut, reason
 }
 
 // minuteRow is one (source, minute) of a leg, both stored directions folded together.
