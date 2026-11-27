@@ -1079,6 +1079,30 @@ Gauge, no labels.
 
 Unix seconds of the last successful sweep. `time() - this` is the staleness signal. Alert: `stellarindex_priceless_coverage_check_stale` (> 30 min).
 
+### `stellarindex_lending_revenue_rollup_last_success_unix`
+
+Gauge, no labels.
+
+Unix seconds of the lending revenue USD rollup's last completed cycle that held its lock. Only the instance holding the lock sets it.
+
+### `stellarindex_lending_revenue_rollup_rows_valued_total`
+
+Counter, no labels.
+
+`lending_revenue_usd_daily` rows written because they were missing or differed from a fresh valuation.
+
+### `stellarindex_lending_revenue_rollup_sweep_mismatches_total`
+
+Counter, no labels.
+
+Stored days the daily sweep's fresh, non-degraded day walk did not reproduce exactly; each is rewritten and logged. Any increase is a defect in the valuer or a price correction after the trailing re-walk.
+
+### `stellarindex_lending_revenue_rollup_days_not_valued`
+
+Gauge, label `reason` (`degraded` / `refused`).
+
+Reserve-days the last cycle left unstored: `degraded` (a price read failed or was cut short; retried next cycle) or `refused` (a read-time verdict; the sweep retries daily).
+
 ### `stellarindex_change_summary_passes_total`
 
 Counter, label `outcome` (`ok` / `partial` / `failed`).

@@ -1228,6 +1228,15 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		defer recoverBackgroundWorker(logger, "source-exclusion-refresh")
 		exclusionGate.Run(rootCtx, pricingguard.SourceExclusionRefreshCadence)
 	}()
+	if cfg.LendingRevenueRollup.Enabled {
+		rollup := apiSrv.NewLendingRevenueRollup(store, logger.With("component", "lending-revenue-rollup"))
+		bgWG.Add(1)
+		go func() {
+			defer bgWG.Done()
+			defer recoverBackgroundWorker(logger, "lending-revenue-rollup")
+			rollup.Run(rootCtx)
+		}()
+	}
 
 	httpSrv := &http.Server{
 		Addr:              cfg.API.ListenAddr,

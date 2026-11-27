@@ -1,0 +1,420 @@
+{
+  "data": {
+    "pool": "CAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABDQF",
+    "protocol": "blend",
+    "interval": "1d",
+    "from": "2027-03-01T00:00:00Z",
+    "to": "2027-03-03T00:00:00Z",
+    "coverage": {
+      "derive_rev": 4,
+      "from_ledger": 1,
+      "through_ledger": 50,
+      "through_hour": "2027-03-02T16:00:00Z"
+    },
+    "lower_bound": true,
+    "excluded": [
+      {
+        "kind": "window",
+        "asset": null,
+        "reason": "interest_not_derived",
+        "amount": null,
+        "count": null
+      },
+      {
+        "kind": "reserve",
+        "asset": "CADQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAO6C",
+        "reason": "derive_stale",
+        "amount": null,
+        "count": 2
+      }
+    ],
+    "price_max_age_hours": 6,
+    "totals_usd": {
+      "interest_accrued_usd": "5.19",
+      "supplier_share_usd": "4.15",
+      "supplier_credited_usd": "4.15",
+      "backstop_take_usd": "1.04",
+      "protocol_fee_usd": "0.00",
+      "backstop_drawn_usd": "0.00",
+      "default_loss_usd": "0.00",
+      "priced_hours": 5,
+      "unpriced_hours": 5,
+      "price_carried_hours": 2,
+      "lower_bound": true,
+      "usd_reason": null,
+      "excluded": [
+        {
+          "asset": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+          "reason": "price_missing",
+          "count": 2
+        },
+        {
+          "asset": "CACQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABN3Q",
+          "reason": "withheld",
+          "count": 2
+        },
+        {
+          "asset": "CADQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAO6C",
+          "reason": "unpriced",
+          "count": 1
+        }
+      ]
+    },
+    "reserves": [
+      {
+        "asset": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+        "decimals": 7,
+        "fee_rate_inferred": false,
+        "lower_bound": true,
+        "totals": {
+          "interest_accrued": "345678984",
+          "supplier_share": "276543190",
+          "supplier_credited": "276543190",
+          "backstop_take": "69135794",
+          "protocol_fee": "0",
+          "realised": {
+            "backstop_drawn": "21",
+            "backstop_drawn_lower_bound": true,
+            "fee_withdrawn": null,
+            "fee_withdrawn_reason": "not_applicable"
+          },
+          "backstop_gulped": "0",
+          "reconcile_backstop_loss": "0",
+          "default_loss": "0",
+          "default_versions": 0,
+          "unexplained_supply_loss": "0",
+          "unexplained_supply_loss_versions": 0,
+          "unexplained_supply_gain": "0",
+          "unexplained_supply_gain_versions": 0,
+          "unexplained_backstop_residual": "0",
+          "unexplained_versions": 0,
+          "unordered_versions": 0,
+          "accrual_errors": 0
+        },
+        "usd": {
+          "interest_accrued_usd": "5.19",
+          "supplier_share_usd": "4.15",
+          "supplier_credited_usd": "4.15",
+          "backstop_take_usd": "1.04",
+          "protocol_fee_usd": "0.00",
+          "backstop_drawn_usd": "0.00",
+          "default_loss_usd": "0.00",
+          "priced_hours": 5,
+          "unpriced_hours": 2,
+          "price_carried_hours": 2,
+          "lower_bound": true,
+          "usd_reason": null
+        },
+        "points": [
+          {
+            "t": "2027-03-01T00:00:00Z",
+            "partial": false,
+            "interest_accrued": "185185170",
+            "supplier_share": "148148138",
+            "supplier_credited": "148148138",
+            "backstop_take": "37037032",
+            "protocol_fee": "0",
+            "realised": {
+              "backstop_drawn": "10",
+              "backstop_drawn_lower_bound": true,
+              "fee_withdrawn": null,
+              "fee_withdrawn_reason": "not_applicable"
+            },
+            "backstop_gulped": "0",
+            "reconcile_backstop_loss": "0",
+            "default_loss": "0",
+            "default_versions": 0,
+            "unexplained_supply_loss": "0",
+            "unexplained_supply_loss_versions": 0,
+            "unexplained_supply_gain": "0",
+            "unexplained_supply_gain_versions": 0,
+            "unexplained_backstop_residual": "0",
+            "unexplained_versions": 0,
+            "unordered_versions": 0,
+            "accrual_errors": 0,
+            "usd": {
+              "interest_accrued_usd": "1.98",
+              "supplier_share_usd": "1.58",
+              "supplier_credited_usd": "1.58",
+              "backstop_take_usd": "0.40",
+              "protocol_fee_usd": "0.00",
+              "backstop_drawn_usd": "0.00",
+              "default_loss_usd": "0.00",
+              "priced_hours": 3,
+              "unpriced_hours": 2,
+              "price_carried_hours": 1,
+              "lower_bound": true,
+              "usd_reason": null
+            }
+          },
+          {
+            "t": "2027-03-02T00:00:00Z",
+            "partial": true,
+            "interest_accrued": "160493814",
+            "supplier_share": "128395052",
+            "supplier_credited": "128395052",
+            "backstop_take": "32098762",
+            "protocol_fee": "0",
+            "realised": {
+              "backstop_drawn": "11",
+              "backstop_drawn_lower_bound": true,
+              "fee_withdrawn": null,
+              "fee_withdrawn_reason": "not_applicable"
+            },
+            "backstop_gulped": "0",
+            "reconcile_backstop_loss": "0",
+            "default_loss": "0",
+            "default_versions": 0,
+            "unexplained_supply_loss": "0",
+            "unexplained_supply_loss_versions": 0,
+            "unexplained_supply_gain": "0",
+            "unexplained_supply_gain_versions": 0,
+            "unexplained_backstop_residual": "0",
+            "unexplained_versions": 0,
+            "unordered_versions": 0,
+            "accrual_errors": 0,
+            "usd": {
+              "interest_accrued_usd": "3.21",
+              "supplier_share_usd": "2.57",
+              "supplier_credited_usd": "2.57",
+              "backstop_take_usd": "0.64",
+              "protocol_fee_usd": "0.00",
+              "backstop_drawn_usd": "0.00",
+              "default_loss_usd": "0.00",
+              "priced_hours": 2,
+              "unpriced_hours": 0,
+              "price_carried_hours": 1,
+              "lower_bound": false,
+              "usd_reason": null
+            }
+          }
+        ]
+      },
+      {
+        "asset": "CACQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABN3Q",
+        "decimals": 7,
+        "fee_rate_inferred": false,
+        "lower_bound": true,
+        "totals": {
+          "interest_accrued": "30000000",
+          "supplier_share": "24000000",
+          "supplier_credited": "24000000",
+          "backstop_take": "6000000",
+          "protocol_fee": "0",
+          "realised": {
+            "backstop_drawn": "1",
+            "backstop_drawn_lower_bound": true,
+            "fee_withdrawn": null,
+            "fee_withdrawn_reason": "not_applicable"
+          },
+          "backstop_gulped": "0",
+          "reconcile_backstop_loss": "0",
+          "default_loss": "0",
+          "default_versions": 0,
+          "unexplained_supply_loss": "0",
+          "unexplained_supply_loss_versions": 0,
+          "unexplained_supply_gain": "0",
+          "unexplained_supply_gain_versions": 0,
+          "unexplained_backstop_residual": "0",
+          "unexplained_versions": 0,
+          "unordered_versions": 0,
+          "accrual_errors": 0
+        },
+        "usd": {
+          "interest_accrued_usd": null,
+          "supplier_share_usd": null,
+          "supplier_credited_usd": null,
+          "backstop_take_usd": null,
+          "protocol_fee_usd": null,
+          "backstop_drawn_usd": null,
+          "default_loss_usd": null,
+          "priced_hours": 0,
+          "unpriced_hours": 2,
+          "price_carried_hours": 0,
+          "lower_bound": true,
+          "usd_reason": "withheld"
+        },
+        "points": [
+          {
+            "t": "2027-03-01T00:00:00Z",
+            "partial": false,
+            "interest_accrued": "10000000",
+            "supplier_share": "8000000",
+            "supplier_credited": "8000000",
+            "backstop_take": "2000000",
+            "protocol_fee": "0",
+            "realised": {
+              "backstop_drawn": "0",
+              "backstop_drawn_lower_bound": true,
+              "fee_withdrawn": null,
+              "fee_withdrawn_reason": "not_applicable"
+            },
+            "backstop_gulped": "0",
+            "reconcile_backstop_loss": "0",
+            "default_loss": "0",
+            "default_versions": 0,
+            "unexplained_supply_loss": "0",
+            "unexplained_supply_loss_versions": 0,
+            "unexplained_supply_gain": "0",
+            "unexplained_supply_gain_versions": 0,
+            "unexplained_backstop_residual": "0",
+            "unexplained_versions": 0,
+            "unordered_versions": 0,
+            "accrual_errors": 0,
+            "usd": {
+              "interest_accrued_usd": null,
+              "supplier_share_usd": null,
+              "supplier_credited_usd": null,
+              "backstop_take_usd": null,
+              "protocol_fee_usd": null,
+              "backstop_drawn_usd": null,
+              "default_loss_usd": null,
+              "priced_hours": 0,
+              "unpriced_hours": 1,
+              "price_carried_hours": 0,
+              "lower_bound": true,
+              "usd_reason": "withheld"
+            }
+          },
+          {
+            "t": "2027-03-02T00:00:00Z",
+            "partial": true,
+            "interest_accrued": "20000000",
+            "supplier_share": "16000000",
+            "supplier_credited": "16000000",
+            "backstop_take": "4000000",
+            "protocol_fee": "0",
+            "realised": {
+              "backstop_drawn": "1",
+              "backstop_drawn_lower_bound": true,
+              "fee_withdrawn": null,
+              "fee_withdrawn_reason": "not_applicable"
+            },
+            "backstop_gulped": "0",
+            "reconcile_backstop_loss": "0",
+            "default_loss": "0",
+            "default_versions": 0,
+            "unexplained_supply_loss": "0",
+            "unexplained_supply_loss_versions": 0,
+            "unexplained_supply_gain": "0",
+            "unexplained_supply_gain_versions": 0,
+            "unexplained_backstop_residual": "0",
+            "unexplained_versions": 0,
+            "unordered_versions": 0,
+            "accrual_errors": 0,
+            "usd": {
+              "interest_accrued_usd": null,
+              "supplier_share_usd": null,
+              "supplier_credited_usd": null,
+              "backstop_take_usd": null,
+              "protocol_fee_usd": null,
+              "backstop_drawn_usd": null,
+              "default_loss_usd": null,
+              "priced_hours": 0,
+              "unpriced_hours": 1,
+              "price_carried_hours": 0,
+              "lower_bound": true,
+              "usd_reason": "withheld"
+            }
+          }
+        ]
+      },
+      {
+        "asset": "CADQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAO6C",
+        "decimals": 7,
+        "fee_rate_inferred": false,
+        "lower_bound": true,
+        "totals": {
+          "interest_accrued": "7",
+          "supplier_share": "6",
+          "supplier_credited": "6",
+          "backstop_take": "1",
+          "protocol_fee": "0",
+          "realised": {
+            "backstop_drawn": "0",
+            "backstop_drawn_lower_bound": true,
+            "fee_withdrawn": null,
+            "fee_withdrawn_reason": "not_applicable"
+          },
+          "backstop_gulped": "0",
+          "reconcile_backstop_loss": "0",
+          "default_loss": "0",
+          "default_versions": 0,
+          "unexplained_supply_loss": "0",
+          "unexplained_supply_loss_versions": 0,
+          "unexplained_supply_gain": "0",
+          "unexplained_supply_gain_versions": 0,
+          "unexplained_backstop_residual": "0",
+          "unexplained_versions": 0,
+          "unordered_versions": 0,
+          "accrual_errors": 0
+        },
+        "usd": {
+          "interest_accrued_usd": null,
+          "supplier_share_usd": null,
+          "supplier_credited_usd": null,
+          "backstop_take_usd": null,
+          "protocol_fee_usd": null,
+          "backstop_drawn_usd": null,
+          "default_loss_usd": null,
+          "priced_hours": 0,
+          "unpriced_hours": 1,
+          "price_carried_hours": 0,
+          "lower_bound": true,
+          "usd_reason": "unpriced"
+        },
+        "points": [
+          {
+            "t": "2027-03-01T00:00:00Z",
+            "partial": false,
+            "interest_accrued": "7",
+            "supplier_share": "6",
+            "supplier_credited": "6",
+            "backstop_take": "1",
+            "protocol_fee": "0",
+            "realised": {
+              "backstop_drawn": "0",
+              "backstop_drawn_lower_bound": true,
+              "fee_withdrawn": null,
+              "fee_withdrawn_reason": "not_applicable"
+            },
+            "backstop_gulped": "0",
+            "reconcile_backstop_loss": "0",
+            "default_loss": "0",
+            "default_versions": 0,
+            "unexplained_supply_loss": "0",
+            "unexplained_supply_loss_versions": 0,
+            "unexplained_supply_gain": "0",
+            "unexplained_supply_gain_versions": 0,
+            "unexplained_backstop_residual": "0",
+            "unexplained_versions": 0,
+            "unordered_versions": 0,
+            "accrual_errors": 0,
+            "usd": {
+              "interest_accrued_usd": null,
+              "supplier_share_usd": null,
+              "supplier_credited_usd": null,
+              "backstop_take_usd": null,
+              "protocol_fee_usd": null,
+              "backstop_drawn_usd": null,
+              "default_loss_usd": null,
+              "priced_hours": 0,
+              "unpriced_hours": 1,
+              "price_carried_hours": 0,
+              "lower_bound": true,
+              "usd_reason": "unpriced"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "flags": {
+    "stale": false,
+    "reduced_redundancy": false,
+    "triangulated": false,
+    "divergence_warning": false,
+    "divergence_checked": false,
+    "fills_withheld_reason": "source_excluded"
+  }
+}
