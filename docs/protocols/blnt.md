@@ -97,6 +97,8 @@ BLNT differs in three ways:
   (`stored_eps_rewritten_without_event`): user actions rewrite the stored eps by dust with no event (under 1.4e-10
   relative, about 44 base units per reserve-week). It is not marked a lower bound, since the gap is immaterial.
 - `backstop_alloc` has no per-tier split (`tier_split_not_on_chain`): `gulp_emissions` names the pool only.
+- Every stream is bounded by the `blnt` projection's cursor as well as the lake. Updates within one ledger are applied in
+  `tx_index` order; a row without one falls back to transaction hash and flags the line as Blend's do.
 - `backstop_claims` is served per tier: `blnt_amount` (BLNT), `lp_amount` (backstop LP tokens) and `shares`
   (tier shares), each labelled in `units`.
 

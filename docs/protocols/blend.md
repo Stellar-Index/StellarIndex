@@ -152,8 +152,16 @@ describe the same tokens at different stages, so they are separate fields and ar
 
 A token id with no update at or before `to` is not listed. A listed id's `points` holds only buckets with tokens
 scheduled, so a missing bucket is a zero rate, not a gap. Any exclusion names itself in `excluded` and sets
-`lower_bound` on its stream: the writer's projection not verified back to its first ledger, unread amounts, or a window
-past the lake tip, which is cut at `served_through` rather than served as zeros.
+`lower_bound` on its stream: the writer's projection not verified back to its first ledger, unread amounts, a window
+past the lake tip (`window_past_lake_tip`) or an unread tip (`lake_tip_unknown`).
+
+A bucket is served as complete only when both the lake and the stream's own Postgres writer have passed it. Each stream
+ends at its own `served_through`: the earliest of `to`, now, the lake tip and its writer's committed ledger (the `blend`
+projection for `reserves` and `pool_claims`, `blend_backstop` for `backstop_alloc`). A writer short of the lake is
+`writer_behind_lake`; one whose cursor cannot be placed is `writer_cursor_unread`, and then the schedule is withheld,
+because past an unknown cursor a missed update would run the old rate on. Blend records no transaction order within a
+ledger, so two updates to one token id from different transactions in one ledger are ordered by transaction hash and the
+line is flagged `approximate` (`same_ledger_update_order_unknown`).
 
 ## Pool factories (trust roots)
 

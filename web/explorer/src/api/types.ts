@@ -2777,11 +2777,29 @@ export interface paths {
          *     stream's projection not verified back to its first ledger
          *     (`history_unverified`; `history_verdict_stale`, with `flags.stale`;
          *     `history_verdict_unread`, not cacheable), amounts not decoded
-         *     (`amount_unread`, counted not summed), or a window past the lake
-         *     tip (`window_past_lake_tip`, stream `window`): buckets after
-         *     `served_through` are not served and the bucket it cuts is
-         *     `partial`. 404 when no Blend or BLNT pool is known at the contract
-         *     id; 503 when this deployment has no event history reader.
+         *     (`amount_unread`, counted not summed), a window past the lake tip
+         *     (`window_past_lake_tip`) or a lake tip that could not be read
+         *     (`lake_tip_unknown`), both stream `window`.
+         *
+         *     A bucket is served as complete only when both the lake and the
+         *     stream's own Postgres writer have passed it. The window never runs
+         *     past now. Each stream ends at its own `served_through`: the
+         *     earliest of `to`, now, the lake tip and its writer's committed
+         *     ledger (the protocol's projection for `reserves` and
+         *     `pool_claims`; the backstop's for `backstop_alloc` and
+         *     `backstop_claims`). A writer short of the lake end is
+         *     `writer_behind_lake` for its streams; a writer whose cursor or
+         *     ledger close time cannot be read is `writer_cursor_unread`, and
+         *     its schedule is withheld (`reserves.unavailable_reason:
+         *     writer_cursor_unread`) because past an unknown cursor the rate is
+         *     unknown. Nothing after a stream's `served_through` is served, and
+         *     the bucket it cuts is `partial`; the top-level `served_through` is
+         *     the earliest stream's. A schedule line is `approximate`
+         *     (`same_ledger_update_order_unknown`) when two transactions in one
+         *     ledger updated its token id and no apply order is recorded (Blend
+         *     records none); they are then ordered by transaction hash. 404 when
+         *     no Blend or BLNT pool is known at the contract id; 503 when this
+         *     deployment has no event history reader.
          */
         get: operations["getLendingPoolEmissionsHistory"];
         put?: never;
@@ -7520,6 +7538,11 @@ export interface components {
              */
             reason: "unpriced" | "withheld" | "rate_unread" | "positions_unreadable" | "positions_truncated" | "positions_overcounted" | "reserve_list_unreadable";
         };
+        /**
+         * Format: date-time
+         * @description Where this stream's buckets end: the earliest of `to`, now, the lake tip and its writer's committed ledger; null when the stream is unavailable.
+         */
+        LendingEmissionServedThrough: string | null;
         /** @description Claims and the emission token claimed, in base units. */
         LendingEmissionClaimSums: {
             /** Format: int64 */
@@ -21428,6 +21451,7 @@ export interface operations {
                      *           "available": true,
                      *           "unavailable_reason": null,
                      *           "lower_bound": false,
+                     *           "served_through": "2026-11-03T00:00:00Z",
                      *           "approximate": false,
                      *           "approximate_reason": null,
                      *           "streams": [
@@ -21436,6 +21460,8 @@ export interface operations {
                      *               "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
                      *               "side": "supply",
                      *               "tokens": "35702479338.83712",
+                     *               "approximate": false,
+                     *               "approximate_reason": null,
                      *               "points": [
                      *                 {
                      *                   "t": "2026-11-01T00:00:00Z",
@@ -21455,6 +21481,7 @@ export interface operations {
                      *           "available": true,
                      *           "unavailable_reason": null,
                      *           "lower_bound": false,
+                     *           "served_through": "2026-11-03T00:00:00Z",
                      *           "totals": {
                      *             "claims": 30,
                      *             "amount": "120000000000"
@@ -21503,6 +21530,7 @@ export interface operations {
                      *           "available": true,
                      *           "unavailable_reason": null,
                      *           "lower_bound": false,
+                     *           "served_through": "2026-11-03T00:00:00Z",
                      *           "tier_split_available": false,
                      *           "tier_split_reason": null,
                      *           "totals": {
@@ -21524,6 +21552,7 @@ export interface operations {
                      *           "available": false,
                      *           "unavailable_reason": "backstop_claim_names_no_pool",
                      *           "lower_bound": false,
+                     *           "served_through": null,
                      *           "units": {
                      *             "blnt_amount": "",
                      *             "lp_amount": "",
@@ -21558,7 +21587,7 @@ export interface operations {
                             to: string;
                             /**
                              * Format: date-time
-                             * @description `to`, or the lake tip when it is earlier: nothing after it is served.
+                             * @description The earliest available stream's `served_through`: nothing after it is served for every stream.
                              */
                             served_through: string;
                             /** @description The pool instance's `BLNDTkn` (Blend) or `BLNTTkn` (BLNT); null when unread or for Blend V1. */
@@ -21572,7 +21601,7 @@ export interface operations {
                                 /** @enum {string} */
                                 stream: "window" | "reserves" | "pool_claims" | "pool_claims_by_reserve" | "backstop_alloc" | "backstop_claims";
                                 /** @enum {string} */
-                                reason: "window_past_lake_tip" | "history_unverified" | "history_verdict_stale" | "history_verdict_unread" | "amount_unread" | "claim_names_several_reserves" | "claim_names_no_reserve";
+                                reason: "window_past_lake_tip" | "lake_tip_unknown" | "writer_behind_lake" | "writer_cursor_unread" | "history_unverified" | "history_verdict_stale" | "history_verdict_unread" | "amount_unread" | "claim_names_several_reserves" | "claim_names_no_reserve";
                                 /**
                                  * Format: int64
                                  * @description Events left out or unsummed; null for a verdict or the window.
@@ -21584,8 +21613,9 @@ export interface operations {
                             reserves: {
                                 available: boolean;
                                 /** @enum {string|null} */
-                                unavailable_reason: "v1_emission_schedule_unverified" | null;
+                                unavailable_reason: "v1_emission_schedule_unverified" | "writer_cursor_unread" | null;
                                 lower_bound: boolean;
+                                served_through: components["schemas"]["LendingEmissionServedThrough"];
                                 /** @description The event-rebuilt rate may differ from the stored one by dust (BLNT). */
                                 approximate: boolean;
                                 /** @enum {string|null} */
@@ -21599,6 +21629,9 @@ export interface operations {
                                     side: "supply" | "borrow";
                                     /** @description Scheduled base units over the served window, exact. */
                                     tokens: string;
+                                    approximate: boolean;
+                                    /** @enum {string|null} */
+                                    approximate_reason: "same_ledger_update_order_unknown" | null;
                                     points: {
                                         /** Format: date-time */
                                         t: string;
@@ -21610,6 +21643,7 @@ export interface operations {
                             pool_claims: {
                                 available: boolean;
                                 unavailable_reason: string | null;
+                                served_through: components["schemas"]["LendingEmissionServedThrough"];
                                 lower_bound: boolean;
                                 totals: components["schemas"]["LendingEmissionClaimSums"];
                                 points: components["schemas"]["LendingEmissionClaimsPoint"][];
@@ -21630,6 +21664,7 @@ export interface operations {
                                 available: boolean;
                                 /** @enum {string|null} */
                                 unavailable_reason: "v1_backstop_unaudited" | null;
+                                served_through: components["schemas"]["LendingEmissionServedThrough"];
                                 lower_bound: boolean;
                                 tier_split_available: boolean;
                                 /** @enum {string|null} */
@@ -21645,6 +21680,7 @@ export interface operations {
                                 available: boolean;
                                 /** @enum {string|null} */
                                 unavailable_reason: "backstop_claim_names_no_pool" | null;
+                                served_through: components["schemas"]["LendingEmissionServedThrough"];
                                 lower_bound: boolean;
                                 /** @description Each amount's unit; empty strings when unavailable. */
                                 units: {

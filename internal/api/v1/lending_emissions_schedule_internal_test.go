@@ -86,6 +86,39 @@ func TestScheduledTokens_Additive(t *testing.T) {
 	}
 }
 
+// TestScheduledBuckets_MatchesPerBucketSum: the one-sweep bucketing equals scheduledTokens bucket by bucket, including a
+// short last bucket.
+func TestScheduledBuckets_MatchesPerBucketSum(t *testing.T) {
+	r := rand.New(rand.NewPCG(13, 17))
+	for i := range 300 {
+		tl := randomTimeline(r)
+		from, end, width := r.IntN(100)-20, 100+r.IntN(400), 1+r.IntN(60)
+		got := scheduledBuckets(tl, sec(from), sec(end), time.Duration(width)*time.Second)
+		n := 0
+		for b := from; b < end; b += width {
+			want := scheduledTokens(tl, sec(b), sec(min(b+width, end)))
+			if n >= len(got) || got[n].Cmp(want) != 0 {
+				t.Fatalf("case %d bucket %d: got %v, want %s", i, n, got, want.RatString())
+			}
+			n++
+		}
+		if n != len(got) {
+			t.Fatalf("case %d: %d buckets, want %d", i, len(got), n)
+		}
+	}
+}
+
+// BenchmarkScheduledBuckets is the widest request: 1,998 daily buckets over 200 updates.
+func BenchmarkScheduledBuckets(b *testing.B) {
+	tl := make([]emissionSegment, 200)
+	for i := range tl {
+		tl[i] = seg(i*864_000, int64(i+1)*1_000_000_007, i*864_000+900_000)
+	}
+	for b.Loop() {
+		scheduledBuckets(tl, sec(0), sec(1998*86_400), 24*time.Hour)
+	}
+}
+
 // TestScheduledTokens_ExpiredAndReplaced: an expired stream contributes nothing, and a later update replaces the rate from
 // its own timestamp even while the earlier one has not expired.
 func TestScheduledTokens_ExpiredAndReplaced(t *testing.T) {

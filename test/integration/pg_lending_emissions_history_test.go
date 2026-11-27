@@ -56,6 +56,20 @@ func TestLendingEmissionsHistory_ReadsExact(t *testing.T) {
 	reu(pool, 3, from.Add(-5*time.Hour), 3) // only a seed
 	reu(pool, 5, to, 9)                     // at to: outside [from, to)
 	reu(other, 1, from.Add(time.Minute), 11)
+	reu(pool, 7, from.Add(-time.Hour), 70)
+	reu(pool, 7, from, 71) // exactly at from: the seed, not dropped as in-window
+	// Two transactions in one ledger update token 9: no apply order is recorded, so tx_hash orders them and both are flagged.
+	for _, tx := range []struct {
+		hash string
+		eps  uint64
+	}{{strings.Repeat("b", 64), 90}, {strings.Repeat("a", 64), 91}} {
+		if err := store.InsertBlendEmissionEvent(ctx, domain.BlendEmissionEvent{
+			Pool: pool, Kind: domain.BlendEventReserveEmissions, Timestamp: from.Add(time.Hour), ResTokenID: 9,
+			EmissionsPerSec: tx.eps, Expiration: u64Max, Ledger: 60_500_000, TxHash: tx.hash,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	amt := func(s string) *big.Int {
 		if s == "" {
 			return nil
@@ -87,9 +101,12 @@ func TestLendingEmissionsHistory_ReadsExact(t *testing.T) {
 	}
 	var sched []string
 	for _, e := range got.Schedule {
-		sched = append(sched, fmt.Sprintf("%d@%s eps=%s exp=%s", e.TokenID, e.At.Format("15:04"), e.EPS, e.Expiration))
+		sched = append(sched, fmt.Sprintf("%d@%s eps=%s exp=%s amb=%t", e.TokenID, e.At.Format("15:04"), e.EPS, e.Expiration, e.OrderAmbiguous))
 	}
-	want := "1@23:00 eps=18446744073709551615 exp=18446744073709551615|1@00:30 eps=7 exp=18446744073709551615|3@19:00 eps=3 exp=18446744073709551615"
+	const forever = "exp=18446744073709551615"
+	want := "1@23:00 eps=18446744073709551615 " + forever + " amb=false|1@00:30 eps=7 " + forever + " amb=false|" +
+		"3@19:00 eps=3 " + forever + " amb=false|7@00:00 eps=71 " + forever + " amb=false|" +
+		"9@01:00 eps=91 " + forever + " amb=true|9@01:00 eps=90 " + forever + " amb=true"
 	if strings.Join(sched, "|") != want {
 		t.Fatalf("schedule = %s\nwant      %s", strings.Join(sched, "|"), want)
 	}

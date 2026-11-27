@@ -45,6 +45,10 @@ const (
 	emisHistSeveral           = "claim_names_several_reserves"
 	emisHistNone              = "claim_names_no_reserve"
 	emisHistPastTip           = "window_past_lake_tip"
+	emisHistTipUnknown        = "lake_tip_unknown"
+	emisHistWriterBehind      = "writer_behind_lake"   // the stream's Postgres writer has not reached the lake's end
+	emisHistWriterUnread      = "writer_cursor_unread" // the writer's cursor or its ledger's close time could not be read
+	emisHistOrderUnknown      = "same_ledger_update_order_unknown"
 	emisStreamReserves        = "reserves"
 	emisStreamPoolClaims      = "pool_claims"
 	emisStreamClaimsByReserve = "pool_claims_by_reserve"
@@ -59,7 +63,8 @@ type LendingEmissionsHistoryView struct {
 	Pool     string `json:"pool"`
 	Protocol string `json:"protocol"` // blend | blnt
 	Interval string `json:"interval"`
-	// From and To bound the buckets: [from, to), to rounded down to its hour; ServedThrough is to, or the lake tip before it.
+	// From and To bound the buckets: [from, to), to rounded down to its hour. ServedThrough is the earliest stream's
+	// served_through: the earliest of to, now and the lake tip, and each stream's own writer.
 	From                  WireTime                      `json:"from"`
 	To                    WireTime                      `json:"to"`
 	ServedThrough         WireTime                      `json:"served_through"`
@@ -87,6 +92,8 @@ type lendingEmissionStreamHead struct {
 	Available         bool    `json:"available"`
 	UnavailableReason *string `json:"unavailable_reason"`
 	LowerBound        bool    `json:"lower_bound"`
+	// ServedThrough is where this stream's buckets end: the earliest of to, now, the lake tip and its own writer's cursor.
+	ServedThrough *WireTime `json:"served_through"`
 }
 
 // LendingEmissionScheduleView is the scheduled emission per reserve token id, from its reserve_emission_update timeline.
@@ -99,11 +106,14 @@ type LendingEmissionScheduleView struct {
 
 // LendingEmissionScheduleLine is one token id's schedule; Points lists only buckets with tokens scheduled.
 type LendingEmissionScheduleLine struct {
-	TokenID uint32                     `json:"token_id"`
-	Asset   *string                    `json:"asset"`
-	Side    string                     `json:"side"`
-	Tokens  string                     `json:"tokens"`
-	Points  []LendingEmissionTokensPnt `json:"points"`
+	TokenID uint32  `json:"token_id"`
+	Asset   *string `json:"asset"`
+	Side    string  `json:"side"`
+	Tokens  string  `json:"tokens"`
+	// Approximate: two transactions in one ledger updated this id and their apply order is not recorded.
+	Approximate       bool                       `json:"approximate"`
+	ApproximateReason *string                    `json:"approximate_reason"`
+	Points            []LendingEmissionTokensPnt `json:"points"`
 }
 
 // LendingEmissionTokensPnt is one bucket's scheduled base units; Partial marks a bucket the window or the lake tip cuts.
@@ -252,8 +262,10 @@ func (s *Server) handleLendingPoolEmissionsHistory(w http.ResponseWriter, r *htt
 		s.writeLendingHistoryError(ctx, w, r, "LendingEmissions", pool, err)
 		return
 	}
+	b := s.emissionsWriterBounds(ctx, win, isBLNT, isV1, &flags)
 	hq := timescale.EmissionHistoryQuery{
-		From: win.from, To: win.end, Daily: q.Daily, Schedule: !isV1, BackstopAlloc: !isV1, BackstopClaim: isBLNT,
+		From: win.from, To: b.pool.end, BackstopTo: b.backstop.end, Daily: q.Daily,
+		Schedule: !isV1, BackstopAlloc: !isV1, BackstopClaim: isBLNT,
 	}
 	h, err := hr.LendingEmissionsHistory(ctx, pool, isBLNT, hq)
 	if errors.Is(err, errNoEmissionsHistoryReader) {
@@ -264,7 +276,8 @@ func (s *Server) handleLendingPoolEmissionsHistory(w http.ResponseWriter, r *htt
 		s.writeLendingHistoryError(ctx, w, r, "LendingEmissionsHistory", pool, err)
 		return
 	}
-	fillEmissionsHistory(&view, h, win, st.ReserveList, isBLNT, isV1)
+	fillEmissionsHistory(&view, h, b, st.ReserveList, isBLNT, isV1)
+	b.apply(&view)
 	s.applyEmissionsVerdicts(ctx, &view, isBLNT, &flags)
 	finishEmissionsHistory(&view)
 	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(time.Now().UTC()), Flags: flags})
@@ -279,21 +292,24 @@ func (s *Server) emissionsHistoryView(ctx context.Context, pool, protocol, inter
 	if win.to.Before(win.from) {
 		win.to = win.from
 	}
-	win.end = win.to
+	// Nothing after now has happened: a schedule extended past it would serve announced tokens as emitted.
+	win.end = minTime(win.to, time.Now().UTC().Truncate(time.Second))
 	view := LendingEmissionsHistoryView{
 		Pool: pool, Protocol: protocol, Interval: interval, From: WireTime(win.from), To: WireTime(win.to),
 		EPSDecimals: clickhouse.EmissionEPSDecimals, Excluded: []LendingEmissionsExclusion{},
 	}
 	_, stale, ok := s.lakeWatermark(ctx)
 	flags := Flags{Stale: stale}
-	if ok {
-		if _, tip, _, _ := s.lakeWatermarkCached(); !tip.IsZero() && tip.Before(win.end) {
-			win.end = tip.UTC().Truncate(time.Second)
-			if win.end.Before(win.from) {
-				win.end = win.from
-			}
-			view.Excluded = append(view.Excluded, LendingEmissionsExclusion{Stream: emisStreamWindow, Reason: emisHistPastTip})
-		}
+	_, tip, _, _ := s.lakeWatermarkCached()
+	switch {
+	case !ok || tip.IsZero():
+		view.Excluded = append(view.Excluded, LendingEmissionsExclusion{Stream: emisStreamWindow, Reason: emisHistTipUnknown})
+	case tip.Before(win.end):
+		win.end = tip.UTC().Truncate(time.Second)
+		view.Excluded = append(view.Excluded, LendingEmissionsExclusion{Stream: emisStreamWindow, Reason: emisHistPastTip})
+	}
+	if win.end.Before(win.from) {
+		win.end = win.from
 	}
 	view.ServedThrough = WireTime(win.end)
 	return view, win, flags
@@ -330,7 +346,7 @@ func unavailable(reason string) lendingEmissionStreamHead {
 }
 
 // fillEmissionsHistory maps the read into the four streams, with each version's nulls.
-func fillEmissionsHistory(v *LendingEmissionsHistoryView, h timescale.LendingEmissionsHistory, win emissionsHistoryWindow, reserves []string, isBLNT, isV1 bool) {
+func fillEmissionsHistory(v *LendingEmissionsHistoryView, h timescale.LendingEmissionsHistory, b emissionsBounds, reserves []string, isBLNT, isV1 bool) {
 	v.Reserves = LendingEmissionScheduleView{Streams: []LendingEmissionScheduleLine{}}
 	v.BackstopAlloc = LendingBackstopAllocView{Points: []LendingAllocPointView{}, Totals: LendingAllocSums{BackstopEmissions: "0", PoolEmissions: "0"}}
 	v.BackstopClaims = LendingBackstopClaimsHistView{Tiers: []LendingBackstopClaimTierHis{}}
@@ -340,18 +356,18 @@ func fillEmissionsHistory(v *LendingEmissionsHistoryView, h timescale.LendingEmi
 		v.BackstopAlloc.lendingEmissionStreamHead = unavailable(emisHistV1Backstop)
 	default:
 		v.Reserves.Available = true
-		v.Reserves.Streams = scheduleLines(h.Schedule, win, reserves)
-		fillBackstopAlloc(v, h.Alloc, win)
+		v.Reserves.Streams = scheduleLines(h.Schedule, b.pool, reserves)
+		fillBackstopAlloc(v, h.Alloc, b.backstop)
 	}
 	if isBLNT {
 		v.Reserves.Approximate, v.Reserves.ApproximateReason = true, strRef(emisHistEPSDrift)
 		v.BackstopAlloc.TierSplitReason = strRef(emisHistTierSplit)
 		v.BackstopClaims.Available, v.BackstopClaims.Units = true, blntBackstopClaimUnits
-		fillBackstopClaims(v, h.BackstopClaims, win)
+		fillBackstopClaims(v, h.BackstopClaims, b.backstop)
 	} else {
 		v.BackstopClaims.lendingEmissionStreamHead = unavailable(emisHistNoPool)
 	}
-	fillPoolClaims(v, h.Claims, win, reserves)
+	fillPoolClaims(v, h.Claims, b.pool, reserves)
 }
 
 func scheduleLines(events []timescale.EmissionScheduleEvent, win emissionsHistoryWindow, reserves []string) []LendingEmissionScheduleLine {
@@ -362,15 +378,15 @@ func scheduleLines(events []timescale.EmissionScheduleEvent, win emissionsHistor
 		asset, side, _ := clickhouse.ReserveTokenSide(id, reserves)
 		line := LendingEmissionScheduleLine{
 			TokenID: id, Asset: nonEmptyPtr(asset), Side: side, Points: []LendingEmissionTokensPnt{},
-			Tokens: scheduledTokensString(scheduledTokens(tl, win.from, win.end)),
+			Tokens: scheduledTokensString(scheduledTokens(tl.segments, win.from, win.end)),
 		}
-		for b := win.from; b.Before(win.end); b = b.Add(win.width) {
-			end := b.Add(win.width)
-			if end.After(win.end) {
-				end = win.end
-			}
-			if t := scheduledTokens(tl, b, end); t.Sign() != 0 {
-				line.Points = append(line.Points, LendingEmissionTokensPnt{T: WireTime(b), Partial: win.partial(b), Tokens: scheduledTokensString(t)})
+		if tl.ambiguous {
+			line.Approximate, line.ApproximateReason = true, strRef(emisHistOrderUnknown)
+		}
+		for i, t := range scheduledBuckets(tl.segments, win.from, win.end, win.width) {
+			if t.Sign() != 0 {
+				start := win.from.Add(time.Duration(i) * win.width)
+				line.Points = append(line.Points, LendingEmissionTokensPnt{T: WireTime(start), Partial: win.partial(start), Tokens: scheduledTokensString(t)})
 			}
 		}
 		out = append(out, line)

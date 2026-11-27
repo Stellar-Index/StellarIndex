@@ -3,6 +3,7 @@ package v1_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -28,10 +29,48 @@ func (r *stubEmissionsHistoryLending) LendingEmissionsHistory(_ context.Context,
 	return r.hist, nil
 }
 
-type fixedWatermark struct{ at time.Time }
+type fixedWatermark struct {
+	at  time.Time
+	err error
+}
 
 func (f fixedWatermark) LakeWatermark(context.Context) (uint32, time.Time, error) {
-	return 70_000_000, f.at, nil
+	return 70_000_000, f.at, f.err
+}
+
+// emisHistExplorer adds the writer cursors' ledger close times.
+type emisHistExplorer struct {
+	*stubEmissionsExplorer
+	closed map[uint32]time.Time
+}
+
+func (e emisHistExplorer) CloseTimeForLedger(_ context.Context, seq uint32) (time.Time, bool, error) {
+	t, ok := e.closed[seq]
+	return t, ok, nil
+}
+
+// emisCursors reports each projector writer (by sub) at its ledger; a sub not listed fails to read.
+type emisCursors map[string]uint32
+
+func (emisCursors) ListCursors(context.Context) ([]timescale.Cursor, error) { return nil, nil }
+
+func (c emisCursors) GetCursor(_ context.Context, source, sub string) (timescale.Cursor, error) {
+	l, ok := c[sub]
+	if !ok {
+		return timescale.Cursor{}, errors.New("cursor unreadable")
+	}
+	return timescale.Cursor{Source: source, Sub: sub, LastLedger: l}, nil
+}
+
+// Writer ledgers: emisAtTip closes now, emisBehind at 01:29:59 (3 h behind a fresh tip for a 03:00 window... and the clock).
+const (
+	emisAtTip  = 100
+	emisBehind = 50
+)
+
+var allEmisWriters = map[string][]v1.TVLWriterCursor{
+	"blend": {{Source: "projector", Sub: "blend"}}, "blend_backstop": {{Source: "projector", Sub: "blend_backstop"}},
+	"blnt": {{Source: "projector", Sub: "blnt"}},
 }
 
 const emisHistQuery = "?interval=1h&from=2026-11-01T00:00:00Z&to=2026-11-01T03:00:00Z"
@@ -89,9 +128,23 @@ func blendV2History(t *testing.T) timescale.LendingEmissionsHistory {
 	}
 }
 
+// blendV2Server wires a fresh lake tip and every writer at it unless opts set their own.
 func blendV2Server(t *testing.T, lr *stubEmissionsHistoryLending, opts v1.Options) *v1.Server {
-	opts.Explorer = &stubEmissionsExplorer{stubExplorerReader: &stubExplorerReader{}, state: emissionStreams(t, 1)}
+	now := time.Now().UTC()
+	opts.Explorer = emisHistExplorer{
+		stubEmissionsExplorer: &stubEmissionsExplorer{stubExplorerReader: &stubExplorerReader{}, state: emissionStreams(t, 1)},
+		closed:                map[uint32]time.Time{emisAtTip: now, emisBehind: emisHour(1.5).Add(-time.Second)},
+	}
 	opts.Lending = lr
+	if opts.LakeWatermark == nil {
+		opts.LakeWatermark = fixedWatermark{at: now}
+	}
+	if opts.Cursors == nil {
+		opts.Cursors = emisCursors{"blend": emisAtTip, "blend_backstop": emisAtTip, "blnt": emisAtTip}
+	}
+	if opts.LendingWriters == nil {
+		opts.LendingWriters = allEmisWriters
+	}
 	return v1.New(opts)
 }
 
@@ -321,4 +374,130 @@ func TestLendingEmissionsHistory_Validation(t *testing.T) {
 	// A lending reader without the event history is a 503, never empty streams.
 	srv = v1.New(v1.Options{Lending: &stubEmissionClaimReader{}})
 	getEmissionsHistory(t, srv, pool, emisHistQuery, http.StatusServiceUnavailable)
+}
+
+func emisExcluded(v v1.LendingEmissionsHistoryView, stream, reason string) bool {
+	for _, e := range v.Excluded {
+		if e.Stream == stream && e.Reason == reason {
+			return true
+		}
+	}
+	return false
+}
+
+// TestLendingEmissionsHistory_WriterBehindLake: the pool streams' writer stands 3 h behind a fresh lake tip, so they end at
+// its cursor (the cut bucket partial, the schedule not run past it) while the backstop stream, whose writer is at the tip,
+// is served to the window's end.
+func TestLendingEmissionsHistory_WriterBehindLake(t *testing.T) {
+	lr := &stubEmissionsHistoryLending{hist: blendV2History(t)}
+	srv := blendV2Server(t, lr, v1.Options{
+		CompletenessReader: verifiedHistory("blend", "blend_backstop"),
+		Cursors:            emisCursors{"blend": emisBehind, "blend_backstop": emisAtTip},
+	})
+	got, _ := getEmissionsHistory(t, srv, mkCStrkey(t, 1), emisHistQuery, http.StatusOK)
+	s := got.Reserves.Streams[0]
+	if !lr.q.To.Equal(emisHour(1.5)) || !lr.q.BackstopTo.Equal(emisHour(3)) || time.Time(got.ServedThrough) != emisHour(1.5) ||
+		s.Tokens != "0.00054" || len(s.Points) != 2 || !s.Points[1].Partial || s.Points[0].Partial {
+		t.Fatalf("query %+v view served %v stream %+v", lr.q, got.ServedThrough, s)
+	}
+	if !emisExcluded(got, "reserves", "writer_behind_lake") || !emisExcluded(got, "pool_claims", "writer_behind_lake") ||
+		emisExcluded(got, "backstop_alloc", "writer_behind_lake") || !got.Reserves.LowerBound || !got.PoolClaims.LowerBound ||
+		got.BackstopAlloc.LowerBound || time.Time(*got.BackstopAlloc.ServedThrough) != emisHour(3) ||
+		time.Time(*got.PoolClaims.ServedThrough) != emisHour(1.5) {
+		t.Fatalf("view = %+v", got)
+	}
+}
+
+// TestLendingEmissionsHistory_WriterCursorUnread: a writer that cannot be placed never serves its streams as complete, and
+// its schedule is withheld rather than extended.
+func TestLendingEmissionsHistory_WriterCursorUnread(t *testing.T) {
+	lr := &stubEmissionsHistoryLending{hist: blendV2History(t)}
+	srv := blendV2Server(t, lr, v1.Options{
+		CompletenessReader: verifiedHistory("blend", "blend_backstop"), Cursors: emisCursors{"blend_backstop": emisAtTip},
+	})
+	got, _ := getEmissionsHistory(t, srv, mkCStrkey(t, 1), emisHistQuery, http.StatusOK)
+	if got.Reserves.Available || got.Reserves.UnavailableReason == nil || *got.Reserves.UnavailableReason != "writer_cursor_unread" ||
+		len(got.Reserves.Streams) != 0 || !emisExcluded(got, "pool_claims", "writer_cursor_unread") || !got.PoolClaims.LowerBound ||
+		got.BackstopAlloc.LowerBound {
+		t.Fatalf("view = %+v", got)
+	}
+}
+
+// TestLendingEmissionsHistory_FutureAndUnknownTip: the window never runs past now, and an unknown lake tip is named.
+func TestLendingEmissionsHistory_FutureAndUnknownTip(t *testing.T) {
+	now := time.Now().UTC()
+	ahead := now.Add(48 * time.Hour)
+	q := "?interval=1h&from=" + now.Add(-24*time.Hour).Format(time.RFC3339) + "&to=" + now.Add(30*24*time.Hour).Format(time.RFC3339)
+	hist := timescale.LendingEmissionsHistory{Schedule: []timescale.EmissionScheduleEvent{
+		{TokenID: 1, At: now.Add(-48 * time.Hour), EPS: mustAmount(t, "1"), Expiration: mustAmount(t, "18446744073709551615")},
+	}}
+	lr := &stubEmissionsHistoryLending{hist: hist}
+	srv := blendV2Server(t, lr, v1.Options{
+		CompletenessReader: verifiedHistory("blend", "blend_backstop"), LakeWatermark: fixedWatermark{at: ahead},
+		Cursors: emisCursors{"blend": 7, "blend_backstop": 7},
+	})
+	srv.Explorer.(emisHistExplorer).closed[7] = ahead
+	got, _ := getEmissionsHistory(t, srv, mkCStrkey(t, 1), q, http.StatusOK)
+	served := time.Time(got.ServedThrough)
+	pts := got.Reserves.Streams[0].Points
+	if served.After(time.Now()) || lr.q.To.After(time.Now()) || time.Time(pts[len(pts)-1].T).After(time.Now()) {
+		t.Fatalf("served through %v, query to %v, last point %v: past now", served, lr.q.To, pts[len(pts)-1].T)
+	}
+
+	lr = &stubEmissionsHistoryLending{hist: blendV2History(t)}
+	srv = blendV2Server(t, lr, v1.Options{
+		CompletenessReader: verifiedHistory("blend", "blend_backstop"), LakeWatermark: fixedWatermark{err: errors.New("down")},
+	})
+	got, _ = getEmissionsHistory(t, srv, mkCStrkey(t, 1), emisHistQuery, http.StatusOK)
+	if !emisExcluded(got, "window", "lake_tip_unknown") || !got.Reserves.LowerBound || !got.PoolClaims.LowerBound {
+		t.Fatalf("view = %+v", got)
+	}
+}
+
+// TestLendingEmissionsHistory_EachExclusionAlone covers the stale verdict and unread allocation and backstop-claim rows.
+func TestLendingEmissionsHistory_EachExclusionAlone(t *testing.T) {
+	pool := mkCStrkey(t, 1)
+	t.Run("history_verdict_stale", func(t *testing.T) {
+		stale := verifiedHistory("blend", "blend_backstop")
+		stale.snaps[0].ComputedAt = time.Now().Add(-30 * 24 * time.Hour)
+		lr := &stubEmissionsHistoryLending{hist: blendV2History(t)}
+		got, raw := getEmissionsHistory(t, blendV2Server(t, lr, v1.Options{CompletenessReader: stale}), pool, emisHistQuery, http.StatusOK)
+		if !emisExcluded(got, "pool_claims", "history_verdict_stale") || !got.PoolClaims.LowerBound || got.BackstopAlloc.LowerBound ||
+			!strings.Contains(string(raw), `"stale":true`) {
+			t.Fatalf("view = %+v", got)
+		}
+	})
+	t.Run("backstop_alloc amount_unread", func(t *testing.T) {
+		h := blendV2History(t)
+		h.Alloc[0].Unread = 1
+		lr := &stubEmissionsHistoryLending{hist: h}
+		got, _ := getEmissionsHistory(t, blendV2Server(t, lr, v1.Options{CompletenessReader: verifiedHistory("blend", "blend_backstop")}), pool, emisHistQuery, http.StatusOK)
+		if !emisExcluded(got, "backstop_alloc", "amount_unread") || !got.BackstopAlloc.LowerBound || got.PoolClaims.LowerBound {
+			t.Fatalf("view = %+v", got)
+		}
+	})
+	t.Run("backstop_claims amount_unread", func(t *testing.T) {
+		unknown := blend.PoolVersionUnknown
+		h := timescale.LendingEmissionsHistory{BackstopClaims: []timescale.EmissionBackstopClaimBucket{
+			{Start: emisT0, Tier: "FirstLoss", Claims: 2, BLNT: mustAmount(t, "1"), LP: mustAmount(t, "1"), Shares: mustAmount(t, "1"), Unread: 1},
+		}}
+		lr := &stubEmissionsHistoryLending{
+			stubBLNTLendingReader: stubBLNTLendingReader{stubLendingReader: stubLendingReader{version: &unknown}, blntAssets: []string{mkCStrkey(t, 3)}},
+			hist:                  h,
+		}
+		got, _ := getEmissionsHistory(t, blendV2Server(t, lr, v1.Options{CompletenessReader: verifiedHistory("blnt")}), blnt.MainnetFixedPool, emisHistQuery, http.StatusOK)
+		if !emisExcluded(got, "backstop_claims", "amount_unread") || !got.BackstopClaims.LowerBound || got.PoolClaims.LowerBound {
+			t.Fatalf("view = %+v", got)
+		}
+	})
+	t.Run("same_ledger_update_order_unknown", func(t *testing.T) {
+		h := blendV2History(t)
+		h.Schedule[1].OrderAmbiguous = true
+		lr := &stubEmissionsHistoryLending{hist: h}
+		got, _ := getEmissionsHistory(t, blendV2Server(t, lr, v1.Options{CompletenessReader: verifiedHistory("blend", "blend_backstop")}), pool, emisHistQuery, http.StatusOK)
+		s := got.Reserves.Streams[0]
+		if !s.Approximate || s.ApproximateReason == nil || *s.ApproximateReason != "same_ledger_update_order_unknown" {
+			t.Fatalf("stream = %+v", s)
+		}
+	})
 }

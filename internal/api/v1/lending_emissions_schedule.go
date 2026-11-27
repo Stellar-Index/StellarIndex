@@ -52,15 +52,55 @@ func scheduledTokensString(r *big.Rat) string {
 	return exactDecimal(r, clickhouse.EmissionEPSDecimals+9)
 }
 
-// emissionTimelines groups the stored updates by token id, each in event order (the reader's order).
-func emissionTimelines(events []timescale.EmissionScheduleEvent) (map[uint32][]emissionSegment, []uint32) {
-	out := map[uint32][]emissionSegment{}
+// scheduledBuckets is scheduledTokens for every bucket [from + i*width, …) of [from, end) in one sweep: each segment's
+// active span is split over only the buckets it touches, so the cost is buckets + segments, not their product.
+func scheduledBuckets(timeline []emissionSegment, from, end time.Time, width time.Duration) []*big.Rat {
+	if !end.After(from) {
+		return nil
+	}
+	n := int((end.Sub(from) + width - 1) / width)
+	units := make([]*big.Int, n)
+	for i := range units {
+		units[i] = new(big.Int)
+	}
+	for i, seg := range timeline {
+		segEnd := seg.exp
+		if i+1 < len(timeline) && timeline[i+1].start.Before(segEnd) {
+			segEnd = timeline[i+1].start
+		}
+		lo, hi := maxTime(seg.start, from), minTime(segEnd, end)
+		for b := int(lo.Sub(from) / width); hi.After(lo) && b < n; b++ {
+			bEnd := minTime(from.Add(time.Duration(b+1)*width), hi)
+			units[b].Add(units[b], new(big.Int).Mul(seg.eps, big.NewInt(bEnd.Sub(lo).Nanoseconds())))
+			lo = bEnd
+		}
+	}
+	out := make([]*big.Rat, n)
+	for i, u := range units {
+		out[i] = new(big.Rat).SetFrac(u, scheduleDenom)
+	}
+	return out
+}
+
+// emissionTimeline is one token id's updates in apply order; ambiguous when the order within a ledger is not recorded.
+type emissionTimeline struct {
+	segments  []emissionSegment
+	ambiguous bool
+}
+
+// emissionTimelines groups the stored updates by token id, each in the reader's apply order.
+func emissionTimelines(events []timescale.EmissionScheduleEvent) (map[uint32]*emissionTimeline, []uint32) {
+	out := map[uint32]*emissionTimeline{}
 	var ids []uint32
 	for _, e := range events {
-		if _, seen := out[e.TokenID]; !seen {
+		tl, seen := out[e.TokenID]
+		if !seen {
+			tl = &emissionTimeline{}
+			out[e.TokenID] = tl
 			ids = append(ids, e.TokenID)
 		}
-		out[e.TokenID] = append(out[e.TokenID], emissionSegment{start: e.At, eps: e.EPS.BigInt(), exp: amountUnixSeconds(e.Expiration)})
+		tl.segments = append(tl.segments, emissionSegment{start: e.At, eps: e.EPS.BigInt(), exp: amountUnixSeconds(e.Expiration)})
+		tl.ambiguous = tl.ambiguous || e.OrderAmbiguous
 	}
 	slices.Sort(ids)
 	return out, ids

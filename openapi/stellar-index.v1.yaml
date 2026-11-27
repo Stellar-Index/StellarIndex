@@ -5830,11 +5830,29 @@ paths:
         stream's projection not verified back to its first ledger
         (`history_unverified`; `history_verdict_stale`, with `flags.stale`;
         `history_verdict_unread`, not cacheable), amounts not decoded
-        (`amount_unread`, counted not summed), or a window past the lake
-        tip (`window_past_lake_tip`, stream `window`): buckets after
-        `served_through` are not served and the bucket it cuts is
-        `partial`. 404 when no Blend or BLNT pool is known at the contract
-        id; 503 when this deployment has no event history reader.
+        (`amount_unread`, counted not summed), a window past the lake tip
+        (`window_past_lake_tip`) or a lake tip that could not be read
+        (`lake_tip_unknown`), both stream `window`.
+
+        A bucket is served as complete only when both the lake and the
+        stream's own Postgres writer have passed it. The window never runs
+        past now. Each stream ends at its own `served_through`: the
+        earliest of `to`, now, the lake tip and its writer's committed
+        ledger (the protocol's projection for `reserves` and
+        `pool_claims`; the backstop's for `backstop_alloc` and
+        `backstop_claims`). A writer short of the lake end is
+        `writer_behind_lake` for its streams; a writer whose cursor or
+        ledger close time cannot be read is `writer_cursor_unread`, and
+        its schedule is withheld (`reserves.unavailable_reason:
+        writer_cursor_unread`) because past an unknown cursor the rate is
+        unknown. Nothing after a stream's `served_through` is served, and
+        the bucket it cuts is `partial`; the top-level `served_through` is
+        the earliest stream's. A schedule line is `approximate`
+        (`same_ledger_update_order_unknown`) when two transactions in one
+        ledger updated its token id and no apply order is recorded (Blend
+        records none); they are then ordered by transaction hash. 404 when
+        no Blend or BLNT pool is known at the contract id; 503 when this
+        deployment has no event history reader.
       parameters:
         - { name: pool, in: path, required: true, description: Pool contract C-strkey., schema: { type: string } }
         - { name: interval, in: query, required: false, schema: { type: string, enum: ["1h", "1d"], default: "1d" } }
@@ -5864,6 +5882,7 @@ paths:
                     available: true
                     unavailable_reason: null
                     lower_bound: false
+                    served_through: '2026-11-03T00:00:00Z'
                     approximate: false
                     approximate_reason: null
                     streams:
@@ -5871,6 +5890,8 @@ paths:
                       asset: CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75
                       side: supply
                       tokens: '35702479338.83712'
+                      approximate: false
+                      approximate_reason: null
                       points:
                       - { t: '2026-11-01T00:00:00Z', partial: false, tokens: '17851239669.41856' }
                       - { t: '2026-11-02T00:00:00Z', partial: false, tokens: '17851239669.41856' }
@@ -5878,6 +5899,7 @@ paths:
                     available: true
                     unavailable_reason: null
                     lower_bound: false
+                    served_through: '2026-11-03T00:00:00Z'
                     totals: { claims: 30, amount: '120000000000' }
                     points:
                     - { t: '2026-11-01T00:00:00Z', partial: false, claimers: 14, claims: 18, amount: '70000000000' }
@@ -5895,6 +5917,7 @@ paths:
                     available: true
                     unavailable_reason: null
                     lower_bound: false
+                    served_through: '2026-11-03T00:00:00Z'
                     tier_split_available: false
                     tier_split_reason: null
                     totals: { events: 1, backstop_emissions: '210000000000', pool_emissions: '90000000000' }
@@ -5904,6 +5927,7 @@ paths:
                     available: false
                     unavailable_reason: backstop_claim_names_no_pool
                     lower_bound: false
+                    served_through: null
                     units: { blnt_amount: '', lp_amount: '', shares: '' }
                     tiers: []
                 as_of: '2026-11-16T12:00:00Z'
@@ -5926,7 +5950,7 @@ paths:
                           interval: { type: string, enum: ["1h", "1d"] }
                           from: { type: string, format: date-time }
                           to: { type: string, format: date-time, description: "End of the window, rounded down to its hour; buckets cover [from, to)." }
-                          served_through: { type: string, format: date-time, description: "`to`, or the lake tip when it is earlier: nothing after it is served." }
+                          served_through: { type: string, format: date-time, description: "The earliest available stream's `served_through`: nothing after it is served for every stream." }
                           emission_token: { type: [string, "null"], description: "The pool instance's `BLNDTkn` (Blend) or `BLNTTkn` (BLNT); null when unread or for Blend V1." }
                           emission_token_decimals: { type: [integer, "null"] }
                           eps_decimals: { type: integer, description: "Scale of the rates the schedule is built from: eps / 10^eps_decimals is base units per second." }
@@ -5937,7 +5961,7 @@ paths:
                               type: object
                               properties:
                                 stream: { type: string, enum: [window, reserves, pool_claims, pool_claims_by_reserve, backstop_alloc, backstop_claims] }
-                                reason: { type: string, enum: [window_past_lake_tip, history_unverified, history_verdict_stale, history_verdict_unread, amount_unread, claim_names_several_reserves, claim_names_no_reserve] }
+                                reason: { type: string, enum: [window_past_lake_tip, lake_tip_unknown, writer_behind_lake, writer_cursor_unread, history_unverified, history_verdict_stale, history_verdict_unread, amount_unread, claim_names_several_reserves, claim_names_no_reserve] }
                                 count: { type: [integer, "null"], format: int64, description: "Events left out or unsummed; null for a verdict or the window." }
                                 amount: { type: [string, "null"], description: "Emission-token base units left out of the stream, when known." }
                               required: [stream, reason, count, amount]
@@ -5945,8 +5969,9 @@ paths:
                             type: object
                             properties:
                               available: { type: boolean }
-                              unavailable_reason: { type: [string, "null"], enum: [v1_emission_schedule_unverified, null] }
+                              unavailable_reason: { type: [string, "null"], enum: [v1_emission_schedule_unverified, writer_cursor_unread, null] }
                               lower_bound: { type: boolean }
+                              served_through: { $ref: "#/components/schemas/LendingEmissionServedThrough" }
                               approximate: { type: boolean, description: "The event-rebuilt rate may differ from the stored one by dust (BLNT)." }
                               approximate_reason: { type: [string, "null"], enum: [stored_eps_rewritten_without_event, null] }
                               streams:
@@ -5958,6 +5983,8 @@ paths:
                                     asset: { type: [string, "null"], description: "The reserve's token; null when the id is past the read reserve list or storage was not read." }
                                     side: { type: string, enum: [supply, borrow] }
                                     tokens: { type: string, description: "Scheduled base units over the served window, exact." }
+                                    approximate: { type: boolean }
+                                    approximate_reason: { type: [string, "null"], enum: [same_ledger_update_order_unknown, null] }
                                     points:
                                       type: array
                                       items:
@@ -5967,13 +5994,14 @@ paths:
                                           partial: { type: boolean }
                                           tokens: { type: string }
                                         required: [t, partial, tokens]
-                                  required: [token_id, asset, side, tokens, points]
-                            required: [available, unavailable_reason, lower_bound, approximate, approximate_reason, streams]
+                                  required: [token_id, asset, side, tokens, approximate, approximate_reason, points]
+                            required: [available, unavailable_reason, lower_bound, served_through, approximate, approximate_reason, streams]
                           pool_claims:
                             type: object
                             properties:
                               available: { type: boolean }
                               unavailable_reason: { type: [string, "null"] }
+                              served_through: { $ref: "#/components/schemas/LendingEmissionServedThrough" }
                               lower_bound: { type: boolean }
                               totals: { $ref: "#/components/schemas/LendingEmissionClaimSums" }
                               points: { type: array, items: { $ref: "#/components/schemas/LendingEmissionClaimsPoint" } }
@@ -5993,12 +6021,13 @@ paths:
                                         points: { type: array, items: { $ref: "#/components/schemas/LendingEmissionClaimsPoint" } }
                                       required: [token_id, asset, side, totals, points]
                                 required: [lower_bound, reserves]
-                            required: [available, unavailable_reason, lower_bound, totals, points, by_reserve]
+                            required: [available, unavailable_reason, lower_bound, served_through, totals, points, by_reserve]
                           backstop_alloc:
                             type: object
                             properties:
                               available: { type: boolean }
                               unavailable_reason: { type: [string, "null"], enum: [v1_backstop_unaudited, null] }
+                              served_through: { $ref: "#/components/schemas/LendingEmissionServedThrough" }
                               lower_bound: { type: boolean }
                               tier_split_available: { type: boolean }
                               tier_split_reason: { type: [string, "null"], enum: [tier_split_not_on_chain, null] }
@@ -6013,12 +6042,13 @@ paths:
                                         t: { type: string, format: date-time }
                                         partial: { type: boolean }
                                       required: [t, partial]
-                            required: [available, unavailable_reason, lower_bound, tier_split_available, tier_split_reason, totals, points]
+                            required: [available, unavailable_reason, lower_bound, served_through, tier_split_available, tier_split_reason, totals, points]
                           backstop_claims:
                             type: object
                             properties:
                               available: { type: boolean }
                               unavailable_reason: { type: [string, "null"], enum: [backstop_claim_names_no_pool, null] }
+                              served_through: { $ref: "#/components/schemas/LendingEmissionServedThrough" }
                               lower_bound: { type: boolean }
                               units:
                                 type: object
@@ -6047,7 +6077,7 @@ paths:
                                               claimers: { type: integer, format: int64 }
                                             required: [t, partial, claimers]
                                   required: [tier, totals, points]
-                            required: [available, unavailable_reason, lower_bound, units, tiers]
+                            required: [available, unavailable_reason, lower_bound, served_through, units, tiers]
                         required: [pool, protocol, interval, from, to, served_through, emission_token, emission_token_decimals, eps_decimals, lower_bound, excluded, reserves, pool_claims, backstop_alloc, backstop_claims]
                     required: [data]
         "400": { $ref: "#/components/responses/BadRequest" }
@@ -17780,6 +17810,10 @@ components:
             - positions_overcounted
             - reserve_list_unreadable
       required: [kind, pool, asset, reason]
+    LendingEmissionServedThrough:
+      type: [string, "null"]
+      format: date-time
+      description: "Where this stream's buckets end: the earliest of `to`, now, the lake tip and its writer's committed ledger; null when the stream is unavailable."
     LendingEmissionClaimSums:
       type: object
       description: Claims and the emission token claimed, in base units.

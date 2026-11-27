@@ -15,6 +15,9 @@ type EmissionScheduleEvent struct {
 	At         time.Time
 	EPS        canonical.Amount
 	Expiration canonical.Amount
+	// OrderAmbiguous: another transaction in the same ledger also updated this token id, and the table holds no apply order
+	// between them (Blend has no tx_index; a BLNT row may lack one), so which rate won is not known.
+	OrderAmbiguous bool
 }
 
 // Claim scopes: a bucket's pool total, and its claims split by how many reserve token ids each names.
@@ -57,9 +60,10 @@ type EmissionBackstopClaimBucket struct {
 	Unread   int64            // claims missing any of the three
 }
 
-// EmissionHistoryQuery is the window [From, To) at hourly or daily UTC buckets, and which streams to read.
+// EmissionHistoryQuery is the window [From, To) at hourly or daily UTC buckets, and which streams to read. The backstop
+// streams end at BackstopTo instead when set: their writer may stand at another ledger.
 type EmissionHistoryQuery struct {
-	From, To                               time.Time
+	From, To, BackstopTo                   time.Time
 	Daily                                  bool
 	Schedule, BackstopAlloc, BackstopClaim bool
 }
@@ -73,7 +77,7 @@ type LendingEmissionsHistory struct {
 	BackstopClaims []EmissionBackstopClaimBucket
 }
 
-// The row sources, each led by an index on (pool or contract_id, ledger_close_time DESC).
+// The row sources; every read is index-led (the plan checks in test/integration/pg_lending_emissions_history_test.go).
 const (
 	blendPoolEventsFrom     = `FROM blend_emissions WHERE pool = $1 AND event_kind = `
 	blntPoolEventsFrom      = `FROM blnt_events WHERE contract_id = $1 AND contract_role = 'pool' AND event_kind = `
@@ -83,19 +87,27 @@ const (
 	emissionWindow          = ` AND ledger_close_time >= $2::timestamptz AND ledger_close_time < $3::timestamptz`
 )
 
-// emissionScheduleSQL reads every update in the window plus, per token id, the last one at or before From.
-func emissionScheduleSQL(from string) string {
+// emissionScheduleSQL reads every update in the window plus, per token id, the last one at or before From. event_index is
+// per transaction, so order within a ledger is tx_order (BLNT's tx_index; none for Blend), then tx_hash as a deterministic
+// tie-break, then op and event index; a ledger where two transactions update one id without a tx_order is flagged.
+func emissionScheduleSQL(from, txOrder string) string {
 	return `WITH ev AS (
-	SELECT (attributes->>'res_token_id')::bigint AS token_id, ledger_close_time AS t, ledger, event_index,
+	SELECT (attributes->>'res_token_id')::bigint AS token_id, ledger_close_time AS t, ledger,
+	       ` + txOrder + ` AS tx_order, tx_hash, op_index, event_index,
 	       (attributes->>'eps')::numeric AS eps, (attributes->>'expiration')::numeric AS exp
 	  ` + from + `'reserve_emission_update' AND ledger_close_time < $3::timestamptz
 	   AND attributes ? 'res_token_id' AND attributes ? 'eps' AND attributes ? 'expiration'
+), o AS (
+	SELECT *, min(tx_hash) OVER w <> max(tx_hash) OVER w AND bool_or(tx_order IS NULL) OVER w AS ambiguous
+	  FROM ev WINDOW w AS (PARTITION BY token_id, ledger)
 )
-(SELECT DISTINCT ON (token_id) token_id, t, ledger, event_index, eps::text, exp::text
-   FROM ev WHERE t <= $2::timestamptz ORDER BY token_id, t DESC, ledger DESC, event_index DESC)
+(SELECT DISTINCT ON (token_id) token_id, t, ledger, tx_order, tx_hash, op_index, event_index, eps::text, exp::text, ambiguous
+   FROM o WHERE t <= $2::timestamptz
+  ORDER BY token_id, t DESC, ledger DESC, tx_order DESC NULLS LAST, tx_hash DESC, op_index DESC, event_index DESC)
 UNION ALL
-(SELECT token_id, t, ledger, event_index, eps::text, exp::text FROM ev WHERE t > $2::timestamptz)
-ORDER BY 1, 2, 3, 4`
+(SELECT token_id, t, ledger, tx_order, tx_hash, op_index, event_index, eps::text, exp::text, ambiguous
+   FROM o WHERE t > $2::timestamptz)
+ORDER BY 1, 2, 3, 4 NULLS FIRST, 5, 6, 7`
 }
 
 func emissionClaimsSQL(from string) string {
@@ -134,11 +146,19 @@ const blntBackstopClaimHistorySQL = `SELECT ` + emissionBucket + ` AS b, tier, c
 
 // LendingEmissionScheduleQuery is the schedule read behind [Store.LendingEmissionsHistory], exported for the plan check.
 func LendingEmissionScheduleQuery(isBLNT bool) string {
-	return emissionScheduleSQL(poolEventsFrom(isBLNT))
+	return emissionScheduleSQL(poolEventsFrom(isBLNT), scheduleTxOrder(isBLNT))
 }
 
 // LendingEmissionClaimsQuery is the claim read behind [Store.LendingEmissionsHistory], exported for the plan check.
 func LendingEmissionClaimsQuery(isBLNT bool) string { return emissionClaimsSQL(poolEventsFrom(isBLNT)) }
+
+// scheduleTxOrder is the in-ledger apply order column: BLNT's tx_index; Blend's tables record none.
+func scheduleTxOrder(isBLNT bool) string {
+	if isBLNT {
+		return `tx_index::bigint`
+	}
+	return `NULL::bigint`
+}
 
 func poolEventsFrom(isBLNT bool) string {
 	if isBLNT {
@@ -158,11 +178,14 @@ func (s *Store) LendingEmissionsHistory(ctx context.Context, pool string, isBLNT
 	if q.Daily {
 		unit = "day"
 	}
-	from, to := q.From.UTC(), q.To.UTC()
+	from, to, bto := q.From.UTC(), q.To.UTC(), q.BackstopTo.UTC()
+	if q.BackstopTo.IsZero() {
+		bto = to
+	}
 	var out LendingEmissionsHistory
 	var err error
 	if q.Schedule {
-		if out.Schedule, err = queryEmissionRows(ctx, s.db, emissionScheduleSQL(poolFrom), scanScheduleEvent, pool, from, to); err != nil {
+		if out.Schedule, err = queryEmissionRows(ctx, s.db, emissionScheduleSQL(poolFrom, scheduleTxOrder(isBLNT)), scanScheduleEvent, pool, from, to); err != nil {
 			return LendingEmissionsHistory{}, fmt.Errorf("timescale: LendingEmissionsHistory schedule %s: %w", pool, err)
 		}
 	}
@@ -170,12 +193,12 @@ func (s *Store) LendingEmissionsHistory(ctx context.Context, pool string, isBLNT
 		return LendingEmissionsHistory{}, fmt.Errorf("timescale: LendingEmissionsHistory claims %s: %w", pool, err)
 	}
 	if q.BackstopAlloc {
-		if out.Alloc, err = queryEmissionRows(ctx, s.db, emissionAllocSQL(bstopFrom), scanAllocBucket, pool, from, to, unit); err != nil {
+		if out.Alloc, err = queryEmissionRows(ctx, s.db, emissionAllocSQL(bstopFrom), scanAllocBucket, pool, from, bto, unit); err != nil {
 			return LendingEmissionsHistory{}, fmt.Errorf("timescale: LendingEmissionsHistory alloc %s: %w", pool, err)
 		}
 	}
 	if q.BackstopClaim && isBLNT {
-		if out.BackstopClaims, err = queryEmissionRows(ctx, s.db, blntBackstopClaimHistorySQL, scanBackstopClaimBucket, pool, from, to, unit); err != nil {
+		if out.BackstopClaims, err = queryEmissionRows(ctx, s.db, blntBackstopClaimHistorySQL, scanBackstopClaimBucket, pool, from, bto, unit); err != nil {
 			return LendingEmissionsHistory{}, fmt.Errorf("timescale: LendingEmissionsHistory backstop claims %s: %w", pool, err)
 		}
 	}
@@ -205,8 +228,10 @@ func queryEmissionRows[T any](ctx context.Context, db *sql.DB, q string, scan fu
 func scanScheduleEvent(rows *sql.Rows) (EmissionScheduleEvent, error) {
 	var e EmissionScheduleEvent
 	var id int64
-	var ledger, eventIndex int
-	if err := rows.Scan(&id, &e.At, &ledger, &eventIndex, &e.EPS, &e.Expiration); err != nil {
+	var ledger, opIndex, eventIndex int
+	var txOrder sql.NullInt64
+	var txHash string
+	if err := rows.Scan(&id, &e.At, &ledger, &txOrder, &txHash, &opIndex, &eventIndex, &e.EPS, &e.Expiration, &e.OrderAmbiguous); err != nil {
 		return e, err
 	}
 	if id < 0 || id > 1<<32-1 {
