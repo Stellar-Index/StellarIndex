@@ -129,7 +129,7 @@ Ticket (`for: 1h`, group `stellarindex.infra_pool_trend`): `predict_linear((min 
 
 ## stellarindex_zfs_pool_fill_90pct_within_7d
 
-Page. Same expr as the 30-day alert with horizon `7 * 86400`, threshold `< 0.10`, `for: 30m`. Find what fills the pool today (`zfs list -o name,used -s used`, compare with yesterday) and reclaim before the floors fire; fixes in `## stellarindex_zfs_pool_low_space`.
+Ticket; `stellarindex_zfs_pool_free_critical` and `stellarindex_zfs_pool_critical_space` are the pages. Same expr as the 30-day alert with horizon `7 * 86400`, threshold `< 0.10`, `for: 30m`. Find what fills the pool today (`zfs list -o name,used -s used`, compare with yesterday) and reclaim before the floors fire; fixes in `## stellarindex_zfs_pool_low_space`.
 
 ## stellarindex_nvme_smart_warn
 
@@ -306,7 +306,7 @@ Fix: `systemctl restart stellarindex-<binary>`; after an indexer restart confirm
 ## Backup (pgBackRest) shared context
 
 - Scheduler: `pgbackrest-backup.timer` runs `pgbackrest-backup.service` (`/usr/local/bin/pgbackrest-backup.sh`, `User=postgres`) daily 02:00 UTC + up to 15 min jitter; full Sunday, diff Mon-Sat; one `--repo=N` backup per repo (repo1 then repo2), exit with the first non-zero rc. Textfile metrics `stellarindex_pgbackrest_backup_{last_success_unix,last_rc,duration_seconds}{repo}`. Installed by `configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml`.
-- Repos: `repo1` = `/var/lib/pgbackrest` (ZFS `data/pgbackrest`, same pool as the DB, `repo1-retention-full=2`); `repo2` = offsite S3 (`repo2-retention-full=1`, aes-256-cbc; `docs/operations/off-site-backup-plan.md`). Live `pgbackrest.conf` is hand-managed.
+- Repos: `repo1` = `/var/lib/pgbackrest` (ZFS `data/pgbackrest`, same pool as the DB, `repo1-retention-full=1`); `repo2` = offsite S3 (`repo2-retention-full=1`, aes-256-cbc; `docs/operations/off-site-backup-plan.md`). Live `pgbackrest.conf` is hand-managed.
 - Metrics: `pgbackrest_backup_since_last_completion_seconds{stanza!~"all-stanzas.*"}` from `pgbackrest_exporter` (job `pgbackrest_exporter`, `localhost:9854`, unit `pgbackrest_exporter.service`, up to 10 min lag).
 - RPO 5 min via continuous WAL archiving (`archive-push`; pinned by `scripts/ci/ansible-postgres-archive-test.sh`). Pool loss loses repo1 and the DB together.
 - `_none_24h` (page) fires first, `_failed` (ticket) one hour later. Never run pgbackrest as root (root-owned files break later timer runs).

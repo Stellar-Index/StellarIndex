@@ -91,7 +91,7 @@ func TestProtocolRevenue_VerdictsMatchRevenueRoute(t *testing.T) {
 		g.LastAmountDay = day
 		sums = append(sums, g)
 	}
-	cov := timescale.LendingRevenueUSDCoverage{Pool: pool, FloorDay: day.AddDate(0, 0, -10), ThroughDay: day}
+	cov := v1.CurrentRevenueCoverage(timescale.LendingRevenueUSDCoverage{Pool: pool, FloorDay: day.AddDate(0, 0, -10), ThroughDay: day})
 	block := srv.ProtocolRevenueForTest(context.Background(), cov, sums)
 	var withheld []string
 	for _, e := range block.AllTime.Excluded {
