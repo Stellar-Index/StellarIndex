@@ -234,15 +234,19 @@ function ProtocolBlock({
 }
 
 /**
- * Interest accrued per protocol over a window, with how it was split and what
- * was paid out beside it. Each figure is the API's; nothing here is summed.
+ * One protocol's interest accrued over a window, with how it was split and
+ * what was paid out beside it. Each figure is the API's; nothing is summed.
  */
-export function LendingProtocolRevenue() {
+export function LendingProtocolRevenue({
+  protocol,
+}: {
+  protocol: (typeof PROTOCOLS)[number]['id'];
+}) {
   const q = useLendingProtocols();
   const [win, setWin] = useState<WindowId>('30d');
   if (q.error instanceof Error && q.error.message.startsWith('404'))
     return null;
-  const shown = PROTOCOLS.flatMap((p) => {
+  const shown = PROTOCOLS.filter((p) => p.id === protocol).flatMap((p) => {
     const rev = q.data?.find((r) => r.protocol === p.id)?.revenue;
     return rev ? [{ ...p, rev }] : [];
   });
@@ -254,7 +258,7 @@ export function LendingProtocolRevenue() {
     <Panel
       headingLevel={2}
       title="Interest & revenue"
-      hint="Interest borrowers owed across each protocol's pools, valued day by day in USD, how it was split, and what was paid out."
+      hint="Interest borrowers owed across the protocol's pools, valued day by day in USD, how it was split, and what was paid out."
       source={asExample('/v1/lending/protocols', {})}
       bodyClassName="space-y-4"
     >
@@ -280,19 +284,15 @@ export function LendingProtocolRevenue() {
           onChange={(v) => setWin(v as WindowId)}
         />
       )}
-      {shown.length > 0 && (
-        <div className="grid gap-6 md:grid-cols-2">
-          {shown.map((s) => (
-            <ProtocolBlock
-              key={s.id}
-              name={s.name}
-              blnt={s.id === 'blnt'}
-              rev={s.rev}
-              win={win}
-            />
-          ))}
-        </div>
-      )}
+      {shown.map((s) => (
+        <ProtocolBlock
+          key={s.id}
+          name={s.name}
+          blnt={s.id === 'blnt'}
+          rev={s.rev}
+          win={win}
+        />
+      ))}
     </Panel>
   );
 }

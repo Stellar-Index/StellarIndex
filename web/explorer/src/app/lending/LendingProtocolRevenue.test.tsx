@@ -70,13 +70,13 @@ function serve(rows: { protocol: 'blend' | 'blnt'; revenue?: Revenue }[]) {
   vi.mocked(apiGet).mockResolvedValue({ data: rows });
 }
 
-function renderPanel() {
+function renderPanel(protocol: 'blend' | 'blnt' = 'blend') {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <LendingProtocolRevenue />
+      <LendingProtocolRevenue protocol={protocol} />
     </QueryClientProvider>,
   );
 }
@@ -86,21 +86,36 @@ beforeEach(() => {
 });
 
 describe('LendingProtocolRevenue', () => {
-  it('shows one quiet line per protocol while nothing is valued, with no switcher or $0', async () => {
-    serve([
-      { protocol: 'blend', revenue: notValued },
-      { protocol: 'blnt', revenue: { ...notValued, fee_rate_inferred: true } },
-    ]);
-    renderPanel();
-    for (const p of ['blend', 'blnt']) {
+  it.each(['blend', 'blnt'] as const)(
+    'shows one quiet line for %s while nothing is valued, with no switcher or $0',
+    async (p) => {
+      serve([
+        { protocol: 'blend', revenue: notValued },
+        {
+          protocol: 'blnt',
+          revenue: { ...notValued, fee_rate_inferred: true },
+        },
+      ]);
+      const { unmount } = renderPanel(p);
       const s = await screen.findByTestId(`revenue-${p}`);
       expect(within(s).getByRole('status')).toHaveTextContent(
         'Revenue totals are not computed yet.',
       );
       expect(s.textContent).not.toContain('—');
       expect(s.textContent).not.toContain('$0');
-    }
-    expect(screen.queryByRole('group', { name: 'Window' })).toBeNull();
+      expect(screen.queryByRole('group', { name: 'Window' })).toBeNull();
+      unmount();
+    },
+  );
+
+  it('shows only the protocol it is given', async () => {
+    serve([
+      { protocol: 'blend', revenue: notValued },
+      { protocol: 'blnt', revenue: notValued },
+    ]);
+    renderPanel('blnt');
+    expect(await screen.findByTestId('revenue-blnt')).toBeInTheDocument();
+    expect(screen.queryByTestId('revenue-blend')).toBeNull();
   });
 
   it('renders each window from the API and switches between them', async () => {
@@ -242,7 +257,7 @@ describe('LendingProtocolRevenue', () => {
         },
       },
     ]);
-    renderPanel();
+    renderPanel('blnt');
     const s = await screen.findByTestId('revenue-blnt');
     expect(s).toHaveTextContent('Protocol fee (inferred rate)');
     expect(within(s).getByTitle('$45.00')).toBeInTheDocument();

@@ -14,6 +14,8 @@ import {
   StatGrid,
 } from '@/components/ui';
 import { buildFetchData, failBuild } from '@/lib/buildFetch';
+import { CONTRACT_ID_RE } from '@/lib/preload/manifest';
+import { lendingProtocolHref } from '../LendingProtocolPage';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, shellMetadata } from '@/lib/seo';
 import type { paths } from '@/api/types';
 
@@ -51,9 +53,11 @@ export async function generateStaticParams() {
   // (fail-hard, src/lib/buildFetch.ts); null = CI stub. An empty
   // listing is tolerable here — the curated keys carry the route.
   const pools = await fetchLendingPools();
+  // Only contract ids: anything else could shadow a static sibling such as
+  // /lending/blend or /lending/rates in the export.
   const fromAPI = (pools ?? [])
     .map((p) => ({ pool: p.pool ?? '' }))
-    .filter((p) => p.pool);
+    .filter((p) => CONTRACT_ID_RE.test(p.pool));
   const seen = new Set<string>();
   const merged = [...fromAPI, ...curatedKeys, { pool: 'shell' }].filter((p) => {
     if (seen.has(p.pool)) return false;
@@ -166,6 +170,11 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
   }
 
   const poolName = label?.name || `${pool.slice(0, 8)}…${pool.slice(-8)}`;
+  const protocolPage = protocol && lendingProtocolHref(protocol.slug);
+  const protocolCrumb =
+    protocol && protocolPage
+      ? [{ label: protocol.name, href: protocolPage }]
+      : [];
 
   return (
     <Container className="space-y-6 py-8">
@@ -174,6 +183,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
         breadcrumbs={[
           { label: 'Home', href: '/' },
           { label: 'Lending', href: '/lending' },
+          ...protocolCrumb,
           { label: poolName },
         ]}
         title={label?.name ?? `${protocol?.name ?? 'Lending'} pool`}

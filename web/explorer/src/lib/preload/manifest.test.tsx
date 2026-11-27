@@ -10,6 +10,8 @@ import ContractsPage from '@/app/contracts/page';
 import LedgersPage from '@/app/ledgers/page';
 import LendingPage from '@/app/lending/page';
 import LendingRatesPage from '@/app/lending/rates/page';
+import BlendLendingPage from '@/app/lending/blend/page';
+import BlntLendingPage from '@/app/lending/blnt/page';
 import HomePage from '@/app/page';
 import ProtocolsPage from '@/app/protocols/page';
 import TransactionsPage from '@/app/transactions/page';
@@ -96,6 +98,8 @@ describe('preload lists match what each page fetches first', () => {
     ['/', () => <HomePage />],
     ['/lending/', () => <LendingPage />],
     ['/lending/rates/', () => <LendingRatesPage />],
+    ['/lending/blend/', () => <BlendLendingPage />],
+    ['/lending/blnt/', () => <BlntLendingPage />],
     ['/assets/', () => <AssetsTable verifiedSlugs={[]} />],
     ['/contracts/', () => <ContractsPage />],
     ['/ledgers/', () => <LedgersPage />],

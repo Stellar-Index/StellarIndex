@@ -44,6 +44,10 @@ export const PRELOAD_ROUTES: PreloadRoute[] = [
   },
   { path: /^\/lending\/rates\/?$/, urls: ['/v1/lending/rates'] },
   {
+    path: /^\/lending\/(?:blend|blnt)\/?$/,
+    urls: ['/v1/lending/pools', '/v1/lending/protocols'],
+  },
+  {
     path: /^\/assets\/?$/,
     urls: [
       '/v1/assets?asset_class=all&limit=100&include=sparkline7d&include_thin=true',

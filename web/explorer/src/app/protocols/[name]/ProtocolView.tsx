@@ -18,6 +18,7 @@ import { TimeSeriesChart } from './TimeSeriesChart';
 import { AnalyticsStatusNote, BespokeUnavailable } from './AnalyticsStatusNote';
 import { BespokeSection, type Bespoke } from './BespokeSection';
 import { ExternalRef } from '@/components/ExternalRef';
+import { lendingProtocolHref } from '@/app/lending/LendingProtocolPage';
 import type { paths } from '@/api/types';
 import {
   Badge,
@@ -338,7 +339,10 @@ function ProtocolCrossLinks({
         </Link>
       )}
       {category === 'lending' && (
-        <Link href="/lending" className={LINK_CLASS}>
+        <Link
+          href={lendingProtocolHref(name) ?? '/lending'}
+          className={LINK_CLASS}
+        >
           Lending pools
         </Link>
       )}
