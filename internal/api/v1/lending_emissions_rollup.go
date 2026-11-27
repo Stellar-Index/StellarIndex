@@ -337,62 +337,80 @@ func emisRowRefused(d timescale.LendingEmissionsUSDDay) bool {
 func emissionsDayRows(v *LendingEmissionsHistoryView, day time.Time) ([]timescale.LendingEmissionsUSDDay, bool) {
 	b := emisRowBuilder{v: v, day: day, ok: true}
 	if v.Reserves.Available {
-		for _, line := range v.Reserves.Streams {
-			approx, reason := v.Reserves.Approximate, v.Reserves.ApproximateReason
-			if line.Approximate {
-				approx, reason = true, line.ApproximateReason
-			}
-			for _, p := range line.Points {
-				if time.Time(p.T).Equal(day) {
-					r := b.row(emisRowSchedule, strconv.FormatUint(uint64(line.TokenID), 10), v.Reserves.LowerBound,
-						[]string{emisStreamReserves}, p.Tokens, nil, p.USD)
-					r.Asset, r.Side = line.Asset, nonEmptyPtr(line.Side)
-					if approx {
-						r.Approximate, r.ApproximateReason = true, reason
-					}
-					b.out = append(b.out, r)
-				}
-			}
-		}
+		b.schedule()
 	}
-	pc := &v.PoolClaims
-	for _, p := range pc.Points {
-		if time.Time(p.T).Equal(day) {
-			b.out = append(b.out, b.row(emisRowPoolClaims, "", pc.LowerBound, []string{emisStreamPoolClaims}, p.Amount, &p.Claims, p.USD))
-		}
-	}
-	for _, line := range pc.ByReserve.Reserves {
-		for _, p := range line.Points {
-			if time.Time(p.T).Equal(day) {
-				r := b.row(emisRowReserveClaims, strconv.FormatUint(uint64(line.TokenID), 10), pc.ByReserve.LowerBound,
-					[]string{emisStreamPoolClaims, emisStreamClaimsByReserve}, p.Amount, &p.Claims, p.USD)
-				r.Asset, r.Side = line.Asset, nonEmptyPtr(line.Side)
-				b.out = append(b.out, r)
-			}
-		}
-	}
-	if ba := &v.BackstopAlloc; ba.Available {
-		for _, p := range ba.Points {
-			if !time.Time(p.T).Equal(day) {
-				continue
-			}
-			for i, leg := range []struct{ stream, amount string }{{emisRowAllocBackstop, p.BackstopEmissions}, {emisRowAllocPool, p.PoolEmissions}} {
-				usd := LendingEmissionUSD{lendingEmissionUSDCoverage: p.USD.lendingEmissionUSDCoverage, exact: p.USD.exact[i]}
-				usd.AmountUSD = []*string{p.USD.BackstopEmissionsUSD, p.USD.PoolEmissionsUSD}[i]
-				b.out = append(b.out, b.row(leg.stream, "", ba.LowerBound, []string{emisStreamBackstopAlloc}, leg.amount, &p.Events, usd))
-			}
-		}
+	b.poolClaims()
+	if v.BackstopAlloc.Available {
+		b.alloc()
 	}
 	if bc := &v.BackstopClaims; bc.Available {
 		for _, tier := range bc.Tiers {
 			for _, p := range tier.Points {
-				if time.Time(p.T).Equal(day) {
+				if b.at(p.T) {
 					b.out = append(b.out, b.row(emisRowTierClaims, tier.Tier, bc.LowerBound, []string{emisStreamBackstopClaims}, p.BLNTAmount, &p.Claims, p.USD))
 				}
 			}
 		}
 	}
 	return b.out, b.ok
+}
+
+func (b *emisRowBuilder) at(t WireTime) bool { return time.Time(t).Equal(b.day) }
+
+func (b *emisRowBuilder) schedule() {
+	rs := &b.v.Reserves
+	for _, line := range rs.Streams {
+		approx, reason := rs.Approximate, rs.ApproximateReason
+		if line.Approximate {
+			approx, reason = true, line.ApproximateReason
+		}
+		for _, p := range line.Points {
+			if !b.at(p.T) {
+				continue
+			}
+			r := b.row(emisRowSchedule, strconv.FormatUint(uint64(line.TokenID), 10), rs.LowerBound, []string{emisStreamReserves}, p.Tokens, nil, p.USD)
+			r.Asset, r.Side = line.Asset, nonEmptyPtr(line.Side)
+			if approx {
+				r.Approximate, r.ApproximateReason = true, reason
+			}
+			b.out = append(b.out, r)
+		}
+	}
+}
+
+func (b *emisRowBuilder) poolClaims() {
+	pc := &b.v.PoolClaims
+	for _, p := range pc.Points {
+		if b.at(p.T) {
+			b.out = append(b.out, b.row(emisRowPoolClaims, "", pc.LowerBound, []string{emisStreamPoolClaims}, p.Amount, &p.Claims, p.USD))
+		}
+	}
+	for _, line := range pc.ByReserve.Reserves {
+		for _, p := range line.Points {
+			if !b.at(p.T) {
+				continue
+			}
+			r := b.row(emisRowReserveClaims, strconv.FormatUint(uint64(line.TokenID), 10), pc.ByReserve.LowerBound,
+				[]string{emisStreamPoolClaims, emisStreamClaimsByReserve}, p.Amount, &p.Claims, p.USD)
+			r.Asset, r.Side = line.Asset, nonEmptyPtr(line.Side)
+			b.out = append(b.out, r)
+		}
+	}
+}
+
+// alloc stores the allocation's two shares as two lines, each with the shares' shared coverage.
+func (b *emisRowBuilder) alloc() {
+	ba := &b.v.BackstopAlloc
+	for _, p := range ba.Points {
+		if !b.at(p.T) {
+			continue
+		}
+		for i, leg := range []struct{ stream, amount string }{{emisRowAllocBackstop, p.BackstopEmissions}, {emisRowAllocPool, p.PoolEmissions}} {
+			usd := LendingEmissionUSD{lendingEmissionUSDCoverage: p.USD.lendingEmissionUSDCoverage, exact: p.USD.exact[i]}
+			usd.AmountUSD = []*string{p.USD.BackstopEmissionsUSD, p.USD.PoolEmissionsUSD}[i]
+			b.out = append(b.out, b.row(leg.stream, "", ba.LowerBound, []string{emisStreamBackstopAlloc}, leg.amount, &p.Events, usd))
+		}
+	}
 }
 
 type emisRowBuilder struct {
