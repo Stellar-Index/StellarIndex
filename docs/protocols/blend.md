@@ -294,3 +294,85 @@ the lake event breakdown + `events_24h`) and back the "Backstop volume
 > `drop` / `q_swap` / `swap`, gated on contract identity — its
 > `distribute` topic collides with this Backstop's own `distribute`
 > event above). See [`docs/protocols/blend_emitter.md`](blend_emitter.md).
+
+## Emission data inventory
+
+What the repo can establish about BLND emission data without the lake, read
+2026-11-27 from the decoders, goldens and audits cited in each row. Nothing
+here is served as a historical emission figure yet. BLNT's equivalent is in
+[`blnt.md`](blnt.md#emission-data-inventory).
+
+### Events
+
+| Contract | Event | Topics | Body | Identifies | Does not identify |
+|---|---|---|---|---|---|
+| V2 pool | `reserve_emission_update` | `[sym]` | `(res_token_id u32, eps u64, expiration u64)` (`internal/sources/blend/decode_money_market.go:260`) | pool (emitter); reserve and side through `res_token_id`: `2·i` is reserve `i`'s dToken (borrow), `2·i+1` its bToken (supply), resolved against the pool's `ResList` (`internal/storage/clickhouse/lending_emissions_reader.go:222`) | the stream's start time other than the event's ledger; whether any supply/borrow exists to receive it |
+| V2 pool | `gulp_emissions` | `[sym]` | `i128 emissions` (`decode_money_market.go:299`) | pool; the allocation it received | the split across reserves |
+| V2 pool | `claim` | `[sym, from]` | `(reserve_token_ids Vec<u32>, amount_claimed i128)` (`decode_money_market.go:213`) | pool, claimer, the set of reserve token ids | the amount per reserve when the set has more than one id |
+| V1 pool | `update_emissions` | `[sym]` | bare `i128` (`decode_money_market.go:646`; lake-verified at ledger 51,524,668, `internal/sources/blend/README.md:194`) | pool; one pool-wide total | reserve, side, rate, duration |
+| V2 backstop | `gulp_emissions` | `[sym, pool]` | `(new_backstop_emissions i128, new_pool_emissions i128)` (`internal/sources/blend_backstop/README.md:33`) | pool; the backstop's and the pool's share of the cycle | — |
+| V1 backstop | `gulp_emissions` | `[sym]` | bare `i128` (`README.md:34`) | an amount | the pool (stored NULL, never guessed) |
+| V1, V2 backstop | `distribute` | `[sym]` | `i128` (`README.md:32`) | an amount | the pool |
+| V1, V2 backstop | `claim` | `[sym, user]` | `i128` (`internal/sources/blend_backstop/decode.go:164`) | the claimer | the pool, and the unit (see A) |
+| Emitter | `distribute` | `[sym]` | `(backstop_id, amount)` ([`blend_emitter.md`](blend_emitter.md)) | which backstop received BLND | anything below the backstop |
+| Emitter | `drop` | `[sym]` | list of `(recipient, amount)` | recipients of the one-off drops | — |
+
+Storage: each pool holds `EmisData(res_token_id)` with `eps`, `expiration`
+and `last_time` (`lending_emissions_reader.go:238`), and the backstop holds
+`BEmisData(pool)`. The API reads only their current values. Their history is
+not in `lending_state_hourly` (`deploy/clickhouse/lending_state.sql:8`), but
+every write is a raw `stellar.ledger_entry_changes` row.
+
+### Known holes
+
+- A pool `claim` naming several reserve token ids is one total; it cannot be
+  attributed per reserve and must be excluded, never split.
+- A backstop `claim` names no pool, so backstop emissions claimed cannot be
+  attributed per pool. `/emissions` refuses it as
+  `blend_backstop_claim_names_no_pool` (`internal/api/v1/lending_emissions.go:269`).
+- V1 backstop `gulp_emissions` names no pool, and the V1 backstop WASM
+  `62f61b32…` is unaudited, so its replays are refused
+  ([wasm audit](../operations/wasm-audits/blend.md#backstop-v1-wasm--unaudited-replays-refused-2026-10-05)).
+- V1 pools have no per-reserve schedule on record: `update_emissions` is
+  pool-wide. V1 emission storage is refused as
+  `blend_v1_emission_storage_unverified` (`lending_emissions.go:162`).
+- The pool decoders dispatch on topic and arity within the gated pool set, not
+  on WASM hash. A `claim` or `reserve_emission_update` in any other body shape
+  fails decode and is never written (`decode_money_market.go:213`, `:260`).
+
+### Unverified until the lake census
+
+- **A. Unit of the V2 backstop `claim` amount.** The decoder reads one `i128`
+  and names no unit. The real-lake golden frames are suggestive: the `claim`
+  frame's amount (179,414,602) and claimer equal the `deposit` frame's
+  `tokens_in` and depositor exactly
+  (`internal/sources/blend_backstop/decode_test.go:26`, `:34`), and a
+  backstop `deposit`'s `tokens_in` is backstop tokens, the BLND:USDC Comet LP
+  (`internal/sources/comet/events.go:24`). If both frames come from one
+  transaction, the amount is in LP tokens, not BLND. The goldens do not record
+  their transactions, so this is unproven. Settled by: in every V2 backstop
+  claim transaction, compare the claim amount with the same transaction's
+  backstop `deposit` `tokens_in`, its BLND transfers and its Comet LP events.
+  Until then, Blend backstop claims carry no USD.
+- **B. Which V1 pool WASMs emit `reserve_emission_update` and `claim`, and in
+  which shape.** Verified offline: the nine V2-factory pools audited on
+  `a41fc53d…` ([wasm audit](../operations/wasm-audits/blend.md#phase-2-results--per-pool-wasm-history-walk-executed-2026-05-02));
+  four V1-factory pools on `baf978f1…`, audited only for auction events
+  ([wasm audit](../operations/wasm-audits/blend.md#v1-pool-wasm-baf978f10efdbcd8--auction-family-shapes-2026-10-05)).
+  The lake topic census that found both topics on the gated contracts was not
+  split by WASM (`internal/sources/blend/README.md:232`). Unverified offline:
+  the WASM of the other 13 V1-factory pools and of `CDZVHCO7…` (deployed after
+  the WASM walk), and whether any V1 pool emits either topic. Settled by:
+  event counts and body-shape signatures per contract × WASM hash × topic.
+- **C. Whether event eps equals storage eps, and whether eps changes without
+  the event.** Verified offline for BLNT only (same scale): a BLNT pool event's
+  eps of 72,619,047,619 over its 604,800-second stream is exactly 20% of the
+  same transaction's `gulp_emissions` at a 10^7 scale
+  ([`blnt.md`](blnt.md#emission-data-inventory)). The storage scale rests on
+  a source comment (`lending_emissions_reader.go:14`). No repo fixture holds an
+  `EmisData` entry from chain, so event-vs-storage equality, the Blend scale,
+  and eps writes without the event (from `gulp_emissions`, `set_reserve` or
+  anything else) are unverified. Expiry needs no storage write: accrual stops
+  at `expiration` and a schedule must cap there. Settled by: comparing sampled
+  events with the `EmisData` write in the same transaction, and counting
+  consecutive distinct storage eps values against events per pool × token id.

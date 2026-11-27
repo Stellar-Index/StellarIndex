@@ -87,6 +87,54 @@ The source is production-enabled from ledger 65,134,154. Replay is gated by the
 [six-lineage WASM audit](../operations/wasm-audits/blnt.md), and real Galexie
 fixtures cover the pool, factory, backstop, emitter and both backfill roles.
 
+## Emission data inventory
+
+What the repo establishes about BLNT emission data, read 2026-11-27 from the
+typed ABI (`internal/sources/blnt/abi.go`) and the chain fixtures under
+`test/fixtures/blnt/`. The Blend equivalent is in
+[`blend.md`](blend.md#emission-data-inventory).
+
+| Contract | Event | Body (abi.go) | Identifies | Does not identify |
+|---|---|---|---|---|
+| Pool | `reserve_emission_update` | `(res_token_id u32, eps u64, expiration u64)` (:94) | pool; reserve and side through `res_token_id`, as in Blend | start time other than the event's ledger |
+| Pool | `gulp_emissions` | `emissions` (:95) | pool; its cycle allocation | the split across reserves |
+| Pool | `claim` | topics `[sym, from]`; `(reserve_token_ids, amount_claimed)` (:96) | pool, claimer, the reserve token id set | the amount per reserve when the set has more than one id |
+| Backstop | `distribute` | `new_tokens_emitted` (:126) | an amount | the pool or tier |
+| Backstop | `gulp_emissions` | topics `[sym, pool]`; `(new_backstop_emissions, new_pool_emissions)` (:127) | pool | the split across tiers |
+| Backstop | `claim` | topics `[sym, tier, user, pool]`; `(blnt_amount, lp_amount, shares)` (:130) | tier, claimer, pool, and both units | — |
+| Emitter | `distribute` | `(backstop, amount)` (:135) | which backstop received BLNT | anything below it |
+| Emitter | `drop` | `list` (:139) | one-off recipients | — |
+| Backfill, lockup backfill | `claim`, `claim_grant`, `swap_blnd`, `fund`, `claim_fund`, `expire` (:142-151) | — | migration payouts | these are not lending emissions and are never counted as such |
+
+Chain-verified by fixtures (pool WASM `0e4f8f45…`, backstop `0469cfb4…`):
+
+- All three pool emission events are in the Blend V2 body shape; the decoded
+  rows are pinned in `internal/sources/blnt/testdata/decoded.golden.json`.
+- One gulp, ledger 65,135,638, tx `f13dec85…`: the backstop's
+  `gulp_emissions` gives the Fixed Pool `new_pool_emissions` 21,960,000,000
+  (golden :137-142). The pool's own `gulp_emissions` in the same tx carries the
+  same 21,960,000,000 (:143-147). Its `reserve_emission_update` sets
+  `res_token_id` 1 to eps 72,619,047,619, expiring 1,793,568,773 (:212-218).
+  That is 604,800 s after the ledger closed, and
+  72,619,047,619 × 604,800 / 10^7 = 4,391,999,999.997, i.e. 20.000% of the
+  gulp. So the event eps is at the 10^7 scale the storage reader assumes
+  (`internal/storage/clickhouse/lending_emissions_reader.go:14`).
+- A backstop `claim` (ledger 65,148,565, tier `FirstLoss`) carries
+  `blnt_amount` 1,033,567,161, `lp_amount` 84,386,953 and `shares` 84,386,953
+  (golden :19-28). The claim reports both the BLNT claimed and the LP tokens
+  it bought, so it is the control for Blend's single-amount backstop claim.
+
+Known holes: multi-reserve pool claims cannot be split per reserve; the
+backstop's per-pool allocation has no on-chain per-tier split; and the API
+reads current `EmisData`/`BEmisData` only. Pools deployed by the factory after
+the two listed above are covered by the factory gate but are not named here.
+
+Unverified until the lake census: whether the eps in each
+`reserve_emission_update` equals the `EmisData` written in the same
+transaction, and whether storage eps ever changes without that event. No
+fixture holds an `EmisData` entry from chain. Settled by the same
+event-vs-storage comparison as Blend's question C.
+
 ## Primary evidence
 
 - BLNT V3 core source and deployment records:
