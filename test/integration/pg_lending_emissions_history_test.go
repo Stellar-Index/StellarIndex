@@ -169,6 +169,24 @@ func TestLendingEmissionsHistory_ReadsExact(t *testing.T) {
 		b.LP.String() != "7" || b.Shares.String() != "18000000000000000000" || b.Unread != 0 {
 		t.Fatalf("blnt tier = %+v", b)
 	}
+	// With Hours the same window's hours come back from one snapshot, adding up to its days; no schedule is re-read.
+	wh, err := store.LendingEmissionsHistory(ctx, blnt.MainnetFixedPool, true, timescale.EmissionHistoryQuery{
+		From: from, To: to, Daily: true, Schedule: true, BackstopAlloc: true, BackstopClaim: true, Hours: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hs := wh.Hours; hs == nil || hs.Schedule != nil || len(hs.Alloc) != 1 || hs.Alloc[0].BackstopShare.String() != "8" ||
+		len(hs.BackstopClaims) == 0 || len(wh.Alloc) != 1 || len(wh.Schedule) != 1 {
+		t.Fatalf("hours = %+v of %+v", wh.Hours, wh)
+	}
+	var tierBLNT big.Int
+	for _, b := range wh.Hours.BackstopClaims {
+		tierBLNT.Add(&tierBLNT, b.BLNT.BigInt())
+	}
+	if tierBLNT.String() != "18000000000000000000" {
+		t.Fatalf("hourly tier blnt = %s, want the day's 18000000000000000000", &tierBLNT)
+	}
 
 	assertEmissionPlanUsesIndex(ctx, t, store, timescale.LendingEmissionScheduleQuery(false), "blend_emissions_pool_ts_idx", pool, from, to)
 	assertEmissionPlanUsesIndex(ctx, t, store, timescale.LendingEmissionClaimsQuery(false), "blend_emissions_pool_ts_idx", pool, from, to, "hour")

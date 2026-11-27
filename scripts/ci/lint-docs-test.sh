@@ -8,11 +8,9 @@
 # not just a red exit, stops one case's red from masking another's
 # regression — and one run instead of one per case keeps this ~1 min.
 #
-# New fixtures are untracked; edited tracked files are backed up and
-# restored byte-for-byte, so uncommitted work survives. The index is never touched.
+# Every fixture is written into a throwaway copy of the tree (new fixtures
+# untracked there); the last case proves the real tree was never touched.
 set -uo pipefail
-cd "$(dirname "$0")/../.." || exit 1
-
 GATE="scripts/ci/lint-docs.sh"
 PHOENIX_FAKE_XLM_SAC="CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
 ADR_NOROW="docs/adr/0099-zz-lint-docs-fixture.md"
@@ -28,21 +26,13 @@ SPEC="openapi/stellar-index.v1.yaml"
 EXPLORER_README="web/explorer/README.md"
 COMMS_README="deploy/comms/README.md"
 NODOC_PKG="internal/zzlintdocsfixture"
-EDITED=(CHANGELOG.md docs/architecture/coverage-matrix.md
-        docs/adr/README.md docs/protocols/README.md "$RUNBOOK" "$SPEC" "$EXPLORER_README" "$COMMS_README")
-BACKUP=$(mktemp -d); OUT=$(mktemp)
+# shellcheck source=scripts/ci/lib/selftest-tree.sh
+. "$(dirname "$0")/lib/selftest-tree.sh"
+selftest_tree lint-docs-test "$GATE" CHANGELOG.md docs/architecture/coverage-matrix.md \
+  docs/adr/README.md docs/protocols/README.md "$RUNBOOK" "$SPEC" "$EXPLORER_README" \
+  "$COMMS_README" internal/incidents/data
+OUT="$SELFTEST_TMP/out"
 PASS=0; FAIL=0
-
-# shellcheck disable=SC2317,SC2329  # invoked indirectly by the EXIT trap
-cleanup() {
-  local f
-  for f in "${EDITED[@]}"; do
-    if [ -f "$BACKUP/$f" ]; then cp -p "$BACKUP/$f" "$f"; fi
-  done
-  rm -f "$ADR_NOROW" "$ADR_STALE" "$INC_PROSE" "$INC_BOX" "$DESIGN" "$OPS_STALE" "$OPS_WARN"
-  rm -rf "$(dirname "$UNTRACKED_README")" "$NODOC_PKG" "$BACKUP" "$OUT"
-}
-trap cleanup EXIT
 
 result() { # <name> <status: 0 = ok>
   if [ "$2" -eq 0 ]; then printf '  ok   %s\n' "$1"; PASS=$((PASS+1))
@@ -59,7 +49,7 @@ stale() { # <name> <pattern as printed in the header> <listed-line ERE>
     END { exit !found }' "$OUT"
   result "$1" $?
 }
-tree_state() { git status --porcelain=v1 -uall; git diff; }
+real_tree_state() { git -C "$SELFTEST_SRC" status --porcelain=v1 -uall; git -C "$SELFTEST_SRC" diff; }
 days_ago() { date -u -r $(( $(date -u +%s) - $1 * 86400 )) +%F 2>/dev/null || date -u -d "@$(( $(date -u +%s) - $1 * 86400 ))" +%F; }
 incident() { # <path> <bullet prefix>
   cat > "$1" <<EOF
@@ -85,8 +75,8 @@ EOF
 }
 
 bash "$GATE" >/dev/null 2>&1; result "clean tree passes" $?
-START_STATE=$(tree_state)
-for f in "${EDITED[@]}"; do mkdir -p "$BACKUP/$(dirname "$f")"; cp -p "$f" "$BACKUP/$f"; done
+START_STATE=$(real_tree_state)
+cp "$SPEC" "$SELFTEST_TMP/spec.orig"
 
 # §8: an ADR shipping with no row in docs/adr/README.md's Index table.
 printf -- '---\nadr: 0099\ntitle: Fixture ADR for lint-docs self-test\nstatus: Accepted\ndate: 2026-09-21\nsupersedes: []\nsuperseded_by: null\n---\n\n# ADR-0099: fixture (never added to docs/adr/README.md)\n' > "$ADR_NOROW"
@@ -114,7 +104,7 @@ incident "$INC_BOX" '- [ ]'
 # mapping into a bogus null-valued key; and internal_routes_re must not
 # exempt a route the spec documents, so undocumenting it must be caught.
 sed -e 's/asset:           { type: string, description: Reserve underlying token (C-strkey). }/asset: { type: string, description: Reserve underlying token, C-strkey. }/' \
-    -e 's|^  /account/admin/lookup:$|  /account/admin/lookup-zzfixture:|' "$BACKUP/$SPEC" > "$SPEC"
+    -e 's|^  /account/admin/lookup:$|  /account/admin/lookup-zzfixture:|' "$SELFTEST_TMP/spec.orig" > "$SPEC"
 
 {
   # §11b: a continued heavy-job command without -write, in a runbook that
@@ -207,9 +197,8 @@ present "a package with no package doc comment is caught" "Package '$NODOC_PKG' 
 absent  "a documented package is not flagged" "Package 'internal/canonical' has no"
 
 if [ "$FAIL" -gt 0 ]; then echo "--- lint output ---"; grep -E 'ERROR|WARN: doc .docs/operations/zz' "$OUT"; fi
-cleanup; trap - EXIT
-same=1; [ "$(tree_state)" = "$START_STATE" ] && same=0
-result "tree restored to its starting state" "$same"
+same=1; [ "$(real_tree_state)" = "$START_STATE" ] && same=0
+result "the real tree is untouched" "$same"
 
 echo
 echo "lint-docs-test: $PASS passed, $FAIL failed"

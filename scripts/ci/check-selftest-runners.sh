@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # check-selftest-runners.sh — every tracked *-test.sh / *_test.sh (scripts/ci
 # and beside any ops script) must be executed by a workflow under
-# .github/workflows/ or by scripts/dev/verify.sh.
+# .github/workflows/ or by scripts/dev/verify.sh, and none may run a mutating
+# git command on the real repo (see in_place_git below).
 #
 # A self-test that no runner executes guards nothing: it stays green while the
 # gate it covers regresses. lint-changed.sh does not count as a runner — it is
@@ -58,7 +59,29 @@ fi
 corpus="$(cat "$WORKFLOWS_DIR"/*.yml "$VERIFY_SH" 2>/dev/null)"
 path_is_run() { grep -qF -e "./$1" -e "bash $1" <<<"$corpus"; }
 
+# A self-test must never change the real repo's git state. Its first mutating
+# git command must follow `. lib/selftest-tree.sh`, or an unset of GIT_DIR (a
+# hook exports it) plus a `mktemp -d` the command can target.
+in_place_git() { # <file> — prints the first mutating git line with no temp repo before it
+  awk '
+    /^[[:space:]]*#/ { next }
+    /lib\/selftest-tree\.sh/ { helper = 1 }
+    /unset[^#]*GIT_DIR/ { unset_seen = 1 }
+    /mktemp -d/ { tmp_seen = 1 }
+    /git( +-[cC] +[^ ]+)* +(checkout +--|add +-N|commit|reset|stash|rm +--cached)( |$)/ {
+      if (!helper && !(unset_seen && tmp_seen)) { print FNR ": " $0; exit }
+    }' "$1"
+}
+
 bad=0
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  hit="$(in_place_git "$f")"
+  [ -n "$hit" ] || continue
+  echo "check-selftest-runners: $f:$hit — mutates git state with no throwaway repo; source scripts/ci/lib/selftest-tree.sh" >&2
+  bad=$((bad + 1))
+done < <(while IFS= read -r t; do echo "$CI_DIR/$t"; done <<<"$tests"; printf '%s\n' "$others")
+
 while IFS= read -r t; do
   grep -qxF "$t" <<<"$invoked" && continue
   grep -qxF "$t" <<<"$baseline" && continue
