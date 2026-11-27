@@ -128,6 +128,7 @@ var notPriceServing = []string{
 	"GET /v1/diagnostics/archive", "GET /v1/diagnostics/backups", "GET /v1/incidents",
 	"GET /v1/incidents.atom", "GET /v1/ledger/tip", "GET /v1/ledger/stream",
 	"GET /v1/network/throughput", "GET /v1/methodology", "GET /v1/sac-wrappers",
+	"GET /v1/lending/pools/{pool}/emissions/history", // token units only
 	"GET /v1/account/me", "GET /v1/account/usage", "GET /v1/account/keys", "GET /v1/admin/accounts/{id}",
 	"GET /v1/admin/status-notices", "GET /v1/signup/verify", "GET /v1/dashboard/account/export", "GET /v1/dashboard/keys",
 	"GET /v1/dashboard/webhooks", "GET /v1/dashboard/webhooks/{id}/deliveries", "GET /v1/dashboard/price-alerts", "GET /v1/auth/callback",
