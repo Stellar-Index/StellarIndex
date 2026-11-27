@@ -25,6 +25,9 @@ import (
 // 24.8 did to the creators cycle.
 const clickhouseImage = "clickhouse/clickhouse-server:26.5"
 
+// clickhouseServerZone is production's server zone: east of UTC, with DST.
+const clickhouseServerZone = "Europe/Berlin"
+
 // The shared ClickHouse container: startup + schema apply is ~15-30s, so the whole integration binary shares ONE, started
 // lazily and torn down once in TestMain (never started when only Postgres tests run). Tests stay isolated by unique keys
 // (contract_id / tx_hash / ledger range) since the lake tables are ReplacingMergeTree and every read filters by them.
@@ -70,7 +73,9 @@ func startClickHouse(ctx context.Context) (string, testcontainers.Container, err
 			// With no CLICKHOUSE_USER/PASSWORD the image entrypoint restricts `default` to localhost, so a mapped-port connection
 			// fails with a misleading AUTHENTICATION_FAILED. SKIP_USER_SETUP keeps the stock users.xml (default, empty password, all
 			// networks) the repo's constructors expect; open access is fine for a throwaway container.
-			Env: map[string]string{"CLICKHOUSE_SKIP_USER_SETUP": "1"},
+			// TZ: production's server zone is not UTC, and a Date decodes at the server zone's midnight while zone-less
+			// now()/today() take its calendar; a UTC container would pass code that serves every such day a day early.
+			Env: map[string]string{"CLICKHOUSE_SKIP_USER_SETUP": "1", "TZ": clickhouseServerZone},
 			WaitingFor: wait.ForAll(
 				wait.ForListeningPort("9000/tcp"),
 				wait.ForHTTP("/ping").WithPort("8123/tcp").
@@ -117,6 +122,13 @@ func applyClickHouseSchema(ctx context.Context, addr string) error {
 
 	if err := pingWithRetry(ctx, conn, 30*time.Second); err != nil {
 		return fmt.Errorf("clickhouse: ping schema conn %s: %w", addr, err)
+	}
+	var zone string
+	if err := conn.QueryRow(ctx, `SELECT timezone()`).Scan(&zone); err != nil {
+		return fmt.Errorf("clickhouse: read server zone: %w", err)
+	}
+	if zone != clickhouseServerZone {
+		return fmt.Errorf("clickhouse: server zone is %q, want %q: the suite must run outside UTC", zone, clickhouseServerZone)
 	}
 
 	stmts, err := clickHouseSchemaStatements()

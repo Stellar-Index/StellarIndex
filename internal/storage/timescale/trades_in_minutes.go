@@ -11,9 +11,11 @@ import (
 // TradesInMinutesQuery is the SQL of [Store.TradesInMinutes]; exported for the plan-shape integration test. Each direction is driven
 // from the minute list: one trades_pair_ts_idx range probe per minute, its own ORDER BY … LIMIT keeping the planner from flattening
 // the lateral into a join over the whole span (each minute's newest $6 hold the overall newest $6). The constant [$4, $5) bounds let
-// Timescale exclude chunks.
+// Timescale exclude chunks. The pair reaches the probe as columns of the MATERIALIZED minute list, not as constants: against a
+// constant the planner prices the probe from that asset's own frequency, and for a heavily traded asset (XLM base, USDC quote) a
+// time-only index plus a filter costs the same, so it reads every market's rows in the minute.
 const TradesInMinutesQuery = `
-        WITH m(b) AS (SELECT DISTINCT unnest($3::timestamptz[]))
+        WITH m(b, x, y) AS MATERIALIZED (SELECT DISTINCT unnest($3::timestamptz[]), $1::text, $2::text)
         (SELECT t.* FROM m CROSS JOIN LATERAL (
             SELECT source, ledger, tx_hash, op_index, ts,
                    base_asset, quote_asset,
@@ -23,8 +25,8 @@ const TradesInMinutesQuery = `
                    COALESCE(routed_via, '') AS routed_via,
                    COALESCE(usd_volume >= $8::numeric AND base_amount > 0 AND quote_amount > 0, false) AS clears_floor
               FROM trades
-             WHERE base_asset  = $1::text
-               AND quote_asset = $2::text
+             WHERE base_asset  = m.x
+               AND quote_asset = m.y
                AND ts         >= m.b
                AND ts          < m.b + INTERVAL '1 minute'
                AND ts         >= $4::timestamptz
@@ -44,8 +46,8 @@ const TradesInMinutesQuery = `
                    COALESCE(routed_via, '') AS routed_via,
                    COALESCE(usd_volume >= $8::numeric AND base_amount > 0 AND quote_amount > 0, false) AS clears_floor
               FROM trades
-             WHERE base_asset  = $2::text
-               AND quote_asset = $1::text
+             WHERE base_asset  = m.y
+               AND quote_asset = m.x
                AND ts         >= m.b
                AND ts          < m.b + INTERVAL '1 minute'
                AND ts         >= $4::timestamptz
