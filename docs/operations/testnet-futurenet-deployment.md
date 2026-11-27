@@ -109,6 +109,8 @@ Triage `systemctl list-units --state=failed` first. Gated on `stellar_network ==
 
 Apply with `--tags local-prometheus`. The play copies the listed files to `/etc/prometheus/rules.local/`, deletes files no longer listed, validates with `promtool check rules`, and restarts Prometheus. Unlisted, empty or missing files fail the play.
 
+A quiet or freshly reset network has none of some sources, and their empty tables would read stale forever. Declare them in the host's inventory, e.g. for futurenet `stellarindex_sources_absent_by_design: [sep1/issuers, sep41_supply/supply_flows]`, then apply `--tags ops-jobs`; a declared source that later holds rows raises its own ticket. See [Absent-by-design sources](runbooks/data-freshness.md#absent-by-design-sources).
+
 Nothing is delivered: there is no Alertmanager, no `alerting:` block and no notification. A firing rule shows in the `ALERTS` series, as `/v1/status` `incidents` (ticket alerts set `incidents_status: degraded`; `overall` changes only for `page` alerts, which the default list has none of), and on the host:
 
 ```sh
