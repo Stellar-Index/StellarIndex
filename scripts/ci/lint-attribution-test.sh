@@ -5,27 +5,27 @@
 #
 # The tree-content check scans `git ls-files` (tracked content — what a
 # fresh CI checkout actually sees), so the doc fixture needs `git add -N`
-# (intent-to-add) to become visible to it; `git reset` drops that index
-# entry again without ever creating a commit. The commit-message case needs
-# a REAL commit for `git log` to see it, so this creates exactly one
-# throwaway commit and unwinds it with `git reset --soft` immediately after
-# — it never touches any commit that existed before this test ran, and
-# nothing here is pushed.
+# (intent-to-add) to become visible to it. The commit-message case needs a
+# REAL commit for `git log` to see. Both happen in a throwaway git copy of
+# the tree (lib/selftest-tree.sh), never in the real index or branch.
 set -uo pipefail
-cd "$(dirname "$0")/../.." || exit 1
+# shellcheck source=scripts/ci/lib/selftest-tree.sh
+. "$(dirname "$0")/lib/selftest-tree.sh"
+selftest_tree lint-attribution-test scripts/ci/lint-attribution.sh
 
 GATE="scripts/ci/lint-attribution.sh"
 FIX="docs/zz-lint-attribution-fixture.md"
-OUT=$(mktemp)
+OUT="$SELFTEST_TMP/out"
 PASS=0
 FAIL=0
-
-# shellcheck disable=SC2317,SC2329  # invoked indirectly by the EXIT trap
-cleanup() {
-  git reset -q -- "$FIX" 2>/dev/null
-  rm -f "$FIX" "$OUT"
+# A CI runner has no git identity, and the copy must not run the user's
+# global hooks or signing on its fixture commits.
+fixture_git() {
+  git -c user.name=lint-attribution-test -c user.email=lint-attribution-test@invalid \
+    -c core.hooksPath=/dev/null -c commit.gpgsign=false "$@"
 }
-trap cleanup EXIT
+fixture_git commit -q -m "test: fixture base (the copied tree)" ||
+  { echo "lint-attribution-test: could not commit the copied tree" >&2; exit 1; }
 
 check() { # <name> <expected ok|red> [range] [must-contain-substring]
   local name="$1" want="$2" range="${3:-}" needle="${4:-}" rc
@@ -65,9 +65,7 @@ check "clean tree passes again after removing the doc fixture" ok
 
 before=$(git rev-parse HEAD)
 # gitleaks:allow — placeholder trailer text, not a real credential.
-# A CI runner has no git identity; give the throwaway commit one.
-git -c user.name=lint-attribution-test -c user.email=lint-attribution-test@invalid \
-  commit --allow-empty -q -m "test: throwaway fixture commit
+fixture_git commit --allow-empty -q -m "test: throwaway fixture commit
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
 after=$(git rev-parse HEAD)

@@ -5,18 +5,18 @@
 # value like `docs/operations/runbooks/foo.md` (no https:// scheme) is
 # unclickable there, so the gate must fail it even though the target
 # file exists on disk.
+#
+# The rule file is edited in a throwaway copy of the tree, never in place.
 set -uo pipefail
-cd "$(dirname "$0")/../.." || exit 1
-
 GATE="scripts/ci/lint-runbook-annotations.py"
 FIXTURE="configs/prometheus/rules.r1/galexie-archive.yml"
+# shellcheck source=scripts/ci/lib/selftest-tree.sh
+. "$(dirname "$0")/lib/selftest-tree.sh"
+selftest_tree lint-runbook-annotations-test "$GATE" "$FIXTURE"
 PASS=0; FAIL=0
 
-BAK="$(mktemp)"; cp "$FIXTURE" "$BAK"
+BAK="$SELFTEST_TMP/rule.orig"; cp "$FIXTURE" "$BAK"
 restore() { cp "$BAK" "$FIXTURE"; }
-# shellcheck disable=SC2317,SC2329  # invoked indirectly by the EXIT trap
-cleanup() { restore; rm -f "$BAK"; }
-trap cleanup EXIT
 
 check() { # <name> <expected ok|red>
   local name="$1" want="$2" rc

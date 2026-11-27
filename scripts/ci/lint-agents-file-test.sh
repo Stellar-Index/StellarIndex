@@ -2,8 +2,12 @@
 # lint-agents-file-test.sh — prove each assertion in lint-agents-file.sh
 # can actually FAIL. A gate nobody has seen red is not a gate, so every
 # new one ships with the mutation that breaks it.
+#
+# Every mutation rewrites AGENTS.md in a throwaway copy of the tree.
 set -uo pipefail
-cd "$(dirname "$0")/../.." || exit 1
+# shellcheck source=scripts/ci/lib/selftest-tree.sh
+. "$(dirname "$0")/lib/selftest-tree.sh"
+selftest_tree lint-agents-file-test AGENTS.md scripts/ci/lint-agents-file.sh
 
 GATE="scripts/ci/lint-agents-file.sh"
 PASS=0; FAIL=0
@@ -17,9 +21,8 @@ check() { # <name> <expected: ok|red>
   fi
 }
 
-BAK="$(mktemp)"; cp AGENTS.md "$BAK"
+BAK="$SELFTEST_TMP/AGENTS.md.orig"; cp AGENTS.md "$BAK"
 restore() { cp "$BAK" AGENTS.md; }
-trap 'restore; rm -f "$BAK"' EXIT
 
 check "unmodified AGENTS.md passes" ok
 
