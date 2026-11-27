@@ -140,8 +140,15 @@ part's sum over reserves is a lower bound when `excluded` names a reserve left o
 
 ## Emissions history: `GET /v1/lending/pools/{pool}/emissions/history`
 
-A pool's emissions per hour or UTC day, in base units of the emission token (BLND for Blend). No USD yet. Four streams
-describe the same tokens at different stages, so they are separate fields and are never added together.
+A pool's emissions per hour or UTC day, in base units of the emission token (BLND for Blend), each with `usd`. Four
+streams describe the same tokens at different stages, so they are separate fields and are never added together, in
+tokens or in USD.
+
+USD is valued as `/revenue` values interest: each hour's tokens at that hour's BLND price through the same walk (at most
+6 h old, never a later price), summed exactly and rounded once per figure; a `1d` bucket is valued from its hours. It
+is served only when the pool's emission token is the SAC of the verified BLND asset (code and issuer). V1's token is
+not read, so V1 USD is null (`emission_token_unread`). A figure with unpriced hours is a lower bound; one with nothing
+valued is null with `usd_reason`, never `0.00`.
 
 | Stream | What it means |
 |---|---|

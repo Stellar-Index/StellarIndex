@@ -884,6 +884,12 @@ Counter, labels `pair` (the configured target pair) and `window` (`5m` / `1h` / 
 
 (pair, window) leg fetches that hit `MaxTradesPerWindow` (default 10,000) and stayed capped after the minute-sum fill, so the VWAP covers only `[covered_from, to)` and is served `truncated`. Alert: `stellarindex_aggregator_window_truncated`.
 
+### `stellarindex_aggregator_window_wide_minutes_unresolved_total`
+
+Counter, labels `pair` and `window`, as `stellarindex_aggregator_window_truncated_total`.
+
+The subset of those truncated fetches whose coverage ends at an over-spread minute the fill could not re-read raw (re-read budget, row cap or read error). Where it tracks the truncated counter, the cause is volatile minutes, not unusable minute sums.
+
 ### `stellarindex_aggregator_stream_publish_total`
 
 Counter, label `outcome` (`ok` / `error`).

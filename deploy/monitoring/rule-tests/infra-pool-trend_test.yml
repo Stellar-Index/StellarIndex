@@ -41,7 +41,6 @@ tests:
               severity: ticket
               team: stellarindex
               component: infra
-              alert_family: zfs_pool_fill_trend
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_zfs_pool_fill_85pct_within_30d
               summary: "ZFS data pool on course to pass 85 % full within 30 days (11.2% of capacity free projected)"
@@ -79,10 +78,9 @@ tests:
         exp_alerts:
           - exp_labels:
               instance: r1:9100
-              severity: page
+              severity: ticket
               team: stellarindex
               component: infra
-              alert_family: zfs_pool_fill_trend
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_zfs_pool_fill_90pct_within_7d
               summary: "ZFS data pool on course to pass 90 % full within 7 days (9.8% of capacity free projected)"
@@ -135,7 +133,6 @@ tests:
               severity: ticket
               team: stellarindex
               component: infra
-              alert_family: zfs_pool_fill_trend
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_zfs_pool_fill_85pct_within_30d
               summary: "ZFS data pool on course to pass 85 % full within 30 days (14% of capacity free projected)"

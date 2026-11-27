@@ -39,6 +39,9 @@ func (o *Orchestrator) fetchTradesDetectTruncation(
 	}
 	if !coveredFrom.IsZero() {
 		obs.AggregatorWindowTruncatedTotal.WithLabelValues(target.String(), windowLabel(window)).Inc()
+		if reason == reasonWideUnresolved || reason == reasonWideSeamUnresolved {
+			obs.AggregatorWindowWideMinutesUnresolvedTotal.WithLabelValues(target.String(), windowLabel(window)).Inc()
+		}
 		o.logger.Warn("trade window truncated at MaxTradesPerWindow — VWAP over the newest slice only",
 			"pair", target.String(),
 			"window", windowLabel(window),
@@ -59,13 +62,20 @@ func (o *Orchestrator) fetchTradesDetectTruncation(
 type TradeSumsStore interface {
 	TradeSums1mInRange(ctx context.Context, p canonical.Pair, from, to time.Time) ([]timescale.TradeMinuteSum, time.Time, error)
 	TradeSums1mLive(ctx context.Context, p canonical.Pair, from, to time.Time) ([]timescale.TradeMinuteSum, error)
+	// TradesInMinutes is TradesInRange over a set of whole minutes in one read.
+	TradesInMinutes(ctx context.Context, p canonical.Pair, minutes []time.Time, limit int) ([]canonical.Trade, error)
 }
 
 // tradeSumsHorizon is the longest window minute sums stand in for: trade_sums_1m re-materialises late inserts 26 hours back (0217).
 const tradeSumsHorizon = 25 * time.Hour
 
-// minuteRawBudget caps the over-spread minutes one capped leg re-reads raw before it stays truncated from the newest unresolved one.
+// minuteRawBudget caps the raw re-reads of over-spread minutes one capped leg makes per tick; each returns at most the row cap.
 const minuteRawBudget = 10
+
+const (
+	reasonWideUnresolved     = "wide minutes left unresolved (re-read budget, cap or error)"
+	reasonWideSeamUnresolved = "wide seam minute left unresolved (re-read budget, cap or error)"
+)
 
 // minuteSumTxPrefix marks a minute row's TxHash; with the fetched pair it keeps Trade.ID() unique per (source, leg, minute).
 const minuteSumTxPrefix = "sum1m:"
@@ -96,13 +106,13 @@ func (o *Orchestrator) fillFromMinuteSums(
 		return nil, nil, time.Time{}, reason
 	}
 	rows := foldMinuteSums(sums)
-	cut, extra := o.resolveWideMinutes(ctx, fetch, rows)
+	cut, extra := o.resolveWideMinutes(ctx, ss, fetch, rows)
 	if cut.After(coveredFrom) {
 		// An unresolved seam minute would end coverage after the plain capped read does.
-		return nil, nil, time.Time{}, "wide seam minute left unresolved (re-read budget, cap or error)"
+		return nil, nil, time.Time{}, reasonWideSeamUnresolved
 	}
 	if !cut.IsZero() {
-		reason = "wide minutes left unresolved (re-read budget, cap or error)"
+		reason = reasonWideUnresolved
 	}
 
 	weights = make(map[string]int64, len(rows))
@@ -123,7 +133,7 @@ func (o *Orchestrator) fillFromMinuteSums(
 		trades = append(trades, t)
 	}
 	for i := range extra {
-		if !extra[i].Timestamp.Before(cut) {
+		if !extra[i].Timestamp.Before(cut) { // safety net: resolveWideMinutes returns only minutes at or after cut
 			trades = append(trades, extra[i])
 		}
 	}
@@ -176,13 +186,35 @@ func foldMinuteSums(sums []timescale.TradeMinuteSum) []*minuteRow {
 	return out
 }
 
-// resolveWideMinutes marks rows whose spread exceeds the outlier band and re-reads those minutes raw, newest first, within
-// [minuteRawBudget]. It returns the raw rows read and cut, the start of coverage: the zero time when every wide minute was resolved,
-// else the end of the newest one that was not.
-func (o *Orchestrator) resolveWideMinutes(ctx context.Context, fetch canonical.Pair, rows []*minuteRow) (cut time.Time, extra []canonical.Trade) {
+// resolveWideMinutes marks rows whose spread exceeds the outlier band and re-reads those minutes raw, newest first, packing as many
+// minutes into each read as their summed counts fit under the row cap, within [minuteRawBudget] reads. A capped read resolves the
+// minutes after its oldest row's and the next resumes at that one. It returns the raw rows of the resolved minutes and cut, the start
+// of coverage: the zero time when every wide minute was resolved, else the end of the newest one that was not.
+func (o *Orchestrator) resolveWideMinutes(
+	ctx context.Context, ss TradeSumsStore, fetch canonical.Pair, rows []*minuteRow,
+) (cut time.Time, extra []canonical.Trade) {
+	buckets, counts := o.markWideMinutes(rows)
+	limit := min(o.cfg.MaxTradesPerWindow, timescale.MaxTradesInRangeLimit)
+	for reads := 0; len(buckets) > 0; reads++ {
+		if reads >= minuteRawBudget {
+			return buckets[0].Add(time.Minute), extra
+		}
+		k, t, err := readWideMinutes(ctx, ss, fetch, buckets, counts, limit)
+		extra = append(extra, t...)
+		if err != nil || k == 0 {
+			return buckets[0].Add(time.Minute), extra
+		}
+		buckets = buckets[k:]
+	}
+	return time.Time{}, extra
+}
+
+// markWideMinutes flags every row of a minute some VWAP source of which spreads wider than the outlier band, since the raw re-read
+// covers every source of the minute, and returns those minutes newest first with their summed trade counts.
+func (o *Orchestrator) markWideMinutes(rows []*minuteRow) ([]time.Time, map[time.Time]int64) {
 	band := o.minuteSpreadBand()
 	if band == nil {
-		return time.Time{}, nil
+		return nil, nil
 	}
 	wide := map[time.Time]bool{}
 	for _, r := range rows {
@@ -190,26 +222,53 @@ func (o *Orchestrator) resolveWideMinutes(ctx context.Context, fetch canonical.P
 			wide[r.bucket] = true
 		}
 	}
-	// The raw re-read covers every source of the minute, so all its rows give way.
+	counts := make(map[time.Time]int64, len(wide))
 	for _, r := range rows {
 		r.wide = wide[r.bucket]
+		if r.wide {
+			counts[r.bucket] += r.count
+		}
 	}
 	buckets := make([]time.Time, 0, len(wide))
 	for b := range wide {
 		buckets = append(buckets, b)
 	}
 	sort.Slice(buckets, func(i, j int) bool { return buckets[i].After(buckets[j]) })
-	for i, b := range buckets {
-		if i >= minuteRawBudget {
-			return b.Add(time.Minute), extra
-		}
-		t, err := o.store.TradesInRange(ctx, fetch, b, b.Add(time.Minute), o.cfg.MaxTradesPerWindow)
-		if err != nil || len(t) >= o.cfg.MaxTradesPerWindow {
-			return b.Add(time.Minute), extra
-		}
-		extra = append(extra, t...)
+	return buckets, counts
+}
+
+// readWideMinutes reads raw, in one query, the newest of buckets whose summed counts fit under limit (at least one). It returns how
+// many leading buckets came back whole and their rows; a capped read is whole only after its oldest row's minute.
+func readWideMinutes(
+	ctx context.Context, ss TradeSumsStore, fetch canonical.Pair, buckets []time.Time, counts map[time.Time]int64, limit int,
+) (int, []canonical.Trade, error) {
+	if limit <= 0 {
+		return 0, nil, nil
 	}
-	return time.Time{}, extra
+	n, sum := 1, counts[buckets[0]]
+	for n < len(buckets) && sum+counts[buckets[n]] < int64(limit) {
+		sum += counts[buckets[n]]
+		n++
+	}
+	t, err := ss.TradesInMinutes(ctx, fetch, buckets[:n], limit)
+	if err != nil {
+		return 0, nil, err
+	}
+	if len(t) < limit {
+		return n, t, nil
+	}
+	partial := t[0].Timestamp.Truncate(time.Minute)
+	whole := make([]canonical.Trade, 0, len(t))
+	for i := range t {
+		if !t[i].Timestamp.Before(partial.Add(time.Minute)) {
+			whole = append(whole, t[i])
+		}
+	}
+	k := 0
+	for k < n && buckets[k].After(partial) {
+		k++
+	}
+	return k, whole, nil
 }
 
 // minuteSpreadBand is the largest r·(r−1), r = max/min price, at which every print of a minute scores within sigma of any centre inside

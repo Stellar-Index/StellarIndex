@@ -89,7 +89,8 @@ fixtures cover the pool, factory, backstop, emitter and both backfill roles.
 
 ### Emissions history
 
-`GET /v1/lending/pools/{pool}/emissions/history` serves BLNT emissions per bucket in BLNT base units, with the
+`GET /v1/lending/pools/{pool}/emissions/history` serves BLNT emissions per bucket in BLNT base units and USD (at BLNT's price; a backstop tier's `usd` values
+`blnt_amount` only), with the
 streams and rules described in [Blend's section](blend.md#emissions-history-get-v1lendingpoolspoolemissionshistory).
 BLNT differs in three ways:
 

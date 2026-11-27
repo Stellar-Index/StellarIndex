@@ -57,7 +57,8 @@ const (
 	emisStreamWindow          = "window"
 )
 
-// LendingEmissionsHistoryView is the GET /v1/lending/pools/{pool}/emissions/history body, in emission-token base units.
+// LendingEmissionsHistoryView is the GET /v1/lending/pools/{pool}/emissions/history body: emission-token base units, each
+// with its USD.
 // The four streams are the same tokens at different stages (scheduled, allocated, claimed) and are never added together.
 type LendingEmissionsHistoryView struct {
 	Pool     string `json:"pool"`
@@ -71,6 +72,7 @@ type LendingEmissionsHistoryView struct {
 	EmissionToken         *string                       `json:"emission_token"`
 	EmissionTokenDecimals *int                          `json:"emission_token_decimals"`
 	EPSDecimals           int                           `json:"eps_decimals"`
+	PriceMaxAgeHours      int                           `json:"price_max_age_hours"`
 	LowerBound            bool                          `json:"lower_bound"`
 	Excluded              []LendingEmissionsExclusion   `json:"excluded"`
 	Reserves              LendingEmissionScheduleView   `json:"reserves"`
@@ -113,14 +115,16 @@ type LendingEmissionScheduleLine struct {
 	// Approximate: two transactions in one ledger updated this id and their apply order is not recorded.
 	Approximate       bool                       `json:"approximate"`
 	ApproximateReason *string                    `json:"approximate_reason"`
+	USD               LendingEmissionUSD         `json:"usd"`
 	Points            []LendingEmissionTokensPnt `json:"points"`
 }
 
 // LendingEmissionTokensPnt is one bucket's scheduled base units; Partial marks a bucket the window or the lake tip cuts.
 type LendingEmissionTokensPnt struct {
-	T       WireTime `json:"t"`
-	Partial bool     `json:"partial"`
-	Tokens  string   `json:"tokens"`
+	T       WireTime           `json:"t"`
+	Partial bool               `json:"partial"`
+	Tokens  string             `json:"tokens"`
+	USD     LendingEmissionUSD `json:"usd"`
 }
 
 // LendingClaimSums is claims and the emission token claimed; Claimers is distinct within a bucket, so totals carry none.
@@ -135,12 +139,14 @@ type LendingClaimsPoint struct {
 	Partial  bool     `json:"partial"`
 	Claimers int64    `json:"claimers"`
 	LendingClaimSums
+	USD LendingEmissionUSD `json:"usd"`
 }
 
 // LendingPoolClaimsHistoryView is the pool's claim events; ByReserve holds only claims naming exactly one token id.
 type LendingPoolClaimsHistoryView struct {
 	lendingEmissionStreamHead
 	Totals    LendingClaimSums           `json:"totals"`
+	USD       LendingEmissionUSD         `json:"usd"`
 	Points    []LendingClaimsPoint       `json:"points"`
 	ByReserve LendingClaimsByReserveView `json:"by_reserve"`
 }
@@ -157,16 +163,18 @@ type LendingClaimsReserveLine struct {
 	Asset   *string              `json:"asset"`
 	Side    string               `json:"side"`
 	Totals  LendingClaimSums     `json:"totals"`
+	USD     LendingEmissionUSD   `json:"usd"`
 	Points  []LendingClaimsPoint `json:"points"`
 }
 
 // LendingBackstopAllocView is the backstop's gulp_emissions naming the pool: what the backstop kept and passed to the pool.
 type LendingBackstopAllocView struct {
 	lendingEmissionStreamHead
-	TierSplitAvailable bool                    `json:"tier_split_available"`
-	TierSplitReason    *string                 `json:"tier_split_reason"`
-	Totals             LendingAllocSums        `json:"totals"`
-	Points             []LendingAllocPointView `json:"points"`
+	TierSplitAvailable bool                     `json:"tier_split_available"`
+	TierSplitReason    *string                  `json:"tier_split_reason"`
+	Totals             LendingAllocSums         `json:"totals"`
+	USD                *LendingEmissionAllocUSD `json:"usd"` // null when the stream is unavailable
+	Points             []LendingAllocPointView  `json:"points"`
 }
 
 // LendingAllocSums are emission-token base units.
@@ -181,6 +189,7 @@ type LendingAllocPointView struct {
 	T       WireTime `json:"t"`
 	Partial bool     `json:"partial"`
 	LendingAllocSums
+	USD LendingEmissionAllocUSD `json:"usd"`
 }
 
 // LendingBackstopClaimsHistView is BLNT's backstop claims per tier; Units names each amount's unit.
@@ -211,8 +220,10 @@ type LendingBackstopClaimSums struct {
 
 // LendingBackstopClaimTierHis is one tier's claims.
 type LendingBackstopClaimTierHis struct {
-	Tier   string                       `json:"tier"`
-	Totals LendingBackstopClaimSums     `json:"totals"`
+	Tier   string                   `json:"tier"`
+	Totals LendingBackstopClaimSums `json:"totals"`
+	// USD values blnt_amount only: lp_amount and shares are not the emission token.
+	USD    LendingEmissionUSD           `json:"usd"`
 	Points []LendingBackstopClaimPntHis `json:"points"`
 }
 
@@ -222,6 +233,7 @@ type LendingBackstopClaimPntHis struct {
 	Partial  bool     `json:"partial"`
 	Claimers int64    `json:"claimers"`
 	LendingBackstopClaimSums
+	USD LendingEmissionUSD `json:"usd"`
 }
 
 // emissionsHistoryWindow is the request's bucket grid: buckets of width from from, served up to end (≤ to).
@@ -263,14 +275,24 @@ func (s *Server) handleLendingPoolEmissionsHistory(w http.ResponseWriter, r *htt
 		return
 	}
 	b := s.emissionsWriterBounds(ctx, win, isBLNT, isV1, &flags)
+	token := ""
+	if view.EmissionToken != nil {
+		token = *view.EmissionToken
+	}
+	_, usdReason := s.emissionTokenIdentity(protocol, token)
 	hq := timescale.EmissionHistoryQuery{
 		From: win.from, To: b.pool.end, BackstopTo: b.backstop.end, Daily: q.Daily,
-		Schedule: !isV1, BackstopAlloc: !isV1, BackstopClaim: isBLNT,
+		Schedule: !isV1, BackstopAlloc: !isV1, BackstopClaim: isBLNT, Hours: q.Daily && usdReason == "",
 	}
 	h, err := hr.LendingEmissionsHistory(ctx, pool, isBLNT, hq)
 	if errors.Is(err, errNoEmissionsHistoryReader) {
 		writeLendingHistoryNotReady(w, r)
 		return
+	}
+	hoursFailed := errors.Is(err, timescale.ErrEmissionHoursRead)
+	if hoursFailed {
+		s.logger.Warn("lending emissions history: hourly read failed; usd withheld", "pool", pool, "err", err)
+		flags.Degraded, err = true, nil
 	}
 	if err != nil {
 		s.writeLendingHistoryError(ctx, w, r, "LendingEmissionsHistory", pool, err)
@@ -280,6 +302,10 @@ func (s *Server) handleLendingPoolEmissionsHistory(w http.ResponseWriter, r *htt
 	b.apply(&view)
 	s.applyEmissionsVerdicts(ctx, &view, isBLNT, &flags)
 	finishEmissionsHistory(&view)
+	if err := s.emissionsHistoryUSD(ctx, &view, h, b, usdReason, hoursFailed, &flags); err != nil {
+		s.writeLendingHistoryError(ctx, w, r, "LendingEmissionsHistory", pool, err)
+		return
+	}
 	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(time.Now().UTC()), Flags: flags})
 }
 

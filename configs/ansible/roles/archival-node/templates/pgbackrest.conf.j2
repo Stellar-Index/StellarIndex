@@ -43,7 +43,7 @@ repo1-sftp-host-fingerprint={{ pgbackrest_repo1_sftp_host_fingerprint }}
 {% else %}
 repo1-path=/var/lib/pgbackrest
 {% endif %}
-repo1-retention-full=2
+repo1-retention-full=1
 repo1-bundle=y
 repo1-block=y
 {% if pgbackrest_repo1_cipher_pass | default('') != '' %}

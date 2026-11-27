@@ -18,8 +18,11 @@ type emissionSegment struct {
 	exp   time.Time
 }
 
+// scheduleScale is the decimal scale of eps x nanoseconds over base units: eps_decimals + 9.
+const scheduleScale = clickhouse.EmissionEPSDecimals + 9
+
 // scheduleDenom turns eps x nanoseconds into base units: 10^eps_decimals x 10^9.
-var scheduleDenom = new(big.Int).Exp(big.NewInt(10), big.NewInt(clickhouse.EmissionEPSDecimals+9), nil)
+var scheduleDenom = new(big.Int).Exp(big.NewInt(10), big.NewInt(scheduleScale), nil)
 
 // scheduledTokens is Σ eps_i x |[t_i, min(t_{i+1}, exp_i)) ∩ [from, to)| / 10^7: the emission-token base units the
 // timeline (sorted by start) announces over [from, to), exact.
@@ -55,6 +58,16 @@ func scheduledTokensString(r *big.Rat) string {
 // scheduledBuckets is scheduledTokens for every bucket [from + i*width, …) of [from, end) in one sweep: each segment's
 // active span is split over only the buckets it touches, so the cost is buckets + segments, not their product.
 func scheduledBuckets(timeline []emissionSegment, from, end time.Time, width time.Duration) []*big.Rat {
+	units := scheduledBucketUnits(timeline, from, end, width)
+	out := make([]*big.Rat, len(units))
+	for i, u := range units {
+		out[i] = new(big.Rat).SetFrac(u, scheduleDenom)
+	}
+	return out
+}
+
+// scheduledBucketUnits is scheduledBuckets before the division: eps x nanoseconds, base units x 10^scheduleScale.
+func scheduledBucketUnits(timeline []emissionSegment, from, end time.Time, width time.Duration) []*big.Int {
 	if !end.After(from) {
 		return nil
 	}
@@ -75,11 +88,7 @@ func scheduledBuckets(timeline []emissionSegment, from, end time.Time, width tim
 			lo = bEnd
 		}
 	}
-	out := make([]*big.Rat, n)
-	for i, u := range units {
-		out[i] = new(big.Rat).SetFrac(u, scheduleDenom)
-	}
-	return out
+	return units
 }
 
 // emissionTimeline is one token id's updates in apply order; ambiguous when the order within a ledger is not recorded.
