@@ -51,6 +51,8 @@ PROBE_FAILED=0
   echo '# TYPE stellarindex_data_freshness_age_seconds gauge'
   echo '# HELP stellarindex_data_freshness_stale 1 when a domain/source is staler than its expected cadence.'
   echo '# TYPE stellarindex_data_freshness_stale gauge'
+  echo '# HELP stellarindex_data_freshness_empty 1 when a domain/source has no rows at all; it then reads stale only if the chain is older than its threshold (young chain: nothing can be overdue).'
+  echo '# TYPE stellarindex_data_freshness_empty gauge'
   echo '# HELP stellarindex_completeness_incomplete 1 when a source latest ADR-0033 verdict is complete=false (real served<>lake gap). Excludes the system recognition row — see stellarindex_recognition_unattributed_shapes.'
   echo '# TYPE stellarindex_completeness_incomplete gauge'
   echo '# HELP stellarindex_recognition_unattributed_shapes UNKNOWN-PROTOCOL events: distinct (contract, topic) shapes in the lake on contracts NO source owns. Foreign protocols we do not index. Expected large and permanently growing as Stellar grows — 23866 as of 2026-09-01 against ~30/day organic drift. A coverage-ambition number for prioritising which decoders to build next, NOT an error condition. Deliberately NOT alerted on: see stellarindex_recognition_ok for the signal that means a real defect.'
@@ -71,6 +73,21 @@ PROBE_FAILED=0
   echo '# TYPE stellarindex_data_freshness_unparseable_lines gauge'
 } > "$TMP"
 
+# Chain age: seconds since the host's earliest ingested ledger closed (the lake's lowest
+# ledger_seq). A source with NO rows is overdue only if the chain is older than that source's
+# threshold; on a younger chain (a reset test net) nothing can be late yet. NULL when
+# unmeasurable (ClickHouse down, lake empty): an empty source then reads stale, the fail-safe.
+CHAIN_AGE=""
+if ! CHAIN_AGE=$(curl -sS -f --max-time 15 --netrc-file "$CH_NETRC" http://localhost:8123/ --data-binary \
+  "SELECT toUInt64(dateDiff('second', close_time, now())) FROM stellar.ledgers WHERE ledger_seq = (SELECT min(ledger_seq) FROM stellar.ledgers) LIMIT 1" | tr -d '[:space:]'); then
+  echo "data-freshness: ClickHouse chain-age probe failed — an empty source reads stale this tick" >&2
+  PROBE_FAILED=$((PROBE_FAILED + 1))
+  CHAIN_AGE=""
+fi
+case "$CHAIN_AGE" in
+  '' | *[!0-9]*) CHAIN_AGE=NULL ;;
+esac
+
 # (domain, source, age_seconds, threshold_seconds) per domain. Thresholds are a generous
 # multiple of each domain's natural cadence so only a real stall fires.
 #
@@ -86,7 +103,7 @@ PROBE_FAILED=0
 # means deleting its rows or excluding it here in the same change.
 #
 # shellcheck disable=SC2129  # the appends below are separate on purpose: each is a distinct query with its own reasoning between them, and a single `{ … } >> $TMP` would bury that
-if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -v ON_ERROR_STOP=1 -tA -F$'\t' >> "$TMP" <<'SQL'
+if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -v ON_ERROR_STOP=1 -v chain_age="$CHAIN_AGE" -tA -F$'\t' >> "$TMP" <<'SQL'
 WITH f AS (
   -- Crypto oracles (reflector/redstone/band/coingecko) update every
   -- few minutes → 3h threshold. ECB is the exception: a DAILY FX reference
@@ -175,12 +192,20 @@ WITH f AS (
 -- the old form rendered `... ` with an empty value field — a line the
 -- publication validator withholds, so the verdict went absent and every
 -- `== 1` alert over it stayed quiet. Unknown is NOT healthy: no observation
--- ever is the most stale a domain can be, so it reads 1.
+-- ever is the most stale a domain can be, so it reads 1 — EXCEPT while the chain is younger
+-- than the threshold (:chain_age, seconds; NULL when unmeasurable, which keeps it stale):
+-- nothing can be overdue yet, so it reads 0 and `_empty` says why.
 SELECT 'stellarindex_data_freshness_age_seconds{domain="'||domain||'",source="'||src||'"} '||round(age)::text
   FROM f WHERE age IS NOT NULL
 UNION ALL
-SELECT 'stellarindex_data_freshness_stale{domain="'||domain||'",source="'||src||'"} '||(COALESCE(age, thr + 1) > thr)::int::text
-  FROM f;
+SELECT 'stellarindex_data_freshness_stale{domain="'||domain||'",source="'||src||'"} '
+       ||(CASE WHEN age IS NOT NULL THEN age > thr
+               WHEN (:chain_age)::numeric IS NOT NULL AND (:chain_age)::numeric <= thr THEN false
+               ELSE true END)::int::text
+  FROM f
+UNION ALL
+SELECT 'stellarindex_data_freshness_empty{domain="'||domain||'",source="'||src||'"} 1'
+  FROM f WHERE age IS NULL;
 SQL
 then
   echo "data-freshness: per-domain oracle/fx/supply/cursor freshness query failed — its gauges skipped this tick, others unaffected" >&2
@@ -317,16 +342,27 @@ fi
 # (exempt from `set -e`) and `-f` turns an HTTP 5xx into a failure instead of a metric value.
 SF_AGE=""
 if ! SF_AGE=$(curl -sS -f --max-time 15 --netrc-file "$CH_NETRC" http://localhost:8123/ --data-binary \
-  "SELECT toUInt64(dateDiff('second', max(ingested_at), now())) FROM stellar.supply_flows" | tr -d '[:space:]'); then
+  "SELECT if(count() = 0, 'empty', toString(dateDiff('second', max(ingested_at), now()))) FROM stellar.supply_flows" | tr -d '[:space:]'); then
   echo "data-freshness: ClickHouse supply_flows probe failed — sep41_supply gauges skipped this tick" >&2
   PROBE_FAILED=$((PROBE_FAILED + 1))
   SF_AGE=""
 fi
-# Digits only: ONE unparseable sample makes node_exporter reject the WHOLE file.
+# Digits (or the literal `empty`) only: ONE unparseable sample makes node_exporter reject the WHOLE file.
+SF_EMPTY=0
 case "$SF_AGE" in
+  empty) SF_EMPTY=1; SF_AGE="" ;;
   '' | *[!0-9]*) SF_AGE="" ;;
 esac
-if [ -n "$SF_AGE" ]; then
+if [ "$SF_EMPTY" -eq 1 ]; then
+  # No rows at all: overdue only if the chain is older than the 3600 s threshold (CHAIN_AGE is
+  # digits or NULL; unmeasurable stays stale).
+  case "${CHAIN_AGE:-NULL}" in
+    NULL) sf_stale=1 ;;
+    *) sf_stale=$([ "$CHAIN_AGE" -gt 3600 ] && echo 1 || echo 0) ;;
+  esac
+  printf 'stellarindex_data_freshness_stale{domain="sep41_supply",source="supply_flows"} %s\n' "$sf_stale" >> "$TMP"
+  printf 'stellarindex_data_freshness_empty{domain="sep41_supply",source="supply_flows"} 1\n' >> "$TMP"
+elif [ -n "$SF_AGE" ]; then
   printf 'stellarindex_data_freshness_age_seconds{domain="sep41_supply",source="supply_flows"} %s\n' "$SF_AGE" >> "$TMP"
   printf 'stellarindex_data_freshness_stale{domain="sep41_supply",source="supply_flows"} %s\n' \
     "$([ "$SF_AGE" -gt 3600 ] && echo 1 || echo 0)" >> "$TMP"
