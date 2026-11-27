@@ -31,7 +31,7 @@ function blocks(re: RegExp): string[] {
 }
 
 const scope = [
-  ...blocks(/^( {8})Lending(?:Revenue|BadDebt)\w*: \{$/),
+  ...blocks(/^( {8})Lending(?:Protocol)?(?:Revenue|BadDebt)\w*: \{$/),
   ...blocks(/^( {4})getLendingPool(?:Revenue|BadDebt): \{$/),
 ];
 
@@ -54,6 +54,8 @@ describe('revenue and bad-debt reason text', () => {
       'as_of_mismatch',
       'not_derivable',
       'backstop_role_unverified',
+      'pool_list_read_failed',
+      'all_excluded',
     ])
       expect(enums).toContain(r);
   });

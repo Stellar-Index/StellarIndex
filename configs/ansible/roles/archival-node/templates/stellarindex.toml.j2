@@ -552,6 +552,12 @@ reserve_balances_max_age = "{{ stellarindex_reserve_balances_max_age }}"
 [divergence.supply]
 enabled = {{ 'true' if stellarindex_divergence_supply_enabled | default(false) | bool else 'false' }}
 
+# Lending revenue USD daily rollup in stellarindex-api (migration 0239).
+# Off unless the inventory sets stellarindex_lending_revenue_rollup_enabled:
+# true, after its change-detection query is timed on the host.
+[lending_revenue_rollup]
+enabled = {{ 'true' if stellarindex_lending_revenue_rollup_enabled | default(false) | bool else 'false' }}
+
 # Phase 2 freeze threshold (ADR-0019).
 [anomaly.phase2]
 # ADR-0019's 5.0. Firing is safe because the freeze lifecycle

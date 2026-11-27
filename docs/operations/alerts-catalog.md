@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 75 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 339 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 341 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -106,6 +106,8 @@ its first link must be the rule's `runbook_url` page
 | `stellarindex_lending_interest_proof_failed` | `max(lending_interest_proof_failed)`, set by `ch-entry-history -lending-only -prove -interest` | > 0, `for: 0m` (a stored interest row disagrees with a fresh fold of the lake) | ticket | [ops-job-stalled](runbooks/ops-job-stalled.md#lending-interest-proof-failed) |
 | `stellarindex_lending_interest_proof_stale` | `time() - ops_job_last_finish_unix` of `ops_job="ch-entry-history-lending-interest-prove"` (daily, last week) or `…-prove-full` (weekly, full range); silent where the proof never ran | > 2 days (daily) or > 8 days (full) for 1 h (proof timer off or hung) | ticket | [ops-job-stalled](runbooks/ops-job-stalled.md#lending-interest-proof-stale) |
 | `stellarindex_lending_interest_unexplained_versions` | `max by (ops_job) (lending_interest_unexplained_versions)`, set by a whole-range `ch-entry-history -lending-only -prove -interest`; silent where the proof never ran | > 0 for 1 h (a stored interest version moved outside accrual with no event that explains it) | ticket | [ops-job-stalled](runbooks/ops-job-stalled.md#lending-interest-unexplained-versions) |
+| `stellarindex_lending_revenue_rollup_stalled` | `time() - max(last_success_unix or started_unix)` of the API's lending revenue rollup across instances; silent where `started_unix` is 0 (worker off) | > 30 min for 5 min (no instance finished a cycle holding the lock since its last success or start) | ticket | [ops-job-stalled](runbooks/ops-job-stalled.md#lending-revenue-rollup-stalled) |
+| `stellarindex_lending_revenue_rollup_sweep_mismatch` | `sum(increase(lending_revenue_rollup_sweep_mismatches_total[1d]))` | > 0 (the daily sweep found a stored USD day a fresh valuation does not reproduce) | ticket | [ops-job-stalled](runbooks/ops-job-stalled.md#lending-revenue-rollup-sweep-mismatch) |
 | `stellarindex_projector_lag_high` | `projector_lag_ledgers` unless a replay window is active | > 256 for 10 min (replay rewinds covered by `projector_replay_stalled`) | ticket | [projector-lag](runbooks/projector.md#stellarindex_projector_lag_high) |
 | `stellarindex_projector_error_rate_high` | `rate(projector_runs_total{outcome="error"}[15m])` | > 0.05/s for 15 min | ticket | [projector-lag](runbooks/projector.md#stellarindex_projector_error_rate_high) |
 | `stellarindex_projector_row_quarantined` | `increase(projector_events_decoded_total{outcome="sink_quarantined"}[15m])` | > 0, `for: 0m` (poison row skipped) | ticket | [projector-row-quarantined](runbooks/projector.md#stellarindex_projector_row_quarantined) |

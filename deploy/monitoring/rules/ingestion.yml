@@ -1390,6 +1390,51 @@ groups:
             that states the move exactly. Those hours' interest totals are not
             the reserve's whole movement; the runbook's query lists the rows.
 
+      # The lending revenue rollup (stellarindex-api, [lending_revenue_rollup] enabled) has not finished a cycle holding
+      # its lock for over three cycles, or has never finished one since it started. Only the lock holder records a
+      # success, so both gauges are max()ed across API instances: a replica that never holds the lock cannot fire it,
+      # and a host with the worker off exports started_unix 0 and stays quiet.
+      - alert: stellarindex_lending_revenue_rollup_stalled
+        expr: |
+          (
+            time() - max(
+              label_replace(stellarindex_lending_revenue_rollup_last_success_unix, "since", "success", "", "")
+              or label_replace(stellarindex_lending_revenue_rollup_started_unix, "since", "start", "", "")
+            )
+          ) > 1800
+          and on() max(stellarindex_lending_revenue_rollup_started_unix) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#lending-revenue-rollup-stalled
+          summary: "lending revenue rollup has not finished a cycle in over 30 minutes"
+          description: |
+            No API instance has finished a lending revenue rollup cycle holding
+            its lock in over 30 minutes since its last success or start.
+            lending_revenue_usd_daily stops advancing and the
+            /v1/lending/protocols revenue windows fall behind as lower bounds.
+
+      # The daily sweep re-valued a stored day from the same derive at the same revisions and got other USD: the
+      # stored value was wrong (and has been rewritten). Any increase over one sweep period (a UTC day) tickets.
+      - alert: stellarindex_lending_revenue_rollup_sweep_mismatch
+        expr: sum(increase(stellarindex_lending_revenue_rollup_sweep_mismatches_total[1d])) > 0
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#lending-revenue-rollup-sweep-mismatch
+          summary: "lending revenue rollup's sweep found stored USD that a fresh valuation does not reproduce"
+          description: |
+            The rollup's daily sweep found stored lending revenue USD days
+            in the last day that a fresh day walk valued differently
+            with nothing to explain it. Each was rewritten; the cause is a
+            valuer that is not deterministic, and served windows may have been
+            wrong until the rewrite.
+
       # Whole-transaction skip counters (tx_read_errors, tx_event_read_errors,
       # entry_meta_unsupported) plus evicted_keys_unreadable (a ledger's evictions): each
       # means events or an entry walk vanished, indistinguishable downstream from an

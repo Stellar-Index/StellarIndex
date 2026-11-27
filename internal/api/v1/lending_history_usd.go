@@ -159,25 +159,43 @@ func (u reserveUSDSeries) value(st clickhouse.BlendReserveState, bucket time.Tim
 // reserveUSDSeriesFor reads a reserve token's USD series for q through [Server.reservePriceUSD]'s identity and gates: the SAC
 // unwrap, the reserve-decimals scale check and the issuer scam check, then the chart's alias and stablecoin walk.
 func (s *Server) reserveUSDSeriesFor(ctx context.Context, assetC string, dec int, decKnown bool, q clickhouse.LendingHistoryQuery) reserveUSDSeries {
-	asset, reason, degraded := s.reserveUSDAsset(ctx, assetC, dec, decKnown)
+	return s.reserveUSDWalk(ctx, assetC, dec, decKnown, q, 0).series
+}
+
+// reserveUSDRead is a reserve's USD series and whether a read-time verdict (a flagged issuer, an operator withholding, a
+// thin latest market) refused it, as opposed to the price data or a read: series.reason is withheld then.
+type reserveUSDRead struct {
+	series  reserveUSDSeries
+	verdict bool
+}
+
+// reserveUSDWalk is [Server.reserveUSDSeriesFor] with its verdicts told apart; budget bounds the walk's reads once it
+// holds a series, zero meaning the request budget.
+func (s *Server) reserveUSDWalk(ctx context.Context, assetC string, dec int, decKnown bool, q clickhouse.LendingHistoryQuery, budget time.Duration) reserveUSDRead {
+	asset, reason, degraded := s.reserveUSDIdentity(ctx, assetC, dec, decKnown)
 	if reason != "" {
-		return reserveUSDSeries{reason: reason, degraded: degraded}
+		return reserveUSDRead{series: reserveUSDSeries{reason: reason, degraded: degraded}}
 	}
-	out := s.walkUSDSeries(ctx, asset, q)
-	if out.reason == backstopUSDUnpriced {
+	if flagged, unread := s.reserveIssuerFlagged(ctx, asset); unread {
+		return reserveUSDRead{series: reserveUSDSeries{reason: exclusionPriceReadFailed, degraded: true}}
+	} else if flagged {
+		return reserveUSDRead{series: reserveUSDSeries{reason: exclusionPriceWithheld}, verdict: true}
+	}
+	out := s.walkUSDRead(ctx, asset, q, budget)
+	if out.series.reason == backstopUSDUnpriced {
 		// A feed keyed by the wrapper's own contract id still prices it.
 		if raw, err := canonical.ParseAsset(assetC); err == nil && !raw.Equal(asset) {
-			if alt := s.walkUSDSeries(ctx, raw, q); alt.reason == "" {
+			if alt := s.walkUSDRead(ctx, raw, q, budget); alt.series.reason == "" {
 				out = alt
 			}
 		}
 	}
-	out.dec = dec
+	out.series.dec = dec
 	return out
 }
 
-// reserveUSDAsset is the asset a reserve's USD series is read under, or why it has none.
-func (s *Server) reserveUSDAsset(ctx context.Context, assetC string, dec int, decKnown bool) (asset canonical.Asset, reason string, degraded bool) {
+// reserveUSDIdentity is the asset a reserve's USD series is read under, or why the price data gives it none.
+func (s *Server) reserveUSDIdentity(ctx context.Context, assetC string, dec int, decKnown bool) (asset canonical.Asset, reason string, degraded bool) {
 	if !decKnown {
 		return canonical.Asset{}, backstopUSDDecimals, false
 	}
@@ -191,27 +209,25 @@ func (s *Server) reserveUSDAsset(ctx context.Context, assetC string, dec int, de
 		obs.NonstandardDecimalsLockstepMismatchTotal.WithLabelValues("lending_history", "").Inc()
 		return asset, backstopUSDScaleMismatch, false
 	}
-	if flagged, unread := s.reserveIssuerFlagged(ctx, asset); unread {
-		return asset, exclusionPriceReadFailed, true
-	} else if flagged {
-		return asset, exclusionPriceWithheld, false
-	}
 	return asset, "", false
 }
 
-// walkUSDSeries is one bounded read of asset's USD series: the window plus the price-age bound before it, ending at the bucket
+// walkUSDRead is one bounded read of asset's USD series: the window plus the price-age bound before it, ending at the bucket
 // holding q.To.
-func (s *Server) walkUSDSeries(ctx context.Context, asset canonical.Asset, q clickhouse.LendingHistoryQuery) reserveUSDSeries {
+func (s *Server) walkUSDRead(ctx context.Context, asset canonical.Asset, q clickhouse.LendingHistoryQuery, budget time.Duration) reserveUSDRead {
 	pair, err := canonical.NewPair(asset, defaultPriceQuote)
 	if err != nil {
-		return reserveUSDSeries{reason: backstopUSDUnpriced}
+		return reserveUSDRead{series: reserveUSDSeries{reason: backstopUSDUnpriced}}
 	}
 	gran, step := lendingHistoryGran(q)
 	maxAge := lendingUSDPriceMaxAge(q)
 	read := boundedChartRead(s.chartVWAPReader(gran), q.To.Add(step))
-	pts, res, err := s.chartSeriesPoints(ctx, pair, chartWindow{from: q.From.Add(-maxAge), gran: gran}, read)
-	if reason, degraded := s.usdSeriesRefusal(ctx, pair, pts, res, err); reason != "" {
-		return reserveUSDSeries{reason: reason, degraded: degraded}
+	pts, res, err := s.chartSeriesPoints(ctx, pair, chartWindow{from: q.From.Add(-maxAge), gran: gran, budget: budget}, read)
+	if reason, degraded, verdict := usdWalkRefusal(pts, res, err); reason != "" {
+		return reserveUSDRead{series: reserveUSDSeries{reason: reason, degraded: degraded}, verdict: verdict}
+	}
+	if reason, degraded := s.usdLatestThinRefusal(ctx, pair, res); reason != "" {
+		return reserveUSDRead{series: reserveUSDSeries{reason: reason, degraded: degraded}, verdict: !degraded}
 	}
 	out := reserveUSDSeries{
 		points: pts, maxAge: maxAge, step: step, proxied: res.proxied, degraded: res.degraded, withheld: !res.withheldFrom.IsZero(),
@@ -227,22 +243,28 @@ func (s *Server) walkUSDSeries(ctx context.Context, asset canonical.Asset, q cli
 			out.stableAt[at.UTC()] = true
 		}
 	}
-	return out
+	return reserveUSDRead{series: out}
 }
 
-// usdSeriesRefusal is why a walked series values nothing: the walk's own refusals, then the market-cap chart's thin-book guard,
-// so history never values a token the live reserve page withholds. An unread input is degraded, not an operator verdict.
-func (s *Server) usdSeriesRefusal(ctx context.Context, pair canonical.Pair, pts []HistoryPoint, res chartWalkResult, err error) (string, bool) {
+// usdWalkRefusal is why a walked series values nothing; verdict marks an operator withholding, while an unread input is
+// degraded, not a verdict.
+func usdWalkRefusal(pts []HistoryPoint, res chartWalkResult, err error) (reason string, degraded, verdict bool) {
 	switch {
 	case priceWithheldUnread(err):
-		return exclusionPriceReadFailed, true
+		return exclusionPriceReadFailed, true, false
 	case errors.Is(err, ErrPriceWithheld):
-		return exclusionPriceWithheld, false
+		return exclusionPriceWithheld, false, true
 	case err != nil:
-		return exclusionPriceReadFailed, true
+		return exclusionPriceReadFailed, true, false
 	case len(pts) == 0:
-		return backstopUSDUnpriced, res.degraded
+		return backstopUSDUnpriced, res.degraded, false
 	}
+	return "", false, false
+}
+
+// usdLatestThinRefusal is the market-cap chart's thin-book guard on a walked series, so history never values a token the
+// live reserve page withholds.
+func (s *Server) usdLatestThinRefusal(ctx context.Context, pair canonical.Pair, res chartWalkResult) (string, bool) {
 	thin, unmeasured := s.chartLatestThin(ctx, pair, res)
 	switch {
 	case thin:

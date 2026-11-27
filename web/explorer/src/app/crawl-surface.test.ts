@@ -126,6 +126,14 @@ describe('sitemap', () => {
     ).toEqual([]);
   });
 
+  it('lists the lending protocol pages as their static routes', async () => {
+    const paths = await sitemapPaths();
+    for (const p of ['/lending/blend/', '/lending/blnt/']) {
+      expect(paths).toContain(p);
+      expect(routeFor(p)).toBe(p.slice(0, -1));
+    }
+  });
+
   // routeFor returning null means no page.tsx claims the path.
   it('names a real page for every entry', async () => {
     const unrouted = [
