@@ -17994,7 +17994,7 @@ components:
         lower_bound: { type: boolean, description: "Some amount is left out: an unpriced hour, or (reserve and pool) a base-unit exclusion." }
         usd_reason:
           type: [string, "null"]
-          description: "Why nothing is valued. `amounts_excluded`: nothing was summed in base units (see `excluded`). `no_price_within_bound` (bucket, reserve) and `price_missing` (pool): no hour carrying an amount had a price. Otherwise the price series' refusal: `unpriced` (no USD market), `decimals_unknown`, `price_scale_mismatch`, `withheld` (a scam-flagged issuer, or a thin market: display-only prices value nothing here, as on `/history`), `price_read_failed`."
+          description: "Why nothing is valued. `amounts_excluded`: nothing was summed in base units (see `excluded`). `no_price_within_bound` (bucket, reserve) and `price_missing` (pool): no hour carrying an amount had a price. Otherwise the price series' refusal: `unpriced` (no USD market), `decimals_unknown` (the token's decimals were read and none is declared), `price_scale_mismatch`, `withheld` (a scam-flagged issuer, or a thin market: display-only prices value nothing here, as on `/history`), `price_read_failed` (a price, issuer or decimals read failed: retry; the response is not cached)."
           enum: [amounts_excluded, no_price_within_bound, price_missing, unpriced, decimals_unknown, price_scale_mismatch, withheld, price_read_failed, null]
       required: [interest_accrued_usd, supplier_share_usd, supplier_credited_usd, backstop_take_usd, protocol_fee_usd,
         backstop_drawn_usd, default_loss_usd, priced_hours, unpriced_hours, price_carried_hours, lower_bound, usd_reason]

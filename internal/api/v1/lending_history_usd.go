@@ -158,8 +158,8 @@ func (u reserveUSDSeries) value(st clickhouse.BlendReserveState, bucket time.Tim
 
 // reserveUSDSeriesFor reads a reserve token's USD series for q through [Server.reservePriceUSD]'s identity and gates: the SAC
 // unwrap, the reserve-decimals scale check and the issuer scam check, then the chart's alias and stablecoin walk.
-func (s *Server) reserveUSDSeriesFor(ctx context.Context, assetC string, dec int, decKnown bool, q clickhouse.LendingHistoryQuery) reserveUSDSeries {
-	return s.reserveUSDWalk(ctx, assetC, dec, decKnown, q, 0).series
+func (s *Server) reserveUSDSeriesFor(ctx context.Context, assetC string, sc reserveScale, q clickhouse.LendingHistoryQuery) reserveUSDSeries {
+	return s.reserveUSDWalk(ctx, assetC, sc, q, 0).series
 }
 
 // reserveUSDRead is a reserve's USD series and whether a read-time verdict (a flagged issuer, an operator withholding, a
@@ -171,8 +171,8 @@ type reserveUSDRead struct {
 
 // reserveUSDWalk is [Server.reserveUSDSeriesFor] with its verdicts told apart; budget bounds the walk's reads once it
 // holds a series, zero meaning the request budget.
-func (s *Server) reserveUSDWalk(ctx context.Context, assetC string, dec int, decKnown bool, q clickhouse.LendingHistoryQuery, budget time.Duration) reserveUSDRead {
-	asset, reason, degraded := s.reserveUSDIdentity(ctx, assetC, dec, decKnown)
+func (s *Server) reserveUSDWalk(ctx context.Context, assetC string, sc reserveScale, q clickhouse.LendingHistoryQuery, budget time.Duration) reserveUSDRead {
+	asset, reason, degraded := s.reserveUSDIdentity(ctx, assetC, sc)
 	if reason != "" {
 		return reserveUSDRead{series: reserveUSDSeries{reason: reason, degraded: degraded}}
 	}
@@ -190,13 +190,14 @@ func (s *Server) reserveUSDWalk(ctx context.Context, assetC string, dec int, dec
 			}
 		}
 	}
-	out.series.dec = dec
+	out.series.dec = sc.dec
 	return out
 }
 
-// reserveUSDIdentity is the asset a reserve's USD series is read under, or why the price data gives it none.
-func (s *Server) reserveUSDIdentity(ctx context.Context, assetC string, dec int, decKnown bool) (asset canonical.Asset, reason string, degraded bool) {
-	if !decKnown {
+// reserveUSDIdentity is the asset a reserve's USD series is read under, or why the price data gives it none. An unread
+// scale is a failed read like a failed price read, never decimals_unknown.
+func (s *Server) reserveUSDIdentity(ctx context.Context, assetC string, sc reserveScale) (asset canonical.Asset, reason string, degraded bool) {
+	if !sc.known && !sc.unread {
 		return canonical.Asset{}, backstopUSDDecimals, false
 	}
 	asset, ok, unread := s.reserveTokenAsset(ctx, assetC)
@@ -205,7 +206,9 @@ func (s *Server) reserveUSDIdentity(ctx context.Context, assetC string, dec int,
 		return asset, exclusionPriceReadFailed, true
 	case !ok:
 		return asset, backstopUSDUnpriced, false
-	case aggregate.ResolveDecimals(s.NonstandardDecimals, asset) != dec:
+	case sc.unread:
+		return asset, exclusionPriceReadFailed, true
+	case aggregate.ResolveDecimals(s.NonstandardDecimals, asset) != sc.dec:
 		obs.NonstandardDecimalsLockstepMismatchTotal.WithLabelValues("lending_history", "").Inc()
 		return asset, backstopUSDScaleMismatch, false
 	}
@@ -310,8 +313,7 @@ func (s *Server) valueReserveHistory(ctx context.Context, view *LendingReserveHi
 	if !ok {
 		return f
 	}
-	dec, known := s.reserveDecimals(ctx, last)
-	u := s.reserveUSDSeriesFor(ctx, view.Asset, dec, known, q)
+	u := s.reserveUSDSeriesFor(ctx, view.Asset, s.reserveDecimals(ctx, last), q)
 	_, step := lendingHistoryGran(q)
 	for i, p := range h.Points {
 		at := p.CloseTime
@@ -429,8 +431,7 @@ func (s *Server) readPoolReserveSeries(ctx context.Context, hr lendingHistoryRea
 	}
 	rs := poolReserveSeries{asset: asset, hist: h}
 	if last, ok := lastReserveState(h.Points); ok {
-		dec, known := s.reserveDecimals(ctx, last)
-		rs.usd = s.reserveUSDSeriesFor(ctx, asset, dec, known, q)
+		rs.usd = s.reserveUSDSeriesFor(ctx, asset, s.reserveDecimals(ctx, last), q)
 	}
 	return rs
 }

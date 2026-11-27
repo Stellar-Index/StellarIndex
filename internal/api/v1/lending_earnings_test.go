@@ -229,7 +229,8 @@ func TestLendingAccountEarnings_HistoryUnverified(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			opts := v1.Options{Explorer: ex, Positions: pr, Lending: &stubLendingReader{assets: []string{asset}}}
+			// An undeclared scale, read: an unwired reader is an unread scale, which degrades the response by itself.
+			opts := v1.Options{Explorer: ex, Positions: pr, Lending: &stubLendingReader{assets: []string{asset}}, TokenDecimals: &lockstepDecStub{}}
 			if tc.reader != nil {
 				opts.CompletenessReader = tc.reader
 			}

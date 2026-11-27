@@ -271,10 +271,7 @@ func (s *Server) handleLendingReserveHistory(w http.ResponseWriter, r *http.Requ
 	}
 	view := reserveHistoryView(pool, asset, interval, q, h)
 	if last, ok := lastReserveState(h.Points); ok {
-		if dec, known := s.reserveDecimals(ctx, last); known {
-			d := uint32(dec) //nolint:gosec // a token's decimals exponent is small
-			view.Decimals = &d
-		}
+		view.Decimals = s.reserveDecimals(ctx, last).wire()
 	}
 	flags := s.valueReserveHistory(ctx, &view, h, q, s.lendingHistoryFlags(ctx, view.lendingHistoryCoverageView))
 	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(time.Now().UTC()), Flags: flags})

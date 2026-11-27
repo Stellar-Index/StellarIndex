@@ -7687,7 +7687,7 @@ export interface components {
             /** @description Some amount is left out: an unpriced hour, or (reserve and pool) a base-unit exclusion. */
             lower_bound: boolean;
             /**
-             * @description Why nothing is valued. `amounts_excluded`: nothing was summed in base units (see `excluded`). `no_price_within_bound` (bucket, reserve) and `price_missing` (pool): no hour carrying an amount had a price. Otherwise the price series' refusal: `unpriced` (no USD market), `decimals_unknown`, `price_scale_mismatch`, `withheld` (a scam-flagged issuer, or a thin market: display-only prices value nothing here, as on `/history`), `price_read_failed`.
+             * @description Why nothing is valued. `amounts_excluded`: nothing was summed in base units (see `excluded`). `no_price_within_bound` (bucket, reserve) and `price_missing` (pool): no hour carrying an amount had a price. Otherwise the price series' refusal: `unpriced` (no USD market), `decimals_unknown` (the token's decimals were read and none is declared), `price_scale_mismatch`, `withheld` (a scam-flagged issuer, or a thin market: display-only prices value nothing here, as on `/history`), `price_read_failed` (a price, issuer or decimals read failed: retry; the response is not cached).
              * @enum {string|null}
              */
             usd_reason: "amounts_excluded" | "no_price_within_bound" | "price_missing" | "unpriced" | "decimals_unknown" | "price_scale_mismatch" | "withheld" | "price_read_failed" | null;

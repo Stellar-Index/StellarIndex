@@ -189,8 +189,9 @@ func revenueValuedSpan(res clickhouse.LendingRevenueReserve) (first, last time.T
 }
 
 // valueRevenue reads each reserve's hourly USD series over only the hours it has amounts in (the walk adds the price-age
-// look-back before the first) and values the view with it; a reserve with nothing to value reads no prices.
-func (s *Server) valueRevenue(ctx context.Context, v *LendingRevenueView, rev clickhouse.LendingRevenue, f Flags) Flags {
+// look-back before the first) and values the view with it; a reserve with nothing to value reads no prices. scales are the
+// reserves' decimals, by index.
+func (s *Server) valueRevenue(ctx context.Context, v *LendingRevenueView, rev clickhouse.LendingRevenue, scales []reserveScale, f Flags) Flags {
 	series := make([]reserveUSDSeries, len(v.Reserves))
 	read := make([]bool, len(v.Reserves))
 	forEachBounded(s.logger, len(v.Reserves), readFanoutConcurrency, func(i int) {
@@ -199,13 +200,9 @@ func (s *Server) valueRevenue(ctx context.Context, v *LendingRevenueView, rev cl
 		if rv.Totals == nil || !has {
 			return
 		}
-		dec, known := 0, rv.Decimals != nil
-		if known {
-			dec = int(*rv.Decimals)
-		}
 		// To is the last hour itself: the walk's ceiling is one step past it.
 		q := clickhouse.LendingHistoryQuery{From: first, To: last}
-		series[i], read[i] = s.reserveUSDSeriesFor(ctx, rv.Asset, dec, known, q), true // distinct indices
+		series[i], read[i] = s.reserveUSDSeriesFor(ctx, rv.Asset, scales[i], q), true // distinct indices
 	})
 	for i := range series {
 		if read[i] {

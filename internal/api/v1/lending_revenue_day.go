@@ -37,8 +37,8 @@ type revenueDay = usdDay[revenueUSDLegRats, *revenueUSDLegRats]
 
 // revenueDayRead walks assetC's USD series over the UTC day starting at day (the walk adds the price-age look-back).
 func (s *Server) revenueDayRead(ctx context.Context, assetC string, day time.Time, budget time.Duration) reserveUSDRead {
-	dec, known := s.reserveDecimals(ctx, clickhouse.BlendReserveState{Asset: assetC})
-	return s.reserveUSDWalk(ctx, assetC, dec, known, clickhouse.LendingHistoryQuery{From: day, To: day.Add(23 * time.Hour)}, budget)
+	sc := s.reserveDecimals(ctx, clickhouse.BlendReserveState{Asset: assetC})
+	return s.reserveUSDWalk(ctx, assetC, sc, clickhouse.LendingHistoryQuery{From: day, To: day.Add(23 * time.Hour)}, budget)
 }
 
 // valueRevenueDay values one day's hour rows with read, through the same bucket valuer as /revenue. A day with nothing

@@ -160,7 +160,7 @@ func (s *Server) handleLendingPoolEmissions(w http.ResponseWriter, r *http.Reque
 	var flags Flags
 	if reason == backstopReasonV1 {
 		view.StorageUnavailableReason = strRef(emissionsReasonV1)
-	} else if err := s.fillEmissionStreams(ctx, &view, isBLNT); err != nil {
+	} else if err := s.fillEmissionStreams(ctx, &view, isBLNT, &flags); err != nil {
 		s.writeLendingLookupError(ctx, w, r, "LendingEmissions", pool, err)
 		return
 	} else if view.StorageAvailable {
@@ -181,7 +181,7 @@ func writeLendingPoolNotFound(w http.ResponseWriter, r *http.Request) {
 		"Lending pool not found", http.StatusNotFound, "no Blend or BLNT lending pool is known at this contract id")
 }
 
-func (s *Server) fillEmissionStreams(ctx context.Context, view *LendingEmissionsView, isBLNT bool) error {
+func (s *Server) fillEmissionStreams(ctx context.Context, view *LendingEmissionsView, isBLNT bool, flags *Flags) error {
 	er, ok := s.Explorer.(lendingEmissionsReader)
 	if s.Explorer == nil || !ok {
 		view.StorageUnavailableReason = strRef(emissionsReasonNoReader)
@@ -199,7 +199,11 @@ func (s *Server) fillEmissionStreams(ctx context.Context, view *LendingEmissions
 	asOf := time.Time(view.AsOfTime)
 	if st.EmissionToken != "" {
 		view.EmissionToken = strRef(st.EmissionToken)
-		if d, known, err := s.lakeTokenDecimals(ctx, st.EmissionToken); known && err == nil {
+		d, known, err := s.lakeTokenDecimals(ctx, st.EmissionToken)
+		switch {
+		case err != nil: // an unread scale is not an undeclared one: served null but never cached
+			flags.Degraded = true
+		case known:
 			view.EmissionTokenDecimals = &d
 		}
 	}
