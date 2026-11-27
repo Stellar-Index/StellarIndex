@@ -67,6 +67,7 @@ type LendingRevenueRollupStats struct {
 	ReserveDays, Written, Unchanged, Skipped int
 	Mismatches, Degraded, Refused            int
 	RetryDropped                             int // unvalued days past the retry cap, left to the fill and the sweep
+	PoolsSkipped                             int // pools the span read left out this cycle (lineage, tip or writer unplaced)
 }
 
 // LendingRevenueRollup keeps lending_revenue_usd_daily: one row per (pool, asset, UTC day), each hour valued at the price a

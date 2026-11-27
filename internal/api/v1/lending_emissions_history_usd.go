@@ -48,6 +48,7 @@ type LendingEmissionUSD struct {
 	// Approximate: the tokens valued are an approximate schedule's (BLNT's, rebuilt to dust); not a lower bound.
 	Approximate bool `json:"approximate,omitempty"`
 	lendingEmissionUSDCoverage
+	exact *big.Rat // AmountUSD before its one rounding, which the emissions rollup stores
 }
 
 // LendingEmissionAllocUSD is a backstop allocation's two shares valued as LendingEmissionUSD, null together.
@@ -55,6 +56,22 @@ type LendingEmissionAllocUSD struct {
 	BackstopEmissionsUSD *string `json:"backstop_emissions_usd"`
 	PoolEmissionsUSD     *string `json:"pool_emissions_usd"`
 	lendingEmissionUSDCoverage
+	exact [2]*big.Rat
+}
+
+// exactLegs is a sum's legs unrounded, zero for a leg no hour valued; nil when w served none.
+func exactLegs[L any, P usdLegs[L]](t *usdSum[L, P], w usdWire) []*big.Rat {
+	if w.legs == nil {
+		return nil
+	}
+	out := make([]*big.Rat, 0, len(w.legs))
+	for _, x := range t.legs() {
+		if x == nil {
+			x = new(big.Rat)
+		}
+		out = append(out, x)
+	}
+	return out
 }
 
 func emisUSDCoverage(w usdWire) lendingEmissionUSDCoverage {
@@ -79,8 +96,8 @@ func emisWire[L any, P usdLegs[L]](t *usdSum[L, P], reason string, disagreed, lo
 func emisOneUSD(t *emisOneSum, reason string, disagreed, lowerBound bool) LendingEmissionUSD {
 	w := emisWire(t, reason, disagreed, lowerBound)
 	out := LendingEmissionUSD{lendingEmissionUSDCoverage: emisUSDCoverage(w)}
-	if w.legs != nil {
-		out.AmountUSD = w.legs[0]
+	if x := exactLegs(t, w); x != nil {
+		out.AmountUSD, out.exact = w.legs[0], x[0]
 	}
 	return out
 }
@@ -88,8 +105,9 @@ func emisOneUSD(t *emisOneSum, reason string, disagreed, lowerBound bool) Lendin
 func emisTwoUSD(t *emisTwoSum, reason string, disagreed, lowerBound bool) LendingEmissionAllocUSD {
 	w := emisWire(t, reason, disagreed, lowerBound)
 	out := LendingEmissionAllocUSD{lendingEmissionUSDCoverage: emisUSDCoverage(w)}
-	if w.legs != nil {
+	if x := exactLegs(t, w); x != nil {
 		out.BackstopEmissionsUSD, out.PoolEmissionsUSD = w.legs[0], w.legs[1]
+		out.exact = [2]*big.Rat{x[0], x[1]}
 	}
 	return out
 }
@@ -111,11 +129,13 @@ func markUnread(c *lendingEmissionUSDCoverage, nullify func(), k emisCount) {
 }
 
 func markOneUnread(u *LendingEmissionUSD, k emisCount) {
-	markUnread(&u.lendingEmissionUSDCoverage, func() { u.AmountUSD = nil }, k)
+	markUnread(&u.lendingEmissionUSDCoverage, func() { u.AmountUSD, u.exact = nil, nil }, k)
 }
 
 func markTwoUnread(u *LendingEmissionAllocUSD, k emisCount) {
-	markUnread(&u.lendingEmissionUSDCoverage, func() { u.BackstopEmissionsUSD, u.PoolEmissionsUSD = nil, nil }, k)
+	markUnread(&u.lendingEmissionUSDCoverage, func() {
+		u.BackstopEmissionsUSD, u.PoolEmissionsUSD, u.exact = nil, nil, [2]*big.Rat{}
+	}, k)
 }
 
 // emisRows is one stream's buckets (b, with their counts c) and the hours they are valued from (h).
@@ -321,8 +341,9 @@ func scheduleSpan(segs []emissionSegment, win emissionsHistoryWindow, see func(l
 
 // emissionsHistoryUSD values every available stream in USD through revenue's walk: one read of the emission token's hourly
 // series over the hours carrying an amount, once the token passes the protocol-token identity gate (reason ""). At 1d
-// the rows are valued from h.Hours, read in the same snapshot; hoursFailed means that read failed.
-func (s *Server) emissionsHistoryUSD(ctx context.Context, v *LendingEmissionsHistoryView, h timescale.LendingEmissionsHistory, b emissionsBounds, reason string, hoursFailed bool, flags *Flags) error {
+// the rows are valued from h.Hours, read in the same snapshot; hoursFailed means that read failed. walkFailed: the price
+// walk failed or was cut short.
+func (s *Server) emissionsHistoryUSD(ctx context.Context, v *LendingEmissionsHistoryView, h timescale.LendingEmissionsHistory, b emissionsBounds, reason string, hoursFailed bool, flags *Flags) (walkFailed bool, err error) {
 	v.PriceMaxAgeHours = int(lendingUSDHourlyPriceMaxAge / time.Hour)
 	hourly := h
 	if b.pool.width != time.Hour {
@@ -345,11 +366,12 @@ func (s *Server) emissionsHistoryUSD(ctx context.Context, v *LendingEmissionsHis
 	if hoursFailed && rowSeries.reason == "" {
 		rowSeries.reason = emisUSDHoursUnread
 	}
+	walkFailed = u.degraded || u.reason == exclusionPriceReadFailed
 	if err := valueEmissionSchedule(ctx, v, in, u, b.pool); err != nil {
-		return err
+		return walkFailed, err
 	}
 	valueEmissionRows(v, in, rowSeries, b.pool.width)
-	return nil
+	return walkFailed, nil
 }
 
 // valueEmissionSchedule sets each schedule line's usd and its points'. A refused token values no line.

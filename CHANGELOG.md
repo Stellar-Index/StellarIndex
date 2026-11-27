@@ -20,6 +20,29 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.144.0] - 2026-11-27
+
+Tested against Stellar protocol 27. No migration (schema version stays 239). No `pkg/*` break. No ClickHouse DDL change. No API contract change: several responses now carry the correct UTC day or month where a non-UTC ClickHouse server zone shifted it.
+
+### Added
+
+- **ci:** `scripts/ci/lint-ch-day-zone.sh` fails a ClickHouse read that takes its calendar day from the server's time zone (zone-less `today()`, `yesterday()`, a calendar function of `now()`, `toDateTime()` of a Date); `chzone:ok <reason>` exempts a line and is watched by the baseline-growth guard (#4451).
+- **ci:** the shared integration ClickHouse container runs in `Europe/Berlin` and the harness refuses any other server zone, so every lake-reading integration test meets the condition production runs under (#4451).
+
+### Changed
+
+- **monitoring:** `stellarindex_zfs_pool_fill_90pct_within_7d` is a ticket, not a page; `stellarindex_zfs_pool_free_critical` and `stellarindex_zfs_pool_critical_space` remain the pages. With no page left in it, the `zfs_pool_fill_trend` inhibit family is removed (#4448).
+- **ops:** pgBackRest `repo1` (local) keeps one full backup set, down from two; the off-site `repo2` is unchanged. Local restore depth is one chain, about 8 days (#4448).
+- **api:** the lending revenue rollup contains a failing pool: other pools store their rows and coverage, the failed pool's days wait in a capped retry queue, planning state still commits, and the cycle still reports failure so `stellarindex_lending_revenue_rollup_stalled` fires. Cycle logs carry `queued`, `empty`, `reserve_days` and `retry_dropped` (#4450).
+
+### Fixed
+
+- **api:** the lending revenue rollup stored no rows while advancing coverage on a host whose ClickHouse server zone is not UTC: a `Date` decodes at server-zone midnight, so no interest day matched the worker's UTC days. Days are now read as UTC-tagged instants; coverage cannot move past a day that has interest hours and no stored row; coverage written at an older valuation or derive revision is not trusted by `/v1/lending/protocols` and is re-proved by the fill. `lendingRevenueValuationRev` is 2 (#4450).
+- **storage:** eight ClickHouse readers returned a day or month early on a non-UTC server zone: contract deployment months and `active_90d_through`, account cohort months, the first-supply-event lookup (missed a first mint in the last UTC hours of a day), protocol daily series, breakdown and roster ("complete days" were cut at server-zone midnight), protocol `last_seen`, the contract daily series, asset trustline history and the contracts census rollup start. Stored lake days were already UTC; only reads changed (#4451).
+- **aggregator:** the wide-minute re-read (`TradesInMinutes`) no longer depends on table statistics to use the pair index: the pair travels as columns of a materialised minute list, so the planner cannot price the probe from each asset's own frequency and fall back to a time-only scan reading every pair's rows (#4452).
+- **ops:** on a network whose history archive is empty by design (first ledger at or below 2 and an archive listing that succeeds with zero objects), the archive tip-lag and Tier-A verification units no longer fail, and data-freshness reports an empty source stale only when the chain itself is older than the threshold (`stellarindex_data_freshness_empty` gauge) (#4449).
+- **api:** an explorer cache whose background refresh the refresh gate turned away no longer records that as a failed refresh. The entry keeps its real last outcome, that one response carries `degraded_reason=refresh_refused`, and the next request tries again; before, the entry stayed marked failed until a later refresh succeeded and every serve in between read `refresh_failed`. Six caches: contract detail, holders, contracts directory, operations directory, network throughput and contract stats. The `stellarindex_api_degraded_responses_sustained` description now names the counters that explain a refusal (#4454).
+
 ## [v0.143.0] - 2026-11-27
 
 Tested against Stellar protocol 27. No migration (schema version stays 239). No `pkg/*` break (one test line under `pkg/client`). No ClickHouse DDL change. API additions only: one new endpoint and new optional fields on it.
@@ -108,32 +131,3 @@ Tested against Stellar protocol 27. One additive migration, 0237 (schema version
 
 - **aquarius:** concentrated pools emit `deposit_liquidity` and `withdraw_liquidity` as `[liquidity, amount0, amount1]`, not `[amounts..., shares]`, and were stored shares-last. They now decode in their own order and store shares NULL, and an event whose layout is unknown is refused. Layouts come from the `add_pool` type or two in-code lists that match the census of 395 pools (332 classic, 63 concentrated); boot logs a WARN for any warmed pool in neither. The audit record corrects the earlier sign-off of the four concentrated builds. Stored rows are corrected by the runbook procedure above (#4410).
 - **monitoring:** `stellarindex_textfile_producer_stale` no longer fires on the heartbeats of one-off jobs without a timer (`ch_backfill`, `supply_seed_sac_balances`, `supply_seed_claimable_balances`); unknown and scheduled producers still alert (#4414).
-
-## [v0.139.0] - 2026-11-26
-
-Tested against Stellar protocol 27. No migrations (schema version stays 236). No `pkg/*` break (no change under `pkg/`). No ClickHouse DDL change. Operators: the role now takes the USD and fiat peg lists from `stellarindex_usd_pegged_classic_assets` and `stellarindex_fiat_pegged_classic_assets` and enables oracle, external and price sources only on pubnet; a host that relied on the pubnet lists being rendered on another network must set them explicitly.
-
-### Added
-
-- **api:** `/v1/pools`, `/v1/markets` and the asset routes record why a response was degraded (`refresh_failed`, `refresh_overrun`, `refresh_refused`, `partial_read`, `check_unread`, `section_dropped`, `source_stale`, `provisional`, `request_cancelled`) in `stellarindex_api_degraded_responses_total{route,reason}` (#4403).
-- **ops:** `stellarindex-ops cagg-history` measures, for every continuous aggregate, the start of its materialised history against the start it should have, and writes `stellarindex_cagg_history_start_seconds`, `_expected_start_seconds` and `_gap_seconds`; `data-freshness.sh` calls it in place of its SQL block (#4404).
-- **ops:** `stellarindex_api_cache_fill_duration_seconds{cache,result}` times detached cache fills (#4402).
-- **ansible:** a test net's local Prometheus can load alert rules (`local_prometheus_rules_enabled`, off by default); the five served-value rules moved to `served-values.yml` (#4399).
-- **ansible:** per-network USD and fiat peg variables, with a preflight assert (#4400).
-- **aggregate:** `aggregate.TWAPFromBuckets`, an exact time-weighted mean over closed buckets; no caller yet (#4401).
-- **ci:** a weekly reminder when the `directory-sync` pin falls behind the public directory; the release procedure names the docs publish step (#4395).
-
-### Changed
-
-- **api:** a degraded asset-detail body lives 3 s in the detail cache, not 120 s (#4397).
-- **aggregator:** source contributions are written in a fixed order and stamped from the orchestrator clock, so the same trades give the same rows (#4401).
-- **config:** a pair listed twice in `aggregate.pairs` is rejected at load (#4402).
-- **explorer:** the static build re-asks a partial answer once, inside a five-minute budget shared by the whole build, and warms asset keys first (#4394, #4396).
-- **ops:** `directory-sync` is pinned to the 2026-11-25 public directory (#4393).
-
-### Fixed
-
-- **api:** an asset list, asset detail, `/v1/markets` or `/v1/pools` response built over a cached value that is merely past its bound is flagged `stale` only. `degraded` is set for a failed, overrunning or refused refresh, an unmeasured read or an unchecked directory. A cached asset-list replay whose rows refresh failed is now flagged degraded (#4405).
-- **api:** `/v1/price/batch` rows walk the quote asset's aliases as `/v1/price` does, so an XLM-quoted batch matches the single-price answer (#4398).
-- **supply:** a `mint`, `burn`, `clawback` or `transfer` event without the address topics a token event carries is classified `not_token_shaped` before its amount is read, in the live sink, `ch-cap67-movements` and `ch-supply -seed-flows`. A pool's one-topic `mint` no longer raises the supply-skipped alerts, and no `supply_flows` row is written for such an event (#4406).
-- **ci:** test-net explorer builds use their own network's API key (#4392).

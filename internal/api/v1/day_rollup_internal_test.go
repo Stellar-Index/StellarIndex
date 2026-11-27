@@ -174,6 +174,22 @@ func TestDayRollup_LockHeldDoesNoWork(t *testing.T) {
 	}
 }
 
+// A cycle that only moves coverage over days with nothing to value values none of them, and still says it checked them.
+func TestDayRollup_EmptyDaysAreCountedChecked(t *testing.T) {
+	f := newFakeDayRollup(10)
+	f.d.src.valueRun = func(_ context.Context, _ *rollupCycle, run []poolDay) (map[time.Time]bool, error) {
+		finished := map[time.Time]bool{}
+		for _, pd := range run {
+			finished[pd.day] = true
+		}
+		return finished, nil
+	}
+	st := f.cycle(t)
+	if st.ReserveDays != 0 || st.Queued != 10 || !f.through().Equal(rollupDay(9)) {
+		t.Fatalf("stats %+v, coverage through %v; want 10 days queued, none decided, coverage through day 9", st, f.through())
+	}
+}
+
 func TestDayRollup_SelfFillAdvancesByChunks(t *testing.T) {
 	f := newFakeDayRollup(100)
 	for c, want := range []int{29, 59, 89, 99} {

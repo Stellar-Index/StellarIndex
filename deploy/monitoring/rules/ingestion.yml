@@ -1435,6 +1435,45 @@ groups:
             valuer that is not deterministic, and served windows may have been
             wrong until the rewrite.
 
+      # The lending emissions rollup ([lending_emissions_rollup] enabled): the revenue rollup's stall rule over its own
+      # gauges, max()ed across API instances for the same reasons.
+      - alert: stellarindex_lending_emissions_rollup_stalled
+        expr: |
+          (
+            time() - max(
+              label_replace(stellarindex_lending_emissions_rollup_last_success_unix, "since", "success", "", "")
+              or label_replace(stellarindex_lending_emissions_rollup_started_unix, "since", "start", "", "")
+            )
+          ) > 1800
+          and on() max(stellarindex_lending_emissions_rollup_started_unix) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#lending-emissions-rollup-stalled
+          summary: "lending emissions rollup has not finished a cycle in over 30 minutes"
+          description: |
+            No API instance has finished a lending emissions rollup cycle
+            holding its lock in over 30 minutes since its last success or
+            start. lending_emissions_usd_daily stops advancing.
+
+      # The daily sweep re-valued a stored day's same tokens at the same revision and got other USD.
+      - alert: stellarindex_lending_emissions_rollup_sweep_mismatch
+        expr: sum(increase(stellarindex_lending_emissions_rollup_sweep_mismatches_total[1d])) > 0
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#lending-emissions-rollup-sweep-mismatch
+          summary: "lending emissions rollup's sweep found stored USD that a fresh valuation does not reproduce"
+          description: |
+            The emissions rollup's daily sweep found stored days in the last
+            day whose same tokens a fresh valuation priced differently with
+            nothing to explain it. Each was rewritten.
+
       # Whole-transaction skip counters (tx_read_errors, tx_event_read_errors,
       # entry_meta_unsupported) plus evicted_keys_unreadable (a ledger's evictions): each
       # means events or an entry walk vanished, indistinguishable downstream from an

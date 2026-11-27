@@ -267,46 +267,65 @@ func (s *Server) handleLendingPoolEmissionsHistory(w http.ResponseWriter, r *htt
 		writeLendingHistoryNotReady(w, r)
 		return
 	}
-	isBLNT, isV1 := protocol == blnt.SourceName, reason == backstopReasonV1
-	view, win, flags := s.emissionsHistoryView(ctx, pool, protocol, interval, q)
-	st, err := s.emissionsHistoryStorage(ctx, pool, isBLNT, isV1, &view)
+	st, err := s.emissionsHistoryStorage(ctx, pool, protocol == blnt.SourceName, reason == backstopReasonV1)
 	if err != nil {
 		s.writeLendingHistoryError(ctx, w, r, "LendingEmissions", pool, err)
 		return
 	}
+	view, flags, _, err := s.emissionsHistory(ctx, hr, pool, protocol, reason, interval, q, st)
+	if errors.Is(err, errNoEmissionsHistoryReader) {
+		writeLendingHistoryNotReady(w, r)
+		return
+	}
+	if err != nil {
+		s.writeLendingHistoryError(ctx, w, r, "LendingEmissionsHistory", pool, err)
+		return
+	}
+	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(time.Now().UTC()), Flags: flags})
+}
+
+// emissionsHistory is the body and flags /emissions/history serves for pool over q, from the pool instance st; the
+// emissions rollup stores exactly this, day by day. cut: a read failed or was cut short (the hours, the price walk, a
+// writer's cursor, a verdict or the lake tip), so the body is not the answer a retry would give.
+func (s *Server) emissionsHistory(ctx context.Context, hr lendingEmissionsHistoryReader, pool, protocol, lineage, interval string, q clickhouse.LendingHistoryQuery, st emisStorage) (view LendingEmissionsHistoryView, flags Flags, cut bool, err error) {
+	isBLNT, isV1 := protocol == blnt.SourceName, lineage == backstopReasonV1
+	view, win, flags := s.emissionsHistoryView(ctx, pool, protocol, interval, q)
+	view.EmissionToken, view.EmissionTokenDecimals = st.token, st.decimals
 	b := s.emissionsWriterBounds(ctx, win, isBLNT, isV1, &flags)
 	token := ""
 	if view.EmissionToken != nil {
 		token = *view.EmissionToken
 	}
 	_, usdReason := s.emissionTokenIdentity(protocol, token)
+	if st.decimalsUnread && usdReason == "" {
+		usdReason = exclusionPriceReadFailed // the scale is unread, not unknown: decimals_unknown would read as settled
+	}
 	hq := timescale.EmissionHistoryQuery{
 		From: win.from, To: b.pool.end, BackstopTo: b.backstop.end, Daily: q.Daily,
 		Schedule: !isV1, BackstopAlloc: !isV1, BackstopClaim: isBLNT, Hours: q.Daily && usdReason == "",
 	}
 	h, err := hr.LendingEmissionsHistory(ctx, pool, isBLNT, hq)
-	if errors.Is(err, errNoEmissionsHistoryReader) {
-		writeLendingHistoryNotReady(w, r)
-		return
-	}
 	hoursFailed := errors.Is(err, timescale.ErrEmissionHoursRead)
 	if hoursFailed {
 		s.logger.Warn("lending emissions history: hourly read failed; usd withheld", "pool", pool, "err", err)
 		flags.Degraded, err = true, nil
 	}
 	if err != nil {
-		s.writeLendingHistoryError(ctx, w, r, "LendingEmissionsHistory", pool, err)
-		return
+		return view, flags, true, err
 	}
-	fillEmissionsHistory(&view, h, b, st.ReserveList, isBLNT, isV1)
+	fillEmissionsHistory(&view, h, b, st.state.ReserveList, isBLNT, isV1)
 	b.apply(&view)
 	s.applyEmissionsVerdicts(ctx, &view, isBLNT, &flags)
 	finishEmissionsHistory(&view)
-	if err := s.emissionsHistoryUSD(ctx, &view, h, b, usdReason, hoursFailed, &flags); err != nil {
-		s.writeLendingHistoryError(ctx, w, r, "LendingEmissionsHistory", pool, err)
-		return
+	walkFailed, err := s.emissionsHistoryUSD(ctx, &view, h, b, usdReason, hoursFailed, &flags)
+	if st.decimalsUnread {
+		flags.Degraded = true
 	}
-	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(time.Now().UTC()), Flags: flags})
+	cut = hoursFailed || walkFailed || st.decimalsUnread || b.poolReason == emisHistWriterUnread || b.backstopReason == emisHistWriterUnread
+	for _, e := range view.Excluded {
+		cut = cut || e.Reason == emisHistTipUnknown || e.Reason == earningsReasonHistoryVerdictUnread
+	}
+	return view, flags, cut, err
 }
 
 // emissionsHistoryView opens the view and clips the window at the lake tip, so hours not yet captured are not served as none.
@@ -341,24 +360,38 @@ func (s *Server) emissionsHistoryView(ctx context.Context, pool, protocol, inter
 	return view, win, flags
 }
 
+// emisStorage is what the pool instance names: the emission token, its decimals when known, and the reserve list.
+type emisStorage struct {
+	state    clickhouse.LendingEmissionsState
+	token    *string
+	decimals *int
+	// decimalsUnread: the decimals read failed, so decimals_unknown is this read's answer, not the token's.
+	decimalsUnread bool
+}
+
 // emissionsHistoryStorage reads the pool instance for the emission token and reserve list, which name each token id's
 // reserve. A V1 pool's storage layout is unverified, so it is not read and its token ids carry no asset.
-func (s *Server) emissionsHistoryStorage(ctx context.Context, pool string, isBLNT, isV1 bool, view *LendingEmissionsHistoryView) (clickhouse.LendingEmissionsState, error) {
+func (s *Server) emissionsHistoryStorage(ctx context.Context, pool string, isBLNT, isV1 bool) (emisStorage, error) {
 	er, ok := s.Explorer.(lendingEmissionsReader)
 	if isV1 || s.Explorer == nil || !ok {
-		return clickhouse.LendingEmissionsState{}, nil
+		return emisStorage{}, nil
 	}
 	st, err := er.LendingEmissions(ctx, pool, isBLNT)
 	if err != nil {
-		return st, err
+		return emisStorage{}, err
 	}
+	out := emisStorage{state: st}
 	if st.EmissionToken != "" {
-		view.EmissionToken = strRef(st.EmissionToken)
-		if d, known, err := s.lakeTokenDecimals(ctx, st.EmissionToken); known && err == nil {
-			view.EmissionTokenDecimals = &d
+		out.token = strRef(st.EmissionToken)
+		d, known, err := s.lakeTokenDecimals(ctx, st.EmissionToken)
+		switch {
+		case err != nil:
+			out.decimalsUnread = true
+		case known:
+			out.decimals = &d
 		}
 	}
-	return st, nil
+	return out, nil
 }
 
 func (v *LendingEmissionsHistoryView) exclude(stream, reason string, count *int64, amount *string) {

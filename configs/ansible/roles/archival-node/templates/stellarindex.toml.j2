@@ -558,6 +558,11 @@ enabled = {{ 'true' if stellarindex_divergence_supply_enabled | default(false) |
 [lending_revenue_rollup]
 enabled = {{ 'true' if stellarindex_lending_revenue_rollup_enabled | default(false) | bool else 'false' }}
 
+# Lending emissions USD daily rollup in stellarindex-api (migration 0240).
+# Off unless the inventory sets stellarindex_lending_emissions_rollup_enabled: true.
+[lending_emissions_rollup]
+enabled = {{ 'true' if stellarindex_lending_emissions_rollup_enabled | default(false) | bool else 'false' }}
+
 # Phase 2 freeze threshold (ADR-0019).
 [anomaly.phase2]
 # ADR-0019's 5.0. Firing is safe because the freeze lifecycle

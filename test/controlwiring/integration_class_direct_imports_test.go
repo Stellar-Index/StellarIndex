@@ -41,6 +41,7 @@ var nightlyOnlyIntegrationImports = map[string]string{
 	"internal/config":                            nightlyUnitTested,
 	"internal/consumer":                          nightlyTypesOnly,
 	"internal/contractid":                        nightlyUnitTested,
+	"internal/currency":                          nightlyUnitTested,
 	"internal/customerwebhook":                   nightlyUnitTested,
 	"internal/decimalsguard":                     nightlyUnitTested,
 	"internal/dispatcher":                        nightlyUnitTested,
