@@ -87,6 +87,19 @@ The source is production-enabled from ledger 65,134,154. Replay is gated by the
 [six-lineage WASM audit](../operations/wasm-audits/blnt.md), and real Galexie
 fixtures cover the pool, factory, backstop, emitter and both backfill roles.
 
+### Emissions history
+
+`GET /v1/lending/pools/{pool}/emissions/history` serves BLNT emissions per bucket in BLNT base units, with the
+streams and rules described in [Blend's section](blend.md#emissions-history-get-v1lendingpoolspoolemissionshistory).
+BLNT differs in three ways:
+
+- The schedule is rebuilt from `reserve_emission_update` events and flagged `approximate`
+  (`stored_eps_rewritten_without_event`): user actions rewrite the stored eps by dust with no event (under 1.4e-10
+  relative, about 44 base units per reserve-week). It is not marked a lower bound, since the gap is immaterial.
+- `backstop_alloc` has no per-tier split (`tier_split_not_on_chain`): `gulp_emissions` names the pool only.
+- `backstop_claims` is served per tier: `blnt_amount` (BLNT), `lp_amount` (backstop LP tokens) and `shares`
+  (tier shares), each labelled in `units`.
+
 ## Emission data inventory
 
 What the repo establishes about BLNT emission data, read 2026-11-27 from the

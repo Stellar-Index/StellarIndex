@@ -2715,6 +2715,83 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/lending/pools/{pool}/emissions/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Lending pool — emissions over time, in token units.
+         * @description The pool's emissions per bucket over `[from, to)`, in base units of
+         *     the emission token (`emission_token`, scaled by
+         *     `emission_token_decimals`), as four separate streams. They describe
+         *     the same tokens at different stages (scheduled, allocated to the
+         *     backstop, claimed), so they are never added together, and no total
+         *     across them is served. No USD is served yet.
+         *
+         *     `reserves` is the SCHEDULED emission per reserve token id
+         *     (`token_id = reserve_index * 2` is the dToken, `side: borrow`; `+ 1`
+         *     the bToken, `side: supply`), rebuilt from the pool's
+         *     `reserve_emission_update` events: `Σ eps_i x |[t_i, min(t_{i+1},
+         *     exp_i)) ∩ bucket| / 10^eps_decimals`, exact, at most 7 fractional
+         *     digits. The rate in force when the window opens comes from each
+         *     id's last update at or before `from`. Scheduled is the announced
+         *     rate times time: holders accrue it only while the side has supply,
+         *     and hours with an empty side are NOT detected yet, so a scheduled
+         *     amount may include tokens nobody accrued. A token id with no update
+         *     at or before `to` is not listed; a listed id's `points` holds only
+         *     buckets with tokens scheduled, so a missing bucket is a zero rate,
+         *     not a gap. Blend V2's event rate equals its stored rate exactly.
+         *     BLNT's is flagged `approximate` (`stored_eps_rewritten_without_event`):
+         *     pool actions rewrite the stored rate by dust (under 1.4e-10
+         *     relative) without an event; that is not a lower bound. Blend V1 is
+         *     null (`v1_emission_schedule_unverified`): its rate is not stored the
+         *     V2 way and its scale is unverified.
+         *
+         *     `pool_claims` is the pool's `claim` events: claims and
+         *     `amount_claimed` per bucket, with distinct claimers per bucket
+         *     (totals carry no claimer count). `by_reserve` holds only claims
+         *     naming exactly one reserve token id; a claim naming several carries
+         *     one amount for all of them and is never split. Those, and claims
+         *     naming none, are in the pool total but excluded from `by_reserve`
+         *     (`claim_names_several_reserves`, `claim_names_no_reserve`, with
+         *     count and amount), which is then a lower bound.
+         *
+         *     `backstop_alloc` is the backstop's `gulp_emissions` naming the pool:
+         *     `backstop_emissions` kept for the backstop and `pool_emissions`
+         *     passed to the pool. BLNT's event has no per-tier split
+         *     (`tier_split_reason: tier_split_not_on_chain`). Blend V1 is null
+         *     (`v1_backstop_unaudited`).
+         *
+         *     `backstop_claims` is BLNT's backstop `claim` per tier: `blnt_amount`
+         *     (emission-token base units), `lp_amount` (backstop LP-token base
+         *     units) and `shares` (tier shares minted), as `units` names them.
+         *     Blend's backstop `claim` names no pool and its amount is backstop LP
+         *     tokens, deposited in the same transaction, so it is null here
+         *     (`backstop_claim_names_no_pool`).
+         *
+         *     `excluded` names everything left out of or unvouched in a stream,
+         *     and sets that stream's `lower_bound` (and the response's): the
+         *     stream's projection not verified back to its first ledger
+         *     (`history_unverified`; `history_verdict_stale`, with `flags.stale`;
+         *     `history_verdict_unread`, not cacheable), amounts not decoded
+         *     (`amount_unread`, counted not summed), or a window past the lake
+         *     tip (`window_past_lake_tip`, stream `window`): buckets after
+         *     `served_through` are not served and the bucket it cuts is
+         *     `partial`. 404 when no Blend or BLNT pool is known at the contract
+         *     id; 503 when this deployment has no event history reader.
+         */
+        get: operations["getLendingPoolEmissionsHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/lending/pools/{pool}/top-accounts": {
         parameters: {
             query?: never;
@@ -7442,6 +7519,40 @@ export interface components {
              * @enum {string}
              */
             reason: "unpriced" | "withheld" | "rate_unread" | "positions_unreadable" | "positions_truncated" | "positions_overcounted" | "reserve_list_unreadable";
+        };
+        /** @description Claims and the emission token claimed, in base units. */
+        LendingEmissionClaimSums: {
+            /** Format: int64 */
+            claims: number;
+            amount: string;
+        };
+        LendingEmissionClaimsPoint: components["schemas"]["LendingEmissionClaimSums"] & {
+            /** Format: date-time */
+            t: string;
+            /** @description The window or the lake tip cuts this bucket short. */
+            partial: boolean;
+            /**
+             * Format: int64
+             * @description Distinct claimers within the bucket.
+             */
+            claimers: number;
+        };
+        /** @description A backstop's gulp_emissions naming the pool, in emission-token base units. */
+        LendingEmissionAllocSums: {
+            /** Format: int64 */
+            events: number;
+            /** @description `new_backstop_emissions`: kept for the backstop. */
+            backstop_emissions: string;
+            /** @description `new_pool_emissions`: passed to the pool. */
+            pool_emissions: string;
+        };
+        /** @description A BLNT backstop tier's claims, each amount in the unit `units` names. */
+        LendingEmissionBackstopClaimSums: {
+            /** Format: int64 */
+            claims: number;
+            blnt_amount: string;
+            lp_amount: string;
+            shares: string;
         };
         /** @description Something the revenue sums leave out or cannot vouch for; any one makes them a lower bound. */
         LendingRevenueExclusion: {
@@ -21257,6 +21368,303 @@ export interface operations {
                             as_of_ledger?: number;
                             /** Format: date-time */
                             as_of_time: string;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getLendingPoolEmissionsHistory: {
+        parameters: {
+            query?: {
+                interval?: "1h" | "1d";
+                /** @description RFC 3339, rounded down to the start of its hour (`1h`) or UTC day (`1d`); default `to` - 90 days (`1d`) or 83 days (`1h`). */
+                from?: string;
+                /** @description RFC 3339, rounded down to its hour; default now. */
+                to?: string;
+                /** @description Duration (`30d`, `72h`); sets from = to - window. Exclusive with `from`. */
+                window?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Pool contract C-strkey. */
+                pool: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Emission streams per bucket, in token units. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                     *         "protocol": "blend",
+                     *         "interval": "1d",
+                     *         "from": "2026-11-01T00:00:00Z",
+                     *         "to": "2026-11-03T00:00:00Z",
+                     *         "served_through": "2026-11-03T00:00:00Z",
+                     *         "emission_token": "CD25MNVTZDL4Y3XBCPCJXGXATV5WUHHOWMYFF4YBEGU5FCPGMYTVG5JY",
+                     *         "emission_token_decimals": 7,
+                     *         "eps_decimals": 7,
+                     *         "lower_bound": true,
+                     *         "excluded": [
+                     *           {
+                     *             "stream": "pool_claims_by_reserve",
+                     *             "reason": "claim_names_several_reserves",
+                     *             "count": 12,
+                     *             "amount": "91000000000"
+                     *           }
+                     *         ],
+                     *         "reserves": {
+                     *           "available": true,
+                     *           "unavailable_reason": null,
+                     *           "lower_bound": false,
+                     *           "approximate": false,
+                     *           "approximate_reason": null,
+                     *           "streams": [
+                     *             {
+                     *               "token_id": 1,
+                     *               "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *               "side": "supply",
+                     *               "tokens": "35702479338.83712",
+                     *               "points": [
+                     *                 {
+                     *                   "t": "2026-11-01T00:00:00Z",
+                     *                   "partial": false,
+                     *                   "tokens": "17851239669.41856"
+                     *                 },
+                     *                 {
+                     *                   "t": "2026-11-02T00:00:00Z",
+                     *                   "partial": false,
+                     *                   "tokens": "17851239669.41856"
+                     *                 }
+                     *               ]
+                     *             }
+                     *           ]
+                     *         },
+                     *         "pool_claims": {
+                     *           "available": true,
+                     *           "unavailable_reason": null,
+                     *           "lower_bound": false,
+                     *           "totals": {
+                     *             "claims": 30,
+                     *             "amount": "120000000000"
+                     *           },
+                     *           "points": [
+                     *             {
+                     *               "t": "2026-11-01T00:00:00Z",
+                     *               "partial": false,
+                     *               "claimers": 14,
+                     *               "claims": 18,
+                     *               "amount": "70000000000"
+                     *             },
+                     *             {
+                     *               "t": "2026-11-02T00:00:00Z",
+                     *               "partial": false,
+                     *               "claimers": 10,
+                     *               "claims": 12,
+                     *               "amount": "50000000000"
+                     *             }
+                     *           ],
+                     *           "by_reserve": {
+                     *             "lower_bound": true,
+                     *             "reserves": [
+                     *               {
+                     *                 "token_id": 1,
+                     *                 "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *                 "side": "supply",
+                     *                 "totals": {
+                     *                   "claims": 18,
+                     *                   "amount": "29000000000"
+                     *                 },
+                     *                 "points": [
+                     *                   {
+                     *                     "t": "2026-11-01T00:00:00Z",
+                     *                     "partial": false,
+                     *                     "claimers": 9,
+                     *                     "claims": 18,
+                     *                     "amount": "29000000000"
+                     *                   }
+                     *                 ]
+                     *               }
+                     *             ]
+                     *           }
+                     *         },
+                     *         "backstop_alloc": {
+                     *           "available": true,
+                     *           "unavailable_reason": null,
+                     *           "lower_bound": false,
+                     *           "tier_split_available": false,
+                     *           "tier_split_reason": null,
+                     *           "totals": {
+                     *             "events": 1,
+                     *             "backstop_emissions": "210000000000",
+                     *             "pool_emissions": "90000000000"
+                     *           },
+                     *           "points": [
+                     *             {
+                     *               "t": "2026-11-02T00:00:00Z",
+                     *               "partial": false,
+                     *               "events": 1,
+                     *               "backstop_emissions": "210000000000",
+                     *               "pool_emissions": "90000000000"
+                     *             }
+                     *           ]
+                     *         },
+                     *         "backstop_claims": {
+                     *           "available": false,
+                     *           "unavailable_reason": "backstop_claim_names_no_pool",
+                     *           "lower_bound": false,
+                     *           "units": {
+                     *             "blnt_amount": "",
+                     *             "lp_amount": "",
+                     *             "shares": ""
+                     *           },
+                     *           "tiers": []
+                     *         }
+                     *       },
+                     *       "as_of": "2026-11-16T12:00:00Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: {
+                            pool: string;
+                            /** @enum {string} */
+                            protocol: "blend" | "blnt";
+                            /** @enum {string} */
+                            interval: "1h" | "1d";
+                            /** Format: date-time */
+                            from: string;
+                            /**
+                             * Format: date-time
+                             * @description End of the window, rounded down to its hour; buckets cover [from, to).
+                             */
+                            to: string;
+                            /**
+                             * Format: date-time
+                             * @description `to`, or the lake tip when it is earlier: nothing after it is served.
+                             */
+                            served_through: string;
+                            /** @description The pool instance's `BLNDTkn` (Blend) or `BLNTTkn` (BLNT); null when unread or for Blend V1. */
+                            emission_token: string | null;
+                            emission_token_decimals: number | null;
+                            /** @description Scale of the rates the schedule is built from: eps / 10^eps_decimals is base units per second. */
+                            eps_decimals: number;
+                            /** @description Some stream is a lower bound; `excluded` names why. */
+                            lower_bound: boolean;
+                            excluded: {
+                                /** @enum {string} */
+                                stream: "window" | "reserves" | "pool_claims" | "pool_claims_by_reserve" | "backstop_alloc" | "backstop_claims";
+                                /** @enum {string} */
+                                reason: "window_past_lake_tip" | "history_unverified" | "history_verdict_stale" | "history_verdict_unread" | "amount_unread" | "claim_names_several_reserves" | "claim_names_no_reserve";
+                                /**
+                                 * Format: int64
+                                 * @description Events left out or unsummed; null for a verdict or the window.
+                                 */
+                                count: number | null;
+                                /** @description Emission-token base units left out of the stream, when known. */
+                                amount: string | null;
+                            }[];
+                            reserves: {
+                                available: boolean;
+                                /** @enum {string|null} */
+                                unavailable_reason: "v1_emission_schedule_unverified" | null;
+                                lower_bound: boolean;
+                                /** @description The event-rebuilt rate may differ from the stored one by dust (BLNT). */
+                                approximate: boolean;
+                                /** @enum {string|null} */
+                                approximate_reason: "stored_eps_rewritten_without_event" | null;
+                                streams: {
+                                    /** Format: int64 */
+                                    token_id: number;
+                                    /** @description The reserve's token; null when the id is past the read reserve list or storage was not read. */
+                                    asset: string | null;
+                                    /** @enum {string} */
+                                    side: "supply" | "borrow";
+                                    /** @description Scheduled base units over the served window, exact. */
+                                    tokens: string;
+                                    points: {
+                                        /** Format: date-time */
+                                        t: string;
+                                        partial: boolean;
+                                        tokens: string;
+                                    }[];
+                                }[];
+                            };
+                            pool_claims: {
+                                available: boolean;
+                                unavailable_reason: string | null;
+                                lower_bound: boolean;
+                                totals: components["schemas"]["LendingEmissionClaimSums"];
+                                points: components["schemas"]["LendingEmissionClaimsPoint"][];
+                                by_reserve: {
+                                    lower_bound: boolean;
+                                    reserves: {
+                                        /** Format: int64 */
+                                        token_id: number;
+                                        asset: string | null;
+                                        /** @enum {string} */
+                                        side: "supply" | "borrow";
+                                        totals: components["schemas"]["LendingEmissionClaimSums"];
+                                        points: components["schemas"]["LendingEmissionClaimsPoint"][];
+                                    }[];
+                                };
+                            };
+                            backstop_alloc: {
+                                available: boolean;
+                                /** @enum {string|null} */
+                                unavailable_reason: "v1_backstop_unaudited" | null;
+                                lower_bound: boolean;
+                                tier_split_available: boolean;
+                                /** @enum {string|null} */
+                                tier_split_reason: "tier_split_not_on_chain" | null;
+                                totals: components["schemas"]["LendingEmissionAllocSums"];
+                                points: (components["schemas"]["LendingEmissionAllocSums"] & {
+                                    /** Format: date-time */
+                                    t: string;
+                                    partial: boolean;
+                                })[];
+                            };
+                            backstop_claims: {
+                                available: boolean;
+                                /** @enum {string|null} */
+                                unavailable_reason: "backstop_claim_names_no_pool" | null;
+                                lower_bound: boolean;
+                                /** @description Each amount's unit; empty strings when unavailable. */
+                                units: {
+                                    blnt_amount: string;
+                                    lp_amount: string;
+                                    shares: string;
+                                };
+                                tiers: {
+                                    /** @enum {string} */
+                                    tier: "FirstLoss" | "SecondLoss" | "ThirdLoss";
+                                    totals: components["schemas"]["LendingEmissionBackstopClaimSums"];
+                                    points: (components["schemas"]["LendingEmissionBackstopClaimSums"] & {
+                                        /** Format: date-time */
+                                        t: string;
+                                        partial: boolean;
+                                        /** Format: int64 */
+                                        claimers: number;
+                                    })[];
+                                }[];
+                            };
                         };
                     };
                 };
