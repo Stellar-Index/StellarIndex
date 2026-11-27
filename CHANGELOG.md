@@ -35,8 +35,6 @@ Tested against Stellar protocol 27. One additive migration, 0239 (schema version
 - **explorer:** the lending pool page shows an interest and revenue panel (USD over the range control, split by leg, stacked daily chart, per-reserve table) and a bad-debt panel (five parts, reconciliation bar or residual). Null figures render a dash with the reason, and "at least" appears exactly where `lower_bound` is set; reasons are typed over the generated enums (#4431).
 - **explorer:** the lending page shows an interest and revenue panel per protocol with a window switcher; while a window is `not_valued` it reads "Revenue totals are not computed yet." (#4433).
 - **explorer:** `/lending/blend` and `/lending/blnt` are pages of their own, with protocol totals, that protocol's revenue windows, its pools table and a references footer; `/lending` keeps the overview charts and combined pools table with one card per protocol. `/lending/[pool]` and the sitemap now keep only contract ids (#4434).
-- (#PENDING-A) Aggregator: a VWAP window whose raw trade read hits the per-window cap now covers the whole window by summing the not-yet-materialised minutes from raw trades; it never covers less than the capped read
-- (#PENDING-B) API: the account earnings description now states per protocol where claimed backstop emissions land; Blend backstop claim amounts are labelled as backstop LP tokens
 
 ### Changed
 
@@ -44,6 +42,8 @@ Tested against Stellar protocol 27. One additive migration, 0239 (schema version
 
 ### Fixed
 
+- **aggregator:** a VWAP window whose raw trade read hits `MaxTradesPerWindow` now covers the whole window: minutes the `trade_sums_1m` view has not materialised yet (up to 15) are summed from raw trades with the view's own arithmetic. Before, a trade burst shorter than the view's refresh lag served the newest slice flagged `truncated`. It never covers less than the capped read, and the truncation log line names the reason (#4436).
+- **api:** the `/v1/accounts/{account}/earnings` note and spec now state per protocol where claimed backstop emissions land: on Blend V2 the claim pays backstop LP tokens deposited in the same transaction, so they count in `net_flow` and `accrued` excludes them; on BLNT `accrued` includes them; Blend V1 is unverified. No served number changed. `docs/protocols/blend.md` and `blnt.md` record the lake census verdicts of 2026-11-27 (#4437).
 - **tests:** `TestPriceTipStream_DivergenceBudgetDiscriminatesAtItsEdge` and `TestContractDetailCached_ExpiredWithinBoundServedClean` no longer depend on scheduling; no production code changed (#4425, #4430).
 - **docs:** `docs/protocols/blend.md` and `blnt.md` inventory Blend and BLNT emission events and name three facts still unverified (the V2 backstop claim's unit, which V1 pool WASMs emit claim events, and whether event emission rate equals the stored one); documentation only (#4435).
 
