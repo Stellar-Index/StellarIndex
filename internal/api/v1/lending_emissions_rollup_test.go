@@ -142,6 +142,7 @@ type memEmisStore struct {
 	covs        map[string]timescale.LendingEmissionsUSDCoverage
 	failReplace int
 	since       []time.Time
+	poolReads   int
 }
 
 func newMemEmisStore(pools map[string]time.Time) *memEmisStore {
@@ -157,6 +158,7 @@ func (m *memEmisStore) HoldInstanceLock(context.Context, string, func(), *slog.L
 }
 
 func (m *memEmisStore) LendingEmissionPools(context.Context) (map[string]time.Time, error) {
+	m.poolReads++
 	return m.pools, nil
 }
 
@@ -656,6 +658,59 @@ func TestLendingEmissionsRollup_DecimalsReadErrorIsNotFinal(t *testing.T) {
 		if degraded := strings.Contains(rec.Header().Get("Cache-Control"), "no-store"); rec.Code != http.StatusOK || degraded == tc.stored {
 			t.Errorf("%s: endpoint %d, Cache-Control %q; want degraded=%v", tc.name, rec.Code, rec.Header().Get("Cache-Control"), !tc.stored)
 		}
+	}
+}
+
+// TestLendingEmissionsRollup_PoolListReadOncePerSweep: the pool list aggregates every emission event table, so a worker
+// reads it on its first cycle and then once a sweep period (a day at the cadence), not every cycle.
+func TestLendingEmissionsRollup_PoolListReadOncePerSweep(t *testing.T) {
+	srv, store, _ := blendV2RollupServer(t)
+	r := srv.NewLendingEmissionsRollup(store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	at := time.Now()
+	r.SetNowForTest(func() time.Time { return at })
+	for i := range 3 {
+		at = at.Add(10 * time.Minute)
+		if _, err := r.Cycle(context.Background()); err != nil {
+			t.Fatalf("cycle %d: %v", i, err)
+		}
+	}
+	if store.poolReads != 1 {
+		t.Fatalf("%d pool-list reads over three cycles; want 1", store.poolReads)
+	}
+	at = at.Add(24 * time.Hour)
+	if _, err := r.Cycle(context.Background()); err != nil || store.poolReads != 2 {
+		t.Fatalf("after a sweep period: %v, %d reads; want 2", err, store.poolReads)
+	}
+}
+
+// lineageFails fails the lineage read of one pool.
+type lineageFails struct {
+	*windowEmisLending
+	bad string
+}
+
+func (l lineageFails) BlendPoolVersion(ctx context.Context, pool string) (blend.PoolVersion, error) {
+	if pool == l.bad {
+		return blend.PoolVersionUnknown, errors.New("registry read timed out")
+	}
+	return l.windowEmisLending.BlendPoolVersion(ctx, pool)
+}
+
+// TestLendingEmissionsRollup_LineageFailureIsOnePool: a pool whose lineage cannot be read is left out and counted, the
+// other pool stores its rows and coverage, and the cycle still fails so its success is not recorded.
+func TestLendingEmissionsRollup_LineageFailureIsOnePool(t *testing.T) {
+	lr, prices := blendV2Rollup(t, v1.Options{})
+	good, bad := mkCStrkey(t, 1), mkCStrkey(t, 2)
+	srv := emisRollupServer(t, lr, emisSAC(t, blndAssetID), prices, v1.Options{})
+	srv.Lending = lineageFails{windowEmisLending: lr, bad: bad}
+	store := newMemEmisStore(map[string]time.Time{good: emisAt(0, 1), bad: emisAt(0, 1)})
+	r := srv.NewLendingEmissionsRollup(store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	st, err := r.Cycle(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "lineage of "+bad) || st.PoolsSkipped != 1 {
+		t.Fatalf("cycle: %+v, %v; want the bad pool's lineage error and one pool skipped", st, err)
+	}
+	if _, ok := store.covs[bad]; ok || len(store.day(good, emisDay(0))) == 0 || store.covs[good].ThroughDay.IsZero() {
+		t.Fatalf("coverage %+v; want the good pool stored and covered, the bad one untouched", store.covs)
 	}
 }
 

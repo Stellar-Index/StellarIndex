@@ -7,6 +7,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
+// The emissions and revenue workers take distinct advisory locks: sharing one would let either starve the other.
+func TestLendingEmissionsRollup_LockDiffersFromRevenue(t *testing.T) {
+	s, store := New(Options{}), (*timescale.Store)(nil)
+	if e, r := s.NewLendingEmissionsRollup(store, nil).rollup().src.lockName, s.NewLendingRevenueRollup(store, nil).rollup().src.lockName; e == r || e == "" {
+		t.Fatalf("emissions lock %q, revenue lock %q; want two distinct names", e, r)
+	}
+}
+
 // A sweep difference is a mismatch only when the same lines carry the same tokens at the same revision, neither side was
 // refused, and the USD differs: other tokens are a rewritten source, a refusal is a verdict.
 func TestEmisDayRowsUnexplained(t *testing.T) {

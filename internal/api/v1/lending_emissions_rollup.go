@@ -29,6 +29,7 @@ const (
 	lendingEmissionsRollupSweepCycles    = 144 // one UTC day at the cadence
 	lendingEmissionsRollupMaxRun         = 31  // days per pool-instance read
 	lendingEmissionsRollupReleaseTimeout = 5 * time.Second
+	lendingEmissionsPoolsRefresh         = lendingEmissionsRollupCycle * lendingEmissionsRollupSweepCycles
 	// lendingEmissionsValuationRev is the stored rows' valuation; a row of another one is re-valued.
 	lendingEmissionsValuationRev int16 = 1
 )
@@ -76,6 +77,12 @@ type LendingEmissionsRollup struct {
 	pools  map[string]emisRollupPool // the last span read's pools
 	days   rollupState
 	retry  map[poolDay]bool
+	// first is each pool's first emission event, re-read once a sweep period: the read aggregates every event table.
+	first   map[string]time.Time
+	firstAt time.Time
+	// skipped and lineageErrs are the pools the last span read left out, and the lineage reads among them that failed.
+	skipped     int
+	lineageErrs []error
 }
 
 // emisRollupPool is a pool's lineage and the streams it does not serve, with their reasons.
@@ -97,6 +104,7 @@ func (r *LendingEmissionsRollup) rollup() *dayRollup {
 			stale: r.planStale, exclusionsChangedSince: r.store.SourceExclusionWindowsChangedSince,
 			valueRun: r.executeRun, storeCoverage: r.storeCoverage, started: lendingEmissionsRollupStarted,
 			succeeded: lendingEmissionsRollupSucceeded, mismatched: obs.LendingEmissionsRollupSweepMismatchesTotal.Inc,
+			unplanned: func() (int, error) { return r.skipped, errors.Join(r.lineageErrs...) },
 		},
 		logger: r.logger, now: r.now, state: &r.days, retry: r.retry,
 	}
@@ -136,9 +144,13 @@ func lendingEmissionsRollupSucceeded(at time.Time, st LendingRevenueRollupStats)
 // spans are each known pool's whole served days: from its first emission event's day through the last day both its
 // writers and the lake have passed. A pool whose tip or writer cannot be placed is left out this cycle.
 func (r *LendingEmissionsRollup) spans(ctx context.Context) (map[string]rollupSpan, map[string]rollupCoverage, error) {
-	first, err := r.store.LendingEmissionPools(ctx)
-	if err != nil {
-		return nil, nil, err
+	now := r.now().UTC()
+	if r.first == nil || now.Sub(r.firstAt) >= lendingEmissionsPoolsRefresh {
+		first, err := r.store.LendingEmissionPools(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		r.first, r.firstAt = first, now
 	}
 	stored, err := r.store.LendingEmissionsUSDCoverages(ctx)
 	if err != nil {
@@ -148,20 +160,29 @@ func (r *LendingEmissionsRollup) spans(ctx context.Context) (map[string]rollupSp
 	for pool, c := range stored {
 		covs[pool] = rollupCoverage{floorDay: c.FloorDay, throughDay: c.ThroughDay, current: c.ValuationRev == lendingEmissionsValuationRev}
 	}
-	now := r.now().UTC()
 	spans, pools := map[string]rollupSpan{}, map[string]emisRollupPool{}
-	for pool, at := range first {
+	r.skipped, r.lineageErrs = 0, nil
+	for pool, at := range r.first {
 		protocol, lineage, err := r.srv.backstopLineage(ctx, pool)
 		if err != nil {
-			return nil, nil, fmt.Errorf("lending emissions rollup: lineage of %s: %w", pool, err)
+			if ctx.Err() != nil {
+				return nil, nil, err
+			}
+			r.logger.Error("lending emissions rollup: pool not valued", "pool", pool, "err", err)
+			r.skipped, r.lineageErrs = r.skipped+1, append(r.lineageErrs, fmt.Errorf("lending emissions rollup: lineage of %s: %w", pool, err))
+			continue
 		}
 		if lineage == backstopReasonUnknown {
+			r.skipped++
 			continue
 		}
 		info := emisRollupPool{protocol: protocol, lineage: lineage, unavailable: emisUnavailable(protocol, lineage)}
-		if sp, ok := r.span(ctx, pool, info, at.UTC().Truncate(day24), now); ok {
-			spans[pool], pools[pool] = sp, info
+		sp, ok := r.span(ctx, pool, info, at.UTC().Truncate(day24), now)
+		if !ok {
+			r.skipped++
+			continue
 		}
+		spans[pool], pools[pool] = sp, info
 	}
 	r.pools = pools
 	return spans, covs, nil
