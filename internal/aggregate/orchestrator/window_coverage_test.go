@@ -27,10 +27,33 @@ type sumsStore struct {
 	raw       []canonical.Trade // stored direction in each trade's Pair
 	watermark time.Time
 	late      map[string]bool // Trade.IDs inserted after their minute was materialised
-	rawReads  []time.Time     // from of every TradesInRange call
+	rawReads  []time.Time     // from of every TradesInRange call, newest minute of every TradesInMinutes call
 	liveReads [][2]time.Time  // [from, to) of every TradeSums1mLive call
 	liveErr   error           // returned by TradeSums1mLive
-	rereadErr error           // returned by every TradesInRange call after the first
+	rereadErr error           // returned by every raw read after the first
+}
+
+func (s *sumsStore) TradesInMinutes(ctx context.Context, p canonical.Pair, minutes []time.Time, limit int) ([]canonical.Trade, error) {
+	in := map[time.Time]bool{}
+	newest := minutes[0]
+	for _, m := range minutes {
+		in[m.UTC()] = true
+		if m.After(newest) {
+			newest = m
+		}
+	}
+	s.rawReads = append(s.rawReads, newest)
+	if s.rereadErr != nil && len(s.rawReads) > 1 {
+		return nil, s.rereadErr
+	}
+	var out []canonical.Trade
+	for _, t := range s.raw {
+		if in[t.Timestamp.Truncate(time.Minute).UTC()] {
+			out = append(out, t)
+		}
+	}
+	all, err := (&sumsStore{raw: out}).TradesInRange(ctx, p, time.Time{}, time.Unix(1<<40, 0), limit)
+	return all, err
 }
 
 func (s *sumsStore) TradesInRange(_ context.Context, p canonical.Pair, from, to time.Time, limit int) ([]canonical.Trade, error) {
@@ -312,13 +335,14 @@ func TestFillFromMinuteSums_WideMinuteIsReadRaw(t *testing.T) {
 	}
 }
 
-// More wide minutes than the raw budget: coverage ends after the newest one left unread, and nothing older is served.
+// More wide minutes than the re-read budget holds: coverage ends after the newest one left unread, and nothing older is served.
 func TestFillFromMinuteSums_BudgetExhaustedEndsCoverage(t *testing.T) {
 	pair := mkPair(t, "crypto", "XLM", "fiat", "USD")
 	from := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
 	to := from.Add(time.Hour)
 	raw := busyWindow(t, pair, from)
-	for m := 0; m <= minuteRawBudget; m++ {
+	perRead := (100 - 1) / 19 // a wide minute is busyWindow's 18 rows plus the off-price print; the cap is 100
+	for m := 0; m <= minuteRawBudget*perRead; m++ {
 		e := makeTradeOn(t, pair, "binance", 1_00000000, 30_000_000, from.Add(time.Duration(m)*time.Minute+time.Second))
 		e.OpIndex = uint32(900000 + m)
 		raw = append(raw, e)
