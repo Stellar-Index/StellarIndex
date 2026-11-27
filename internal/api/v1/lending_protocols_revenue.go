@@ -105,10 +105,12 @@ type protocolRevenueInput struct {
 	verdicts       map[string]string // asset → why a read-time verdict refuses it now
 }
 
-// revenueCovered is a pool's coverage when it holds at least one valued day.
+// revenueCovered is a pool's coverage when it holds at least one valued day at the current revisions: coverage another
+// valuer or derive wrote cannot vouch that a missing row is a day with nothing to value.
 func revenueCovered(covs map[string]timescale.LendingRevenueUSDCoverage, p revenuePool) (timescale.LendingRevenueUSDCoverage, bool) {
 	c, ok := covs[p.pool]
-	return c, ok && p.skip == "" && !c.ThroughDay.Before(c.FloorDay)
+	current := c.ValuationRev == lendingRevenueValuationRev && c.InterestDeriveRev == int16(lendinginterest.DeriveRev) //nolint:gosec // a small revision number
+	return c, ok && current && p.skip == "" && !c.ThroughDay.Before(c.FloorDay)
 }
 
 // protocolRevenueSpan is the block's day range: through the latest valued day of any of its pools, from the earliest floor.
