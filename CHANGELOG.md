@@ -20,6 +20,33 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.142.0] - 2026-11-27
+
+Tested against Stellar protocol 27. One additive migration, 0239 (schema version 239): the new tables `lending_revenue_usd_daily` and `lending_revenue_usd_coverage`, applied automatically by the deploy; it also re-creates `apply_api_role_grants()` so the API role can insert and update both. No `pkg/*` break (only a spec-contract test under `pkg/client` changed). No ClickHouse DDL change, so no operator DDL. Operators: the lending revenue rollup worker is new and off by default (`[lending_revenue_rollup] enabled`; ansible `stellarindex_lending_revenue_rollup_enabled`, default false). Until it is enabled, the `revenue` windows on `/v1/lending/protocols` read `not_valued` on every host. To enable: deploy with migration 0239 applied, set the variable; the self-fill takes about 5.5 h, and until it finishes the windows are lower bounds naming the days not yet valued. New ticket alerts `stellarindex_lending_revenue_rollup_stalled` and `stellarindex_lending_revenue_rollup_sweep_mismatch` cover the worker; do not enable it on a host that serves readers without them.
+
+### Added
+
+- **api:** `GET /v1/lending/pools/{pool}/revenue` serves a Blend V1, Blend V2 or BLNT pool's interest per reserve and hour or UTC day from `stellar.lending_interest_hourly`: interest accrued, its split (supplier share, backstop take, BLNT protocol fee), supplier credit, backstop drawn, supplier losses and the unexplained gain, in the reserve's base units as decimal strings, never summed across reserves. A partial sum sets `lower_bound` and names what was excluded (#4426).
+- **api:** the same endpoint values each reserve and bucket in USD at each hour's price (`usd` object, `totals_usd`, `price_max_age_hours`), using the `/history` price rule: the hourly VWAP at or before the hour, at most 6 h old, with the scam-issuer gate and thin-market guard. An hour with an amount and no price is counted and makes the sum a lower bound; nothing valued is null with a reason, never "0.00" (#4427).
+- **api:** `GET /v1/lending/pools/{pool}/bad-debt` serves per reserve what moved to the backstop, what the backstop covered by auction, what was socialised to suppliers, what the backstop repaid and what is outstanding, in d-tokens, underlying and USD, with a `reconciled` check and a residual when it does not close (#4428).
+- **api:** migration 0239 adds `lending_revenue_usd_daily` (exact USD per pool, reserve and UTC day, revenue legs as unscaled NUMERIC, NULL when nothing was priced) and `lending_revenue_usd_coverage`, and a worker in `stellarindex-api` that keeps them, off by default behind `[lending_revenue_rollup] enabled`. It runs every 10 minutes under an advisory lock, re-values changed, stale and revision-mismatched days within a per-cycle budget, and sweeps all stored days once a day to compare against a fresh walk. `/revenue` bodies are byte-identical to before (#4429).
+- **api:** `/v1/lending/protocols` gains a `revenue` block per protocol over 1d, 7d, 30d and all time, summed from `lending_revenue_usd_daily`: interest accrued, supplier share, backstop take, protocol fee (BLNT, `fee_rate_inferred`), backstop drawn and default loss, with no summed revenue field. A window missing any pool, day, price or revision is a lower bound naming it; with the rollup off the block is present, null and `not_valued`. Blend keeps V1 and V2 in one row with a per-version split (#4432).
+- **monitoring:** alerts `stellarindex_lending_revenue_rollup_stalled` (no success or start for 30 minutes) and `stellarindex_lending_revenue_rollup_sweep_mismatch` (a daily sweep difference), ticket severity, in both rule trees, promtool-tested; a new `started_unix` gauge covers a worker that never succeeded (#4432).
+- **explorer:** the lending pool page shows an interest and revenue panel (USD over the range control, split by leg, stacked daily chart, per-reserve table) and a bad-debt panel (five parts, reconciliation bar or residual). Null figures render a dash with the reason, and "at least" appears exactly where `lower_bound` is set; reasons are typed over the generated enums (#4431).
+- **explorer:** the lending page shows an interest and revenue panel per protocol with a window switcher; while a window is `not_valued` it reads "Revenue totals are not computed yet." (#4433).
+- **explorer:** `/lending/blend` and `/lending/blnt` are pages of their own, with protocol totals, that protocol's revenue windows, its pools table and a references footer; `/lending` keeps the overview charts and combined pools table with one card per protocol. `/lending/[pool]` and the sitemap now keep only contract ids (#4434).
+- (#PENDING-A) Aggregator: a VWAP window whose raw trade read hits the per-window cap now covers the whole window by summing the not-yet-materialised minutes from raw trades; it never covers less than the capped read
+- (#PENDING-B) API: the account earnings description now states per protocol where claimed backstop emissions land; Blend backstop claim amounts are labelled as backstop LP tokens
+
+### Changed
+
+- **api:** `reserveUSDWalk` now tells the read-time verdicts (scam issuer, operator withholding, thin market) apart from price-data refusals and read failures, and the walk budget is a parameter (30 s for the worker, 2 s on the request path); `/revenue` responses are unchanged (#4429).
+
+### Fixed
+
+- **tests:** `TestPriceTipStream_DivergenceBudgetDiscriminatesAtItsEdge` and `TestContractDetailCached_ExpiredWithinBoundServedClean` no longer depend on scheduling; no production code changed (#4425, #4430).
+- **docs:** `docs/protocols/blend.md` and `blnt.md` inventory Blend and BLNT emission events and name three facts still unverified (the V2 backstop claim's unit, which V1 pool WASMs emit claim events, and whether event emission rate equals the stored one); documentation only (#4435).
+
 ## [v0.141.0] - 2026-11-26
 
 Tested against Stellar protocol 27. One additive migration, 0238 (schema version 238): the new table `sushiswap_v3_manager_events`, applied automatically by the deploy. No `pkg/*` break (no change under `pkg/`). ClickHouse DDL changed: `deploy/clickhouse/lending_interest.sql` adds the columns `default_loss`, `default_versions`, `interest_drawn`, `gulped` and `reconcile_backstop_loss` to `stellar.lending_interest_hourly` (`si-apply-scope: operator`). Operators: apply it on every host, test nets included, BEFORE the deploy, since a new binary against a table without the columns fails the whole insert and writes nothing. After the deploy, re-derive lending interest from ledger 51499541 and run the full proof (derive revision 4); rows of an older revision prove INCOMPLETE until then. Run the Sushi position-manager catch-up, `projected-rebuild -source sushiswap_v3 -from 61487383 -only-kinds sushiswap_v3.manager`, as a dry run first and then with `-write` and `-to` pinned to the dry run's value; until it runs, `sushiswap_v3` completeness drops and the manager target reports a leading gap. New ticket alert `stellarindex_lending_interest_unexplained_versions` fires while a proof run still counts versions no event explains, which includes the 8 Blend V2 `defaulted_debt` versions until the re-derive completes.
@@ -106,27 +133,3 @@ Tested against Stellar protocol 27. No migrations (schema version stays 236). No
 ### Fixed
 
 - **lending:** the interest pass window line reports explained, attributed and unexplained versions separately, with up to five samples of unexplained rows. `stellarindex_lending_interest_unexplained_versions` and the proof report no longer count attributed versions (a Blend V1 interest-auction fill, whose event carries no amount) as unexplained (#4389).
-
-## [v0.137.0] - 2026-11-25
-
-Tested against Stellar protocol 27. No migrations (schema version stays 236). No `pkg/*` break (no change under `pkg/`). Operators of an EXISTING ClickHouse host: `deploy/clickhouse/lending_interest.sql` and `deploy/clickhouse/lending_state.sql` (both `si-apply-scope: operator`) changed in comments and runbook text only, with no DDL change, so nothing needs re-applying before deploying. New operator flag `-interest-max-versions` (default 150,000) on `ch-entry-history`. The hourly interest pass is uninitialised on every host and derive revision 2 replaces revision 1; a host that had initialised it would re-derive from the floor. New metrics: `stellarindex_lending_interest_undecodable_events`, `stellarindex_api_price_batch_prefetch_total`.
-
-### Added
-
-- **lending:** `ch-entry-history -lending-only` has an interest pass that reads every stored reserve version from the lake, folds it into exact hourly rows and writes `stellar.lending_interest_hourly`. It stays idle until an operator runs `-interest-init`, never starts a backfill from the timer, and refuses a pool whose contract code is not listed with its arithmetic (#4373, #4375).
-- **lending:** each interest residual is classified against the pool's own same-transaction events (interest-auction fill, gulp, BLNT reconcile loss) and marked explained only on exact equality; an event that cannot be decoded leaves its transaction's residuals unexplained and is counted in `stellarindex_lending_interest_undecodable_events`. Derive revision 2: revision-1 rows prove INCOMPLETE (#4380).
-- **lending:** `ch-entry-history -lending-only -prove -interest` is a read-only proof of the stored hourly interest rows against the lake. Optional daily and weekly proof units (off by default) and the alerts `stellarindex_lending_interest_lagging`, `stellarindex_lending_interest_proof_failed` and `stellarindex_lending_interest_proof_stale` cover it (#4375, #4378).
-- **api:** a request-scoped price read memo and Redis prefetch seams for `/v1/price/batch`, counted in `stellarindex_api_price_batch_prefetch_total{seam,result}`; a prefetched answer older than 2 s is read again. Nothing fills the memo yet, so responses are unchanged (#4381).
-- **timescale:** set forms of six per-key price readers, each returning what its single-key read would; no handler calls them yet (#4384).
-
-### Changed
-
-- **lending:** the interest pass no longer refuses where an operator had no way out: the seed proof runs in chunks of at most 250,000 ledgers, `-interest-max-versions` bounds the derive and the proof and the refusal names it, and a BLNT interest fill with a missing or mistyped `auction_type` is treated as undecodable instead of skipped (#4383).
-- **lending:** every interest mode holds the state lock shared and the state pass holds it exclusive, so state rows cannot change under a reading interest pass. A `lending_state` replay with `-from` arms an interest redo that must be re-derived before the pass runs, and seeds are proved against the lake (#4377).
-- **explorer:** the static build writes each answered `/v1/price/batch` chunk to disk and reuses it in the second render pass, so each chunk is requested once per build (#4376).
-
-### Fixed
-
-- **api:** an old but healthy cached explorer page is flagged `stale` only, not `degraded`; `degraded` is set for a failed, refused or overrunning refresh, a provisional payload or a failed panel. This covers contract detail, holders, the contracts directory, contract stats and the operations directory; price, supply, market cap, TVL and balance caches are unchanged (#4382).
-- **lending:** a `lending_state` replay no longer lets a concurrent interest run seed a reserve from a row before the deleted range, which counted one hour's rate movement twice (#4377).
-- **lending:** the interest re-derive delete cutoff uses millisecond server time, matching `derived_at` (#4383).
