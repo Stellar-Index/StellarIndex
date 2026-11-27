@@ -5521,11 +5521,11 @@ paths:
                   unrecorded_bid_fills: 0
                   reserves:
                   - asset: CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA
-                    moved_to_backstop: { d_tokens: '1000000000', d_tokens_reason: null, underlying: '1100000000', usd: '33.00', usd_reason: null, underlying_reason: null, events:1 }
-                    covered_by_backstop: { d_tokens: '400000000', d_tokens_reason: null, underlying: '440000000', usd: '13.20', usd_reason: null, underlying_reason: null, events:1 }
-                    socialised_to_suppliers: { d_tokens: '600000000', d_tokens_reason: null, underlying: '660000000', usd: '19.80', usd_reason: null, underlying_reason: null, events:1 }
-                    repaid_by_backstop: { d_tokens: '0', d_tokens_reason: null, underlying: '0', usd: '0.00', usd_reason: null, underlying_reason: null, events:0 }
-                    outstanding: { d_tokens: '0', d_tokens_reason: null, underlying: '0', usd: '0.00', usd_reason: null, underlying_reason: null, events:0 }
+                    moved_to_backstop: { d_tokens: '1000000000', d_tokens_reason: null, underlying: '1100000000', usd: '33.00', usd_reason: null, underlying_reason: null, events: 1 }
+                    covered_by_backstop: { d_tokens: '400000000', d_tokens_reason: null, underlying: '440000000', usd: '13.20', usd_reason: null, underlying_reason: null, events: 1 }
+                    socialised_to_suppliers: { d_tokens: '600000000', d_tokens_reason: null, underlying: '660000000', usd: '19.80', usd_reason: null, underlying_reason: null, events: 1 }
+                    repaid_by_backstop: { d_tokens: '0', d_tokens_reason: null, underlying: '0', usd: '0.00', usd_reason: null, underlying_reason: null, events: 0 }
+                    outstanding: { d_tokens: '0', d_tokens_reason: null, underlying: '0', usd: '0.00', usd_reason: null, underlying_reason: null, events: 0 }
                     reconciled: true
                     reconcile_reason: null
                     residual_d_tokens: '0'
