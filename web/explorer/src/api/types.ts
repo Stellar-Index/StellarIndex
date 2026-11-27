@@ -7319,6 +7319,90 @@ export interface components {
             /** @description Legs left out of the accrued sums: every leg in `excluded`, plus valued legs whose accrued is unread (`accrued_unavailable`) or unpriced. */
             accrued_excluded: components["schemas"]["LendingStatsExclusion"][];
         };
+        /**
+         * @description The protocol's interest revenue in USD over complete UTC days, summed from the stored day-by-day valuation
+         *     (`lending_revenue_usd_daily`; see `/v1/lending/pools/{pool}/revenue` for the legs). Every window ends on the same
+         *     `through_day`: the latest day any of the protocol's pools is valued through. A pool valued through an earlier day, or
+         *     whose valued days start after a window's `from_day`, is named `days_not_valued` with the days it lacks, so a window is
+         *     never short without saying so. `all_time` starts at the earliest pool's first valued day: interest before the derived
+         *     interest record begins is outside every window. There is no summed "protocol revenue" figure: the legs go to
+         *     different parties.
+         */
+        LendingProtocolRevenue: {
+            /** @description True for BLNT: `protocol_fee_usd` rests on a fee rate inferred from chain data. */
+            fee_rate_inferred: boolean;
+            "1d": components["schemas"]["LendingProtocolRevenueWindow"];
+            "7d": components["schemas"]["LendingProtocolRevenueWindow"];
+            "30d": components["schemas"]["LendingProtocolRevenueWindow"];
+            all_time: components["schemas"]["LendingProtocolRevenueWindow"];
+        };
+        /** @description One window, [`from_day`, `through_day`] inclusive. */
+        LendingProtocolRevenueWindow: components["schemas"]["LendingProtocolRevenueAmounts"] & {
+            /**
+             * Format: date
+             * @description First UTC day summed; null when no pool is valued.
+             */
+            from_day: string | null;
+            /**
+             * Format: date
+             * @description Last UTC day summed, the same in every window; null when no pool is valued.
+             */
+            through_day: string | null;
+            /** @description What the window leaves out; any entry sets `lower_bound`. */
+            excluded: components["schemas"]["LendingProtocolRevenueExclusion"][];
+            /** @description Blend only (null for BLNT): the window split by pool version. `v1` plus `v2` is the window exactly, before rounding. */
+            versions: {
+                v1?: components["schemas"]["LendingProtocolRevenueAmounts"];
+                v2?: components["schemas"]["LendingProtocolRevenueAmounts"];
+            } | null;
+        };
+        /** @description Exact USD sums of the stored days, rounded once to cents. Null together, with `usd_reason`, when nothing could be valued; never `"0.00"` for days that were not valued. */
+        LendingProtocolRevenueAmounts: {
+            /** @description Interest borrowers owe, valued hour by hour at each hour's price. */
+            interest_accrued_usd: string | null;
+            /** @description Suppliers' share of the interest. */
+            supplier_share_usd: string | null;
+            /** @description The backstop's take. */
+            backstop_take_usd: string | null;
+            /** @description BLNT's protocol fee (`fee_rate_inferred`); 0 on Blend. */
+            protocol_fee_usd: string | null;
+            /** @description Backstop credit paid out by interest auctions. */
+            backstop_drawn_usd: string | null;
+            /** @description Always true: interest auction draws are a lower bound (Blend V1 fills do not state their lot). */
+            backstop_drawn_lower_bound: boolean;
+            /** @description Defaults cut from suppliers, as a positive amount. */
+            default_loss_usd: string | null;
+            /** @description True when `excluded` names anything (for a version, anything of its pools): the figures are floors. */
+            lower_bound: boolean;
+            /**
+             * @description Why the figures are null. `not_valued`: no pool is valued inside the window (every host before the rollup has run). `all_excluded`: every day carrying an amount was left out; `excluded` names why.
+             * @enum {string|null}
+             */
+            usd_reason: "not_valued" | "all_excluded" | null;
+        };
+        /** @description What a revenue window leaves out and why. */
+        LendingProtocolRevenueExclusion: {
+            /** @description Pool contract C-strkey. */
+            pool: string;
+            /** @description Reserve token C-strkey for a reserve-level reason; null for a pool-level one. */
+            asset: string | null;
+            /**
+             * @description Pool-level: `not_valued` the pool has no valued day yet; `days_not_valued` window days outside the pool's valued
+             *     days (`count` days); `redo_pending` a pending re-derive will rewrite the pool's days from then on;
+             *     `pool_read_failed` its reserves could not be read, so no read-time verdict could be applied; `pool_version_unknown`
+             *     a Blend pool neither V1 nor V2, left out so `versions` add up; `revenue_read_failed` the stored days could not
+             *     be read (the response is also degraded). Reserve-level: `valuation_stale` days stored at an older valuation or
+             *     derive revision, left out until re-valued (`count` days); `price_missing` hours with an amount but no price
+             *     (`count` hours); `withheld` a read-time verdict (scam issuer, thin market, operator withholding) refuses the
+             *     token now, or refused the stored day (`count` days, nothing of it summed); `price_read_failed` the verdict
+             *     could not be read, so the reserve is left out (`count` days; the response is also degraded);
+             *     `amounts_excluded` hour rows or versions the interest record left out of a summed day (`count`).
+             * @enum {string}
+             */
+            reason: "not_valued" | "days_not_valued" | "redo_pending" | "valuation_stale" | "price_missing" | "withheld" | "amounts_excluded" | "price_read_failed" | "pool_read_failed" | "pool_version_unknown" | "revenue_read_failed";
+            /** @description Days, hours or versions as `reason` says; null for a reason without one. */
+            count: number | null;
+        };
         /** @description What a lending figure leaves out and why. */
         LendingStatsExclusion: {
             /** @enum {string} */
@@ -19367,6 +19451,7 @@ export interface operations {
                             backstop_usd_lower_bound?: boolean;
                             /** @description Kinds `pool_list`, `pool`, `reserve`, `backstop` and `token`; `supply` and `borrow` are an account's earnings legs. */
                             excluded?: components["schemas"]["LendingStatsExclusion"][];
+                            revenue?: components["schemas"]["LendingProtocolRevenue"];
                         }[];
                     };
                 };

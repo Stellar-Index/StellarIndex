@@ -61,6 +61,47 @@ names the reserve with `price_missing`). A reserve with amounts but no price at 
 out of `totals_usd`. Anything the base-unit sums leave out is missing from the USD sums too, so `totals_usd` is a lower
 bound whenever the response's `lower_bound` is.
 
+## Protocol revenue: `revenue` on `GET /v1/lending/protocols`
+
+Each protocol carries a `revenue` block: `interest_accrued_usd`, `supplier_share_usd`, `backstop_take_usd`,
+`protocol_fee_usd`, `backstop_drawn_usd` and `default_loss_usd` over the windows `1d`, `7d`, `30d` and `all_time`. Each
+is summed exactly from the stored daily totals above and rounded to cents once. There is no single "protocol revenue"
+figure: the legs go to different parties. `blend` is one row for V1 and V2 pools together, and its `versions` splits each
+window into `v1` and `v2`, which add up to it exactly. `backstop_drawn_lower_bound` is always true, for the reason given
+for `realised.backstop_drawn` above.
+
+**Windows.** A window is whole UTC days, never rolling hours. Every window ends on the same `through_day`: the latest day
+any of the protocol's pools is valued through. `1d` is that day, `7d` and `30d` the days ending on it. `all_time` starts
+at the earliest pool's first valued day (`from_day`); interest from before the derived interest record begins is in no
+window. A pool valued through an earlier day, or whose first valued day falls after a window's `from_day`, is named
+`days_not_valued` with the number of days it lacks. So the newest day is shown as soon as one pool reaches it, and a slow
+pool makes the window a lower bound instead of holding it back.
+
+**Lower bounds.** A window is `lower_bound` whenever `excluded` names anything. A version is `lower_bound` when anything
+of its pools is named.
+
+| `reason` | Cause | `count` |
+|---|---|---|
+| `not_valued` | The pool has no valued day yet. | — |
+| `days_not_valued` | Window days outside the pool's valued days. | days |
+| `redo_pending` | A pending re-derive will rewrite the pool's days. | — |
+| `valuation_stale` | Days stored at an older valuation or derive revision. They are left out, not summed, until the rollup re-values them. | days |
+| `price_missing` | Hours with an amount but no price. | hours |
+| `withheld` | A read-time verdict refuses the token now, or refused the stored day. Nothing of it is summed. | days |
+| `price_read_failed` | The verdict could not be read, so the reserve is left out. | days |
+| `amounts_excluded` | Hour rows or versions the interest record left out of a summed day. | rows + versions |
+| `pool_read_failed`, `pool_version_unknown`, `revenue_read_failed` | The pool, or the stored days, could not be read or classified. | — |
+
+The verdicts are applied when the block is built, not only when a day is stored. A reserve the live reserves page
+withholds now (an operator withholding, a thin market, a scam-flagged issuer) adds nothing to any window, whatever was
+stored for it. So does a reserve whose issuer is flagged, through the same issuer check a day's price walk starts with.
+Building the block walks no price series: it reads each pool's reserves view (already read for this route), one price and
+one directory lookup per token, and one `GROUP BY` over the daily table on its primary key.
+
+**Before the rollup has run.** With no stored days, every amount is null with `usd_reason: not_valued` and every pool is
+named, never `"0.00"`. When something is valued but every day carrying an amount was left out, the amounts are null with
+`usd_reason: all_excluded`.
+
 ## Bad debt: `GET /v1/lending/pools/{pool}/bad-debt`
 
 When a borrower's collateral is gone but debt remains, the pool moves that debt onto its backstop's own position. From
