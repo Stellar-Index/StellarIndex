@@ -48,7 +48,7 @@ export const REVENUE_REASON_TEXT: Record<Reason, string> = {
   amount_not_recorded: 'amount not recorded on chain events',
   asset_not_recorded: 'asset not recorded on chain events',
   backstop_unresolved: 'the pool’s backstop could not be identified',
-  backstop_role_unverified: 'BLNT auction type not verified',
+  backstop_role_unverified: "BLNT's backstop address is not verified",
   lake_unavailable: 'raw ledger data is unavailable',
   position_unread: 'the backstop’s position could not be read',
   leg_kind_unknown: 'auction leg type not verified for this protocol',

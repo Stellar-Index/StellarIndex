@@ -183,10 +183,10 @@ describe('BadDebtPanel', () => {
     );
     renderIt();
     await screen.findByText('Bad debt');
-    expect(check()).toBe("can't be checked: BLNT auction type not verified");
+    expect(check()).toBe("can't be checked: BLNT's backstop address is not verified");
     expect(
       screen.getByTestId(`bad-debt-outstanding-${USDC_SAC}`).textContent,
-    ).toBe('—BLNT auction type not verified');
+    ).toBe("—BLNT's backstop address is not verified");
   });
 
   it('a pool whose event tables lag the chain says it cannot be checked yet', async () => {
@@ -271,7 +271,7 @@ describe('BadDebtPanel', () => {
     renderIt();
     expect(
       await screen.findByText(/No bad-debt auction recorded for this pool/),
-    ).toHaveTextContent("can't be checked: BLNT auction type not verified.");
+    ).toHaveTextContent("can't be checked: BLNT's backstop address is not verified.");
     expect(screen.queryByRole('table')).toBeNull();
   });
 
