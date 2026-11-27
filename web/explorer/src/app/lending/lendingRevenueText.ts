@@ -11,7 +11,12 @@ type EnumReason =
   | S['LendingRevenueAmounts']['realised']['fee_withdrawn_reason']
   | NonNullable<S['LendingBadDebtPart']['d_tokens_reason']>
   | NonNullable<S['LendingBadDebtReserve']['reconcile_reason']>
-  | NonNullable<BadDebtData['backstop_reason']>;
+  | NonNullable<BadDebtData['backstop_reason']>
+  | ProtocolReason;
+
+type ProtocolReason =
+  | S['LendingProtocolRevenueExclusion']['reason']
+  | NonNullable<S['LendingProtocolRevenueAmounts']['usd_reason']>;
 
 /** Valuation reasons the spec names in prose on a bad-debt part's `usd_reason` / `underlying_reason`. */
 export const BAD_DEBT_VALUATION_REASONS = [
@@ -61,10 +66,34 @@ export const REVENUE_REASON_TEXT: Record<Reason, string> = {
   price_thin_at_fill: 'too little traded at the fill to price',
   price_unread: 'price could not be read',
   current_rate_unavailable: 'current exchange rate unavailable',
+  not_valued: 'not valued yet',
+  all_excluded: 'every day with an amount was left out',
+  days_not_valued: 'some days are not valued yet',
+  valuation_stale: 'some days are waiting to be re-valued',
+  pool_read_failed: 'the pool could not be read',
+  pool_version_unknown: 'the pool’s version is unknown',
+  revenue_read_failed: 'stored revenue could not be read',
+  revenue_timed_out: 'reading revenue took too long',
+  pool_list_read_failed: 'the pool list could not be read',
+};
+
+// The same code reads differently on a protocol window than on a pool range.
+const PROTOCOL_REASON_TEXT: Partial<Record<ProtocolReason, string>> = {
+  amounts_excluded: 'some hourly rows were left out of a summed day',
+  redo_pending: 'some days are waiting to be recomputed',
 };
 
 /** Plain words for a revenue or bad-debt reason; the raw code spaced out when unmapped. */
 export function revenueReasonText(reason: string | null | undefined): string {
   if (!reason) return 'no value';
   return REVENUE_REASON_TEXT[reason as Reason] ?? reason.replace(/_/g, ' ');
+}
+
+/** Plain words for a `/v1/lending/protocols` revenue reason. */
+export function protocolRevenueReasonText(
+  reason: string | null | undefined,
+): string {
+  return (
+    PROTOCOL_REASON_TEXT[reason as ProtocolReason] ?? revenueReasonText(reason)
+  );
 }

@@ -6,6 +6,7 @@ import { NoteBadge } from '@/components/NoteBadge';
 import { Panel } from '@/components/reveal';
 import { LendingPoolsTable } from './LendingPoolsTable';
 import { LendingProtocolStats } from './LendingProtocolStats';
+import { LendingProtocolRevenue } from './LendingProtocolRevenue';
 import { LendingOverviewCharts } from './LendingOverviewCharts';
 import { Badge, Container, PageHeader } from '@/components/ui';
 import { protocolMeta } from '@/app/protocols/registry';
@@ -132,6 +133,7 @@ export default function LendingPage() {
           </a>
         </div>
       </Panel>
+      <LendingProtocolRevenue />
       <LendingPoolsTable />
       <NoteBadge label="indexed pools only">
         Pools are listed once they have an indexed auction or a position; a pool
