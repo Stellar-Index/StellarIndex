@@ -333,7 +333,7 @@ Limit: each restart resets `started_unix`, so an API that restarts more often th
 
 `stellarindex_lending_emissions_rollup_stalled` is the revenue rollup's stall rule over `stellarindex_lending_emissions_rollup_started_unix` and `_last_success_unix`: the worker is enabled somewhere and no instance has finished a cycle holding its lock for over 30 minutes since its last success or start.
 
-1. Read the API log for `lending emissions rollup cycle failed` (a Postgres or lake read failed, or the 8-minute cycle budget ran out) and `lending emissions rollup: lock release`.
+1. Read the API log for `lending emissions rollup cycle failed` (a Postgres or lake read failed, or the 8-minute cycle budget ran out), for `lending emissions rollup: pool not valued` (names the one pool that failed) and for `lending emissions rollup: lock release`. A pool error reading `the read serves a point at …, which no row reaches` means the day's `/emissions/history` read bucketed a point off the UTC day asked for (an event read truncating in a zone other than UTC): the pool's coverage stays put rather than call that day empty. As for the revenue rollup, the other pools keep up while the failed one keeps this alert on, and its unvalued days wait in the capped in-memory retry (`retry_dropped` counts the overflow).
 2. Check the advisory lock holder as for the revenue rollup above.
 3. Each pool-day is one `/emissions/history?interval=1d` read; a cycle that runs out of budget every time is that read slowing. The trailing days and the sweep still advance once it recovers. The revenue rollup's restart limit applies here too.
 
