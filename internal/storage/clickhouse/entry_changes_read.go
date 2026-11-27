@@ -160,7 +160,7 @@ const assetTrustlineDailyQuery = `WITH
 		FROM stellar.ledgers WHERE ledger_seq <= ? GROUP BY day),
 	led AS (SELECT ledger, any(n_created) AS c, any(n_removed) AS r, toUInt8(0) AS k
 		FROM stellar.asset_entry_ledgers WHERE asset = ? AND entry_type = 'trustline' AND ledger <= ? GROUP BY ledger)
-	SELECT days.day, toUInt64(sum(led.c)), toUInt64(sum(led.r))
+	SELECT toDateTime(days.day, 'UTC'), toUInt64(sum(led.c)), toUInt64(sum(led.r))
 	FROM led ASOF INNER JOIN days ON led.k = days.k AND led.ledger >= days.first
 	GROUP BY days.day ORDER BY days.day` + explorerScanSettings
 
@@ -181,6 +181,7 @@ func (r *ExplorerReader) AssetTrustlineDaily(ctx context.Context, asset string, 
 		if err := rows.Scan(&d.Day, &d.Created, &d.Removed); err != nil {
 			return nil, fmt.Errorf("clickhouse: asset trustline daily scan: %w", err)
 		}
+		d.Day = d.Day.UTC()
 		out = append(out, d)
 	}
 	return out, rows.Err()
