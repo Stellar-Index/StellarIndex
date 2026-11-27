@@ -64,10 +64,36 @@ esac
 case "$mode" in
   fail) echo "mc: <ERROR> Unable to list. Access Denied." >&2; exit 1 ;;
   empty) exit 0 ;;
+  manifest) printf '[2026-09-05 10:00:00 UTC] 1.0KiB STANDARD .config.json\n'; exit 0 ;;
 esac
+# LIVE_FIRST adds the oldest live partition/object (last rows: names sort newest-first).
+oldest="FFFFFFFF--0-63999"
+# LIVE_BAD_OLDEST=1: the oldest object's name does not parse. LIVE_OLDEST_LS_FAIL=1: the
+# SECOND listing (of the oldest partition) fails. LIVE_STRAY=1: a lowercase directory that
+# sorts after every partition and holds a low-numbered object.
 case "$2" in
-  */*/*/) printf '[2026-09-05 10:00:00 UTC] 1.2KiB STANDARD %s\n' "$tip" ;;
-  *)      printf '[2026-09-05 10:00:00 UTC]     0B %s/\n' "$part" ;;
+  local/galexie-live/tmp/) printf '[2026-09-05 10:00:00 UTC] 1.2KiB STANDARD FFFFFFFF--2.xdr.zst\n' ;;
+  */*/*/)
+    if [ -n "${LIVE_OLDEST_LS_FAIL:-}" ] && [[ "$2" == *"/$oldest/" ]]; then
+      echo "mc: <ERROR> Unable to list. Access Denied." >&2
+      exit 1
+    fi
+    printf '[2026-09-05 10:00:00 UTC] 1.2KiB STANDARD %s\n' "$tip"
+    if [ -n "${LIVE_FIRST:-}" ] && [[ "$2" == *"/$oldest/" ]]; then
+      if [ -n "${LIVE_BAD_OLDEST:-}" ]; then
+        printf '[2026-09-05 10:00:00 UTC] 1.2KiB STANDARD notes.txt\n'
+      else
+        printf '[2026-09-05 10:00:00 UTC] 1.2KiB STANDARD FFFFFFFF--%s.xdr.zst\n' "$LIVE_FIRST"
+      fi
+    fi ;;
+  *)
+    printf '[2026-09-05 10:00:00 UTC]     0B %s/\n' "$part"
+    if [ -n "${LIVE_FIRST:-}" ] && [[ "$2" == local/galexie-live/ ]]; then
+      printf '[2026-09-05 10:00:00 UTC]     0B %s/\n' "$oldest"
+    fi
+    if [ -n "${LIVE_STRAY:-}" ] && [[ "$2" == local/galexie-live/ ]]; then
+      printf '[2026-09-05 10:00:00 UTC]     0B tmp/\n'
+    fi ;;
 esac
 SH
 chmod +x "$TMP/bin/mc"
@@ -101,6 +127,8 @@ unmeasured_absent() {
   ! has galexie_archive_tip_lag_ledgers && ! has galexie_live_tip_ledger && ! has galexie_archive_tip_ledger
 }
 
+unmeasured_archive() { ! has galexie_archive_tip_lag_ledgers && ! has galexie_archive_tip_ledger; }
+
 echo "galexie-archive-tip-lag-test:"
 
 # 1. healthy
@@ -133,6 +161,46 @@ rm -f "$OUT"
 run ok fail
 eq "first-run failure: probe_success" "$(value galexie_archive_tip_lag_probe_success)" 0
 eq "first-run failure: no success stamp invented" "$(value galexie_archive_tip_lag_updated_seconds)" ""
+
+# 3b. empty BY DESIGN (reset test net): archive lists nothing and live starts at
+# ledger 2. Healthy, flagged, tip and lag absent (never a fabricated 0).
+LIVE_FIRST=2 run ok empty
+eq "empty by design: exit status" "$rc" 0
+eq "empty by design: probe_success" "$(value galexie_archive_tip_lag_probe_success)" 1
+eq "empty by design: flagged" "$(value galexie_archive_tip_lag_expected_empty)" 1
+eq "empty by design: live tip" "$(value galexie_live_tip_ledger)" 150000
+check "empty by design: no archive tip or lag" unmeasured_archive
+check "empty by design: fresh success stamp" fresh "$(value galexie_archive_tip_lag_updated_seconds)"
+check "empty by design: valid exposition" valid
+LIVE_FIRST=0 run ok empty
+eq "empty, live first file starts at 0 (--0-63): healthy" "$rc" 0
+
+# 3c. the same empty archive is a failure in every other state. Fields: live-mode
+# archive-mode live-first [stub flag]. Live first 3 and 64 leave ledgers 2.. in neither bucket.
+for c in "ok empty 3:empty archive, live starts at 3 (ledger 2 missing)" \
+  "ok empty 64:empty archive, live starts at 64 (ledgers 2-63 missing)" \
+  "ok empty 4000000:empty archive, live starts high (range unfilled)" \
+  "ok empty :empty archive, live holds only its newest object (starts high)" \
+  "ok empty 2 LIVE_BAD_OLDEST:empty archive, oldest live object name unparseable" \
+  "ok empty 2 LIVE_OLDEST_LS_FAIL:empty archive, oldest live partition listing fails" \
+  "ok empty 150000 LIVE_STRAY:empty archive, stray live directory not used for the start" \
+  "ok manifest 2:archive holds only a manifest" \
+  "ok fail 2:archive unreadable, live starts low" \
+  "fail empty 2:live unreadable, archive empty"; do
+  rest="${c%%:*}" label="${c#*:}"
+  # shellcheck disable=SC2086 # fields split on purpose
+  set -- $rest
+  [ -n "${4:-}" ] && export "$4=1"
+  LIVE_FIRST="${3:-}" run "$1" "$2"
+  [ -n "${4:-}" ] && unset "$4"
+  check "$label: exits non-zero" test "$rc" -ne 0
+  eq "$label: probe_success" "$(value galexie_archive_tip_lag_probe_success)" 0
+  eq "$label: not flagged empty" "$(value galexie_archive_tip_lag_expected_empty)" ""
+done
+# A non-empty archive is unchanged whatever the live start.
+LIVE_FIRST=2 run ok ok
+eq "normal archive, live starts low: lag published" "$(value galexie_archive_tip_lag_ledgers)" 22129
+eq "normal archive: not flagged empty" "$(value galexie_archive_tip_lag_expected_empty)" ""
 
 # 4. no temp file survives
 eq "no temp file left behind" "$(find "$TMP/textfile" -name '*.tmp.*')" ""

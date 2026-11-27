@@ -33,7 +33,7 @@ type ContractStats struct {
 
 // Aliases must not shadow column names (ILLEGAL_AGGREGATION). A full-table GROUP BY, so it
 // carries its own execution cap on top of the scan pin.
-const contractDeploymentsQuery = `SELECT toStartOfMonth(f) AS m,
+const contractDeploymentsQuery = `SELECT toDateTime(toStartOfMonth(f), 'UTC') AS m,
 		       toInt64(countIf(s = 1)) AS n_sac, toInt64(countIf(s = 0)) AS n_wasm
 		FROM (
 		    SELECT contract_hash, min(close_time) AS f, argMin(is_sac, ledger_seq) AS s
@@ -44,8 +44,8 @@ const contractDeploymentsQuery = `SELECT toStartOfMonth(f) AS m,
 		ORDER BY m` + explorerScanSettings + `, max_execution_time = 120`
 
 const contractActive90dQuery = `SELECT toInt64(uniqExact(contract_id)),
-		       (SELECT max(day) FROM stellar.contracts_census_daily)
-		FROM stellar.contracts_census_daily WHERE day >= today() - 90`
+		       (SELECT toDateTime(max(day), 'UTC') FROM stellar.contracts_census_daily)
+		FROM stellar.contracts_census_daily WHERE day >= toDate(now('UTC')) - 90`
 
 // ContractStats reads the deployment histogram, the 90-day active count and the instance table's genesis watermark.
 func (r *ExplorerReader) ContractStats(ctx context.Context) (ContractStats, error) {

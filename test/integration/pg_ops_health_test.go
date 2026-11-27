@@ -80,7 +80,25 @@ func TestDataFreshnessSurvivesADeadFeed(t *testing.T) {
 		t.Fatalf("seed issuer: %v", err)
 	}
 
-	samples := runFreshnessDomainQueries(t, ctx, db)
+	samples := runFreshnessDomainQueries(t, ctx, db, "NULL")
+
+	t.Run("an empty source is stale only once the chain is older than its threshold", func(t *testing.T) {
+		stale := `stellarindex_data_freshness_stale{domain="sep1",source="issuers"}`
+		empty := `stellarindex_data_freshness_empty{domain="sep1",source="issuers"}`
+		for _, c := range []struct{ chainAge, wantStale string }{
+			{"60", "0"},       // young chain: nothing can be overdue yet
+			{"99999999", "1"}, // old chain: an empty source is overdue
+			{"NULL", "1"},     // unmeasurable chain: fail safe, stale
+		} {
+			s := runFreshnessDomainQueries(t, ctx, db, c.chainAge)
+			if s[stale] != c.wantStale {
+				t.Errorf("chain age %s: %s = %q, want %s", c.chainAge, stale, s[stale], c.wantStale)
+			}
+			if s[empty] != "1" {
+				t.Errorf("chain age %s: %s = %q, want 1", c.chainAge, empty, s[empty])
+			}
+		}
+	})
 
 	t.Run("a long-dead source still reports stale", func(t *testing.T) {
 		for _, want := range []struct{ key, why string }{
@@ -164,8 +182,10 @@ func TestDataFreshnessSurvivesADeadFeed(t *testing.T) {
 
 // runFreshnessDomainQueries executes the watchdog's per-domain and
 // per-asset blocks and returns every exposition sample it rendered,
-// keyed by `name{labels}`.
-func runFreshnessDomainQueries(t *testing.T, ctx context.Context, db *sql.DB) map[string]string {
+// keyed by `name{labels}`. chainAge stands in for the psql variable
+// `:chain_age` the script passes with -v: whole seconds, or "NULL" for an
+// unmeasurable chain.
+func runFreshnessDomainQueries(t *testing.T, ctx context.Context, db *sql.DB, chainAge string) map[string]string {
 	t.Helper()
 	out := map[string]string{}
 	for _, needle := range []string{
@@ -173,7 +193,7 @@ func runFreshnessDomainQueries(t *testing.T, ctx context.Context, db *sql.DB) ma
 		"stellarindex_supply_assets_stale",
 	} {
 		for _, stmt := range freshnessSQLBlocks(t, needle) {
-			rows, err := db.QueryContext(ctx, stmt)
+			rows, err := db.QueryContext(ctx, strings.ReplaceAll(stmt, ":chain_age", chainAge))
 			if err != nil {
 				t.Fatalf("execute watchdog block: %v\n--- SQL ---\n%s", err, stmt)
 			}

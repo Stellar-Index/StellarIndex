@@ -82,8 +82,27 @@ tail_from() {  # tail_from <first-index> <last-index>, 64k partitions from 49984
     row "$s" "$e" $((781 - i))
   done
 }
+case "$2" in
+  stub/galexie-live/tmp/) # stray lowercase directory holding a low-numbered object
+    echo "[2026-09-05 10:00:00 UTC] 1.2KiB STANDARD FFFFFFFF--2.xdr.zst"
+    exit 0 ;;
+  stub/galexie-live/FFFFFFFF--0-63999/) # oldest live partition: newest object first
+    [ -n "${LIVE_OLDEST_LS_FAIL:-}" ] && { echo "mc: <ERROR> Access Denied." >&2; exit 1; }
+    echo "[2026-09-05 10:00:00 UTC] 1.2KiB STANDARD FFFFFFFE--9.xdr.zst"
+    if [ -n "${LIVE_BAD_OLDEST:-}" ]; then
+      echo "[2026-09-05 10:00:00 UTC] 1.2KiB STANDARD notes.txt"
+    else
+      [ -n "${LIVE_FIRST:-}" ] && echo "[2026-09-05 10:00:00 UTC] 1.2KiB STANDARD FFFFFFFF--${LIVE_FIRST}.xdr.zst"
+    fi
+    exit 0 ;;
+  stub/galexie-live/)
+    [ "${LIVE_MODE:-ok}" = dead ] && { echo "mc: <ERROR> Access Denied." >&2; exit 1; }
+    [ -n "${LIVE_FIRST:-}" ] && echo "[2026-09-05 10:00:00 UTC]     0B FFFFFFFF--0-63999/"
+    [ -n "${LIVE_STRAY:-}" ] && echo "[2026-09-05 10:00:00 UTC]     0B tmp/"
+    exit 0 ;;
+esac
 case "${MODE:-full}" in
-  full)       genesis; tail_from 0 4; exit 0 ;;
+  full)      genesis; tail_from 0 4; exit 0 ;;
   gap)        genesis; tail_from 0 1; tail_from 3 4; exit 0 ;;   # partition 2 deleted
   overlap)    genesis; tail_from 0 4; row 50176000 50239999 776; exit 0 ;;
   rehydrate)  genesis; row 38080000 38143999 595; tail_from 0 4; exit 0 ;;   # one partition re-filled inside the trim
@@ -96,6 +115,7 @@ case "${MODE:-full}" in
   dead)       echo "mc: <ERROR> Unable to initialize new alias. no such host" >&2
               exit 1 ;;
   empty)      exit 0 ;;
+  manifest)   echo "[2026-09-05 10:00:00 UTC] 1.0KiB STANDARD .config.json"; exit 0 ;;
   unparseable) # mc answered, in a shape the partition regex no longer matches
               echo "[2026-09-05 10:00:00 UTC]     0B ledgers/0/63999/"
               echo "[2026-09-05 10:00:00 UTC]     0B ledgers/49984000/50047999/"
@@ -218,6 +238,48 @@ expect galexie_archive_unexpected_gaps 1 "an empty bucket still fires"
 expect galexie_archive_partition_count 0 "an empty bucket reports zero partitions"
 expect galexie_archive_scan_ok 1 "an empty bucket is a successful read"
 expect galexie_archive_scan_listing_lines 0 "an empty bucket reports zero rows read"
+
+# ─── 4b. empty BY DESIGN ────────────────────────────────────────────
+#
+# A reset test net re-ingested from ledger 2: nothing to archive, so an
+# empty archive is healthy. Only when the archive listing returned no row
+# at all AND the oldest live object starts at or below the bound.
+export LIVE_BUCKET="stub/galexie-live"
+LIVE_FIRST=2 run empty
+expect galexie_archive_unexpected_gaps 0 "empty by design: no gap"
+expect galexie_archive_expected_empty 1 "empty by design: flagged"
+expect galexie_archive_scan_ok 1 "empty by design: successful read"
+expect galexie_archive_partition_count 0 "empty by design: zero partitions"
+LIVE_FIRST=0 run empty
+expect galexie_archive_unexpected_gaps 0 "empty, live first file starts at 0 (--0-63): healthy"
+
+# The same empty archive still fires in every other state.
+LIVE_FIRST=3 run empty
+expect galexie_archive_unexpected_gaps 1 "empty archive, live starts at 3 (ledger 2 missing) still fires"
+expect galexie_archive_expected_empty 0 "empty archive, live starts at 3: not flagged"
+LIVE_FIRST=64 run empty
+expect galexie_archive_unexpected_gaps 1 "empty archive, live starts at 64 (ledgers 2-63 missing) still fires"
+LIVE_BAD_OLDEST=1 LIVE_FIRST=2 run empty
+expect galexie_archive_unexpected_gaps 1 "empty archive, oldest live object name unparseable still fires"
+LIVE_OLDEST_LS_FAIL=1 LIVE_FIRST=2 run empty
+expect galexie_archive_unexpected_gaps 1 "empty archive, oldest live partition listing fails: still fires"
+LIVE_STRAY=1 LIVE_FIRST=150000 run empty
+expect galexie_archive_unexpected_gaps 1 "empty archive, stray live directory is not used for the start"
+LIVE_FIRST=4000000 run empty
+expect galexie_archive_unexpected_gaps 1 "empty archive, live starts high (range unfilled) still fires"
+LIVE_MODE=dead LIVE_FIRST=2 run empty
+expect galexie_archive_unexpected_gaps 1 "empty archive, live unreadable still fires"
+LIVE_FIRST=2 run manifest
+expect galexie_archive_unexpected_gaps 1 "manifest-only archive still fires"
+expect galexie_archive_expected_empty 0 "manifest-only archive: not flagged"
+LIVE_FIRST=2 run unparseable
+expect galexie_archive_unexpected_gaps 1 "unparseable archive listing still fires"
+LIVE_FIRST=2 run dead
+absent galexie_archive_unexpected_gaps "unreadable archive publishes no verdict, live starts low"
+expect galexie_archive_scan_ok 0 "unreadable archive reports scan_ok 0, live starts low"
+LIVE_FIRST=2 run full
+expect galexie_archive_unexpected_gaps 0 "normal archive unchanged"
+expect galexie_archive_expected_empty 0 "normal archive: not flagged"
 
 # A listing the parser cannot match reaches the same page, and
 # listing_lines is what tells the responder which of the two it is.

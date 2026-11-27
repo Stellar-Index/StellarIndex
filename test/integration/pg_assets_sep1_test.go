@@ -1422,7 +1422,7 @@ func TestSep1IdentityHistoryAndFreshness(t *testing.T) {
          WHERE g_strkey = $1`, g); err != nil {
 		t.Fatalf("age payload: %v", err)
 	}
-	samples := runFreshnessDomainQueries(t, ctx, db)
+	samples := runFreshnessDomainQueries(t, ctx, db, "NULL")
 	key := `stellarindex_data_freshness_stale{domain="sep1",source="issuers"}`
 	if v := samples[key]; v != "1" {
 		t.Errorf("%s = %q, want 1 — no payload fetched in 40 days, yet a failing refresh read as fresh", key, v)

@@ -528,7 +528,7 @@ func (r *ExplorerReader) readCohortHoldings(ctx context.Context, out *AccountCoh
 // cohortFlowsSQL and cohortFlowsFallbackSQL differ only in price_usd_then: the fallback literals it empty so one Scan serves both when the
 // OPTIONAL asset_month_usd_prices is absent.
 const cohortFlowsSQL = `
-		SELECT f.month, f.asset, f.inflow, f.outflow, f.movements, f.active_accounts,
+		SELECT toDateTime(f.month, 'UTC'), f.asset, f.inflow, f.outflow, f.movements, f.active_accounts,
 		       ifNull(p.vwap_usd, '') AS price_usd_then
 		FROM stellar.account_cohort_flows AS f
 		LEFT JOIN stellar.asset_month_usd_prices AS p ON p.asset = f.asset AND p.month = f.month
@@ -543,7 +543,7 @@ const cohortFlowsSQL = `
 		ORDER BY f.month, f.asset`
 
 const cohortFlowsFallbackSQL = `
-		SELECT f.month, f.asset, f.inflow, f.outflow, f.movements, f.active_accounts,
+		SELECT toDateTime(f.month, 'UTC'), f.asset, f.inflow, f.outflow, f.movements, f.active_accounts,
 		       '' AS price_usd_then
 		FROM stellar.account_cohort_flows AS f
 		WHERE f.rel = ? AND f.root = ?
