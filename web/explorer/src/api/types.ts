@@ -20867,7 +20867,7 @@ export interface operations {
                      *               "usd": "33.00",
                      *               "usd_reason": null,
                      *               "underlying_reason": null,
-                     *               "events:1": null
+                     *               "events": 1
                      *             },
                      *             "covered_by_backstop": {
                      *               "d_tokens": "400000000",
@@ -20876,7 +20876,7 @@ export interface operations {
                      *               "usd": "13.20",
                      *               "usd_reason": null,
                      *               "underlying_reason": null,
-                     *               "events:1": null
+                     *               "events": 1
                      *             },
                      *             "socialised_to_suppliers": {
                      *               "d_tokens": "600000000",
@@ -20885,7 +20885,7 @@ export interface operations {
                      *               "usd": "19.80",
                      *               "usd_reason": null,
                      *               "underlying_reason": null,
-                     *               "events:1": null
+                     *               "events": 1
                      *             },
                      *             "repaid_by_backstop": {
                      *               "d_tokens": "0",
@@ -20894,7 +20894,7 @@ export interface operations {
                      *               "usd": "0.00",
                      *               "usd_reason": null,
                      *               "underlying_reason": null,
-                     *               "events:0": null
+                     *               "events": 0
                      *             },
                      *             "outstanding": {
                      *               "d_tokens": "0",
@@ -20903,7 +20903,7 @@ export interface operations {
                      *               "usd": "0.00",
                      *               "usd_reason": null,
                      *               "underlying_reason": null,
-                     *               "events:0": null
+                     *               "events": 0
                      *             },
                      *             "reconciled": true,
                      *             "reconcile_reason": null,
