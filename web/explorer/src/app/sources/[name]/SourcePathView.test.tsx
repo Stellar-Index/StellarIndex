@@ -1,10 +1,6 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
-import {
-  QueryClient,
-  QueryClientProvider,
-  notifyManager,
-} from '@tanstack/react-query';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const { seen, recordSource, apiGet } = vi.hoisted(() => {
   const seen: string[] = [];
@@ -34,10 +30,8 @@ function serve(selectable: boolean) {
   );
 }
 
-let client: QueryClient;
-
 function renderView() {
-  client = new QueryClient({
+  const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
   return render(
@@ -56,15 +50,6 @@ describe('SourcePathView', () => {
     seen.length = 0;
     apiGet.mockReset();
     window.history.pushState({}, '', '/sources/newvenue/');
-  });
-
-  // react-query delivers observer updates on a later setTimeout; one still
-  // queued when the file ends fires a React update after jsdom is gone.
-  afterEach(async () => {
-    cleanup();
-    await client.cancelQueries();
-    client.clear();
-    await new Promise<void>((resolve) => notifyManager.schedule(resolve));
   });
 
   it('renders every live panel for a selectable name read from the URL', async () => {
