@@ -329,19 +329,22 @@ func addProtocolBackstop(st *LendingProtocolStats, pr *protocolPoolRead, sums ma
 	return tokens
 }
 
-// readProtocolToken resolves ticker through the verified catalogue and reads it through the /v1/assets/{id} handler and its
-// response cache, so the figures are that route's by construction. A non-empty reason means the block is absent or incomplete.
-func (s *Server) readProtocolToken(ctx context.Context, ticker string, flags *Flags) (*LendingProtocolToken, string) {
-	var a canonical.Asset
-	found := false
+// verifiedProtocolAsset is ticker's classic Stellar issuance in the verified catalogue: code and issuer, never code alone.
+func (s *Server) verifiedProtocolAsset(ticker string) (canonical.Asset, bool) {
 	if vc, ok := s.VerifiedCurrencies.LookupByTicker(ticker); ok {
 		for _, n := range vc.Issuance {
 			if parsed, err := canonical.ParseAsset(n.AssetID); err == nil && n.Network == "stellar" && parsed.Code == ticker && parsed.Issuer != "" {
-				a, found = parsed, true
-				break
+				return parsed, true
 			}
 		}
 	}
+	return canonical.Asset{}, false
+}
+
+// readProtocolToken resolves ticker through the verified catalogue and reads it through the /v1/assets/{id} handler and its
+// response cache, so the figures are that route's by construction. A non-empty reason means the block is absent or incomplete.
+func (s *Server) readProtocolToken(ctx context.Context, ticker string, flags *Flags) (*LendingProtocolToken, string) {
+	a, found := s.verifiedProtocolAsset(ticker)
 	if !found {
 		return nil, exclusionTokenNotVerified
 	}
