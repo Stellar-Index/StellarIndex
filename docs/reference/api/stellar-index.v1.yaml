@@ -5438,6 +5438,136 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /lending/pools/{pool}/bad-debt:
+    get:
+      operationId: getLendingPoolBadDebt
+      tags: [protocols]
+      summary: Lending pool — bad debt moved to the backstop and where it went.
+      description: |
+        Per reserve of a Blend V1, Blend V2 or BLNT pool, five parts in
+        d-tokens, underlying and USD:
+
+        - `moved_to_backstop`: `bad_debt` events, a user's d-tokens moved
+          onto the backstop's position.
+        - `covered_by_backstop`: the bids of bad-debt (type 1) auction
+          fills, the d-tokens fillers took over. A fill's bid is its filled
+          portion, already scaled by the contract. A Blend V2 fill whose bid
+          map was empty (the bid had decayed to nothing) covered 0 and is
+          counted in `zero_bid_fills`. A Blend V1 fill states no bid; it is
+          not derived from the auction's starting bid, so every reserve's
+          part is null (`bid_not_recorded`) and the fill is counted in
+          `unrecorded_bid_fills`.
+        - `socialised_to_suppliers`: `defaulted_debt` events, the d-tokens
+          burnt when the pool writes the debt off against suppliers. What
+          suppliers lost in underlying is `default_loss` on `/revenue`.
+        - `repaid_by_backstop`: repays of the backstop's own position.
+        - `outstanding`: the backstop's d-tokens now, from its `Positions`
+          entry in the lake, at the current d_rate and latest price.
+
+        The backstop is the address the pool's instance storage names.
+        BLNT's backstop is tiered and which address carries moved debt is
+        not verified, so its `repaid_by_backstop` and `outstanding` are null
+        (`backstop_role_unverified`). BLNT's bad-debt bid kind is not
+        proven either, so its `covered_by_backstop` is null
+        (`leg_kind_unknown`).
+
+        Event parts are valued at each event (`valued_at: event_time`):
+        d-tokens to underlying at the reserve state the event's transaction
+        wrote, rounded up as the contract rounds, USD at the hourly bucket
+        that closed at or before the event, through the same gates as
+        `/liquidations`. USD sums are exact and rounded once to 2 dp. A part
+        that cannot be derived is null with a reason, never 0; `"0"` with
+        `events: 0` is a true zero. `underlying` and `usd` are each null,
+        with `underlying_reason` / `usd_reason` naming the first event that
+        lacked that field's input, as soon as any one event does: no partial
+        sum is served. `events` is 0 for `outstanding`, a state read.
+
+        `reconciled` checks, in d-tokens, moved = covered + socialised +
+        repaid + outstanding over the events at or before
+        `position_ledger` (the ledger the backstop's position was last
+        written; later events are counted in the parts and in
+        `events_after_position`). `residual_d_tokens` is moved minus the
+        other four. Null with `reconcile_reason` when a part is null
+        (`part_not_derivable`), or (`as_of_mismatch`) when
+        `position_ledger` is past `events_written_through` (the last ledger
+        every writer of the pool's event tables has fully written; writers
+        commit per cycle, so a later ledger may hold only some of its
+        events), or no recorded event is at `position_ledger` (something
+        untracked wrote the position).
+
+        `totals_usd` sums each part over the reserves; `lower_bound` is true
+        when `excluded` names a reserve left out, and `usd` is null when no
+        reserve is valued. 404 for an unknown pool; 503 when the deployment
+        has no bad-debt reader, or the pool has more events than one read
+        sums.
+      parameters:
+        - { name: pool, in: path, required: true, description: Pool contract C-strkey., schema: { type: string } }
+      responses:
+        "200":
+          description: Bad debt per reserve.
+          content:
+            application/json:
+              example:
+                data:
+                  pool: CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD
+                  protocol: blend
+                  valued_at: event_time
+                  backstop: CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75
+                  backstop_reason: null
+                  position_ledger: 61341315
+                  events_after_position: 0
+                  events_written_through: 61341400
+                  zero_bid_fills: 1
+                  unrecorded_bid_fills: 0
+                  reserves:
+                  - asset: CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA
+                    moved_to_backstop: { d_tokens: '1000000000', d_tokens_reason: null, underlying: '1100000000', usd: '33.00', usd_reason: null, underlying_reason: null, events: 1 }
+                    covered_by_backstop: { d_tokens: '400000000', d_tokens_reason: null, underlying: '440000000', usd: '13.20', usd_reason: null, underlying_reason: null, events: 1 }
+                    socialised_to_suppliers: { d_tokens: '600000000', d_tokens_reason: null, underlying: '660000000', usd: '19.80', usd_reason: null, underlying_reason: null, events: 1 }
+                    repaid_by_backstop: { d_tokens: '0', d_tokens_reason: null, underlying: '0', usd: '0.00', usd_reason: null, underlying_reason: null, events: 0 }
+                    outstanding: { d_tokens: '0', d_tokens_reason: null, underlying: '0', usd: '0.00', usd_reason: null, underlying_reason: null, events: 0 }
+                    reconciled: true
+                    reconcile_reason: null
+                    residual_d_tokens: '0'
+                  totals_usd:
+                    moved_to_backstop: { usd: '33.00', lower_bound: false, excluded: [] }
+                    covered_by_backstop: { usd: '13.20', lower_bound: false, excluded: [] }
+                    socialised_to_suppliers: { usd: '19.80', lower_bound: false, excluded: [] }
+                    repaid_by_backstop: { usd: '0.00', lower_bound: false, excluded: [] }
+                    outstanding: { usd: '0.00', lower_bound: false, excluded: [] }
+                as_of: '2026-11-26T22:58:00Z'
+                flags:
+                  stale: false
+                  reduced_redundancy: false
+                  triangulated: false
+                  divergence_warning: false
+                  divergence_checked: false
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          pool: { type: string }
+                          protocol: { type: string, enum: [blend, blnt] }
+                          valued_at: { type: string, enum: [event_time] }
+                          backstop: { type: [string, "null"], description: "The backstop the pool's instance storage names; null when unresolved or not read." }
+                          backstop_reason: { type: [string, "null"], enum: [backstop_unresolved, backstop_role_unverified, lake_unavailable, position_unread, null], description: "Why the backstop's position is not read." }
+                          position_ledger: { type: [integer, "null"], format: int64, description: "Ledger the backstop's Positions entry was last written (0 when the lake never saw it); the identity counts events up to it." }
+                          events_after_position: { type: integer, description: "Events later than position_ledger, counted in the parts but not the identity." }
+                          events_written_through: { type: [integer, "null"], format: int64, description: "Last ledger every writer of the pool's event tables has fully written (lowest writer cursor); null when unknown. The identity is checked only when it reaches position_ledger." }
+                          zero_bid_fills: { type: integer, description: "Bad-debt fills whose bid map was empty: each covered 0." }
+                          unrecorded_bid_fills: { type: integer, description: "Bad-debt fills that state no bid (Blend V1)." }
+                          reserves: { type: array, items: { $ref: "#/components/schemas/LendingBadDebtReserve" } }
+                          totals_usd: { $ref: "#/components/schemas/LendingBadDebtTotals" }
+                        required: [pool, protocol, valued_at, backstop, backstop_reason, position_ledger, events_after_position, events_written_through, zero_bid_fills, unrecorded_bid_fills, reserves, totals_usd]
+                    required: [data]
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /lending/pools/{pool}/emissions:
     get:
       operationId: getLendingPoolEmissions
@@ -17145,6 +17275,56 @@ components:
         kind: { type: string, enum: [b_token, d_token, underlying, backstop_token, unknown] }
         reason: { type: string }
       required: [asset, kind, reason]
+    LendingBadDebtReserve:
+      type: object
+      description: One reserve's bad-debt parts and the d-token identity moved = covered + socialised + repaid + outstanding.
+      properties:
+        asset: { type: string }
+        moved_to_backstop: { $ref: "#/components/schemas/LendingBadDebtPart" }
+        covered_by_backstop: { $ref: "#/components/schemas/LendingBadDebtPart" }
+        socialised_to_suppliers: { $ref: "#/components/schemas/LendingBadDebtPart" }
+        repaid_by_backstop: { $ref: "#/components/schemas/LendingBadDebtPart" }
+        outstanding: { $ref: "#/components/schemas/LendingBadDebtPart" }
+        reconciled: { type: [boolean, "null"], description: "Whether the identity holds; null with reconcile_reason when it cannot be checked." }
+        reconcile_reason: { type: [string, "null"], enum: [part_not_derivable, as_of_mismatch, null] }
+        residual_d_tokens: { type: [string, "null"], description: "moved - covered - socialised - repaid - outstanding over the events at or before position_ledger." }
+      required: [asset, moved_to_backstop, covered_by_backstop, socialised_to_suppliers, repaid_by_backstop, outstanding, reconciled, reconcile_reason, residual_d_tokens]
+    LendingBadDebtPart:
+      type: object
+      description: One bad-debt part of a reserve. A null amount carries its reason; "0" over 0 events is a true zero.
+      properties:
+        d_tokens: { type: [string, "null"], description: "d-token base units." }
+        d_tokens_reason: { type: [string, "null"], enum: [bid_not_recorded, amount_not_recorded, asset_not_recorded, backstop_unresolved, backstop_role_unverified, lake_unavailable, position_unread, leg_kind_unknown, null] }
+        underlying: { type: [string, "null"], description: "Underlying base units: each event at the d_rate its transaction wrote, outstanding at the current d_rate." }
+        underlying_reason: { type: [string, "null"], description: "Why underlying is null, first cause: d_tokens_reason, or rate_at_fill_unrecorded, rate_unread or current_rate_unavailable." }
+        usd: { type: [string, "null"], description: "2 dp, rounded once." }
+        usd_reason: { type: [string, "null"], description: "Why usd is null, first cause: d_tokens_reason, or a valuation reason as on /liquidations (rate_at_fill_unrecorded, rate_unread, no_price_within_bound, price_withheld, price_thin_market, price_thin_at_fill, price_unread) or current_rate_unavailable." }
+        events: { type: integer }
+      required: [d_tokens, d_tokens_reason, underlying, underlying_reason, usd, usd_reason, events]
+    LendingBadDebtTotals:
+      type: object
+      description: Each bad-debt part's USD summed over the pool's reserves.
+      properties:
+        moved_to_backstop: { $ref: "#/components/schemas/LendingBadDebtTotal" }
+        covered_by_backstop: { $ref: "#/components/schemas/LendingBadDebtTotal" }
+        socialised_to_suppliers: { $ref: "#/components/schemas/LendingBadDebtTotal" }
+        repaid_by_backstop: { $ref: "#/components/schemas/LendingBadDebtTotal" }
+        outstanding: { $ref: "#/components/schemas/LendingBadDebtTotal" }
+      required: [moved_to_backstop, covered_by_backstop, socialised_to_suppliers, repaid_by_backstop, outstanding]
+    LendingBadDebtTotal:
+      type: object
+      properties:
+        usd: { type: [string, "null"], description: "2 dp; null when no reserve is valued. A floor when lower_bound is true." }
+        lower_bound: { type: boolean }
+        excluded:
+          type: array
+          items:
+            type: object
+            properties:
+              asset: { type: string }
+              reason: { type: string }
+            required: [asset, reason]
+      required: [usd, lower_bound, excluded]
     LendingLiquidationLeg:
       type: object
       description: One asset of a liquidation fill's lot or bid, valued at the fill. A null value carries its `reason`.

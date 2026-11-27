@@ -245,7 +245,7 @@ const memo = new Map<string, Promise<unknown>>();
 // spec); any other segment of a request path is an id.
 const ROUTE_WORDS = new Set(
   `account accounts activity admin aggregators anomalies archive assets at
-  auctions auth backstop backups batch begin-login begin-register begin-signup
+  auctions auth backstop backups bad-debt batch begin-login begin-register begin-signup
   callback challenge changes chart claimable-balances code-history cohort
   config-history contracts coverage creators credentials cursors dashboard
   deliveries diagnostics directory divergence earnings emissions entry-changes
