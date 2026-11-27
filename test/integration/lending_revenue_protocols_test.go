@@ -86,8 +86,9 @@ func TestLendingRevenueUSDBucketSums(t *testing.T) {
 			t.Errorf("%+v interest_accrued_usd = %s; want %s exactly", k, leg(k), want)
 		}
 	}
-	if g := by[key{p1, 1, true}]; g.Days != 3 || g.WithheldDays != 1 || g.HoursUnvalued != 0 {
-		t.Errorf("p1 bucket 1: days %d withheld %d unpriced hours %d; want 3, 1, 0", g.Days, g.WithheldDays, g.HoursUnvalued)
+	if g := by[key{p1, 1, true}]; g.Days != 3 || g.WithheldDays != 1 || g.HoursUnvalued != 0 || !g.LastAmountDay.Equal(back(2)) {
+		t.Errorf("p1 bucket 1: days %d withheld %d unpriced hours %d last amount day %s; want 3, 1, 0, %s",
+			g.Days, g.WithheldDays, g.HoursUnvalued, g.LastAmountDay, back(2))
 	}
 	if g := by[key{p2, 1, true}]; g.HoursUnvalued != 3 || g.ExcludedCount != 3 {
 		t.Errorf("p2 bucket 1: unpriced hours %d excluded %d; want 3, 3", g.HoursUnvalued, g.ExcludedCount)

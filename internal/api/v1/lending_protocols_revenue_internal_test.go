@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -39,7 +40,7 @@ func revIn(pools []revenuePool, covs []timescale.LendingRevenueUSDCoverage, sums
 func revExcl(t *testing.T, w LendingProtocolRevenueWindow, pool, asset, reason string, count int64) {
 	t.Helper()
 	for _, e := range w.Excluded {
-		if e.Pool == pool && e.Reason == reason && (asset == "" && e.Asset == nil || e.Asset != nil && *e.Asset == asset) {
+		if deref(e.Pool) == pool && e.Reason == reason && (asset == "" && e.Asset == nil || e.Asset != nil && *e.Asset == asset) {
 			if count >= 0 && (e.Count == nil || *e.Count != count) {
 				t.Fatalf("%s %s %s count = %v; want %d", pool, asset, reason, e.Count, count)
 			}
@@ -251,7 +252,7 @@ func TestProtocolRevenueEnumsMatchHandler(t *testing.T) {
 		{[]string{"LendingProtocolRevenueExclusion", "properties", "reason"}, []string{
 			protocolRevenueNotValued, protocolRevenueDaysNotValued, revenueReasonRedoPending, protocolRevenueStale, revenueUSDPriceMissing,
 			exclusionPriceWithheld, revenueUSDAmountsExcluded, exclusionPriceReadFailed, exclusionPoolReadFailed,
-			protocolRevenueVersionUnknown, protocolRevenueReadFailed,
+			protocolRevenueVersionUnknown, protocolRevenueReadFailed, protocolRevenueTimedOut, exclusionPoolListFailed,
 		}},
 	} {
 		got := slices.DeleteFunc(specEnumAt(t, doc, append([]string{"components", "schemas"}, tc.path...)...), func(s string) bool { return s == "" })
@@ -263,12 +264,30 @@ func TestProtocolRevenueEnumsMatchHandler(t *testing.T) {
 	}
 }
 
-// The live reserve page's refusal is the verdict, before any lake or directory read.
-func TestRevenueVerdictNow_LiveRefusal(t *testing.T) {
-	s := &Server{}
-	for _, reason := range []string{exclusionPriceWithheld, exclusionPriceReadFailed} {
-		if got := s.revenueVerdictNow(t.Context(), "CA", &ReserveView{usdExclusion: reason}); got != reason {
-			t.Fatalf("live %s gave verdict %q", reason, got)
-		}
+// A Blend pool read with an unknown version is named and summed into neither version nor the total.
+func TestProtocolRevenue_UnknownVersionPoolRead(t *testing.T) {
+	reads := []protocolPoolRead{
+		{ratePoolRead: ratePoolRead{ratePool: ratePool{protocol: "blend", pool: "CPU"}, res: poolReserves{version: blend.PoolVersionUnknown}}},
+		{ratePoolRead: ratePoolRead{ratePool: ratePool{protocol: "blend", pool: "CP2"}, res: poolReserves{version: blend.PoolV2}}},
+	}
+	in := revIn(protocolRevenuePools("blend", reads), []timescale.LendingRevenueUSDCoverage{revCov("CPU", 40, 0), revCov("CP2", 40, 0)},
+		revGroup("CPU", "CA", 0, "7"), revGroup("CP2", "CA", 0, "1"))
+	out := foldProtocolRevenue(in)
+	revExcl(t, out.Day, "CPU", "", protocolRevenueVersionUnknown, -1)
+	if deref(out.Day.InterestAccruedUSD) != "1.00" || deref(out.Day.Versions.V2.InterestAccruedUSD) != "1.00" ||
+		deref(out.Day.Versions.V1.USDReason) != protocolRevenueNotValued {
+		t.Fatalf("unknown-version pool summed: total %s v1 %s/%s v2 %s", deref(out.Day.InterestAccruedUSD),
+			deref(out.Day.Versions.V1.InterestAccruedUSD), deref(out.Day.Versions.V1.USDReason), deref(out.Day.Versions.V2.InterestAccruedUSD))
+	}
+}
+
+// A failed BLNT pool list is named with a null pool, never an empty not_valued block, and degrades the block.
+func TestProtocolRevenue_PoolListFailureNamed(t *testing.T) {
+	in := revIn(nil, nil)
+	in.listFailed, in.versioned = true, false
+	out := foldProtocolRevenue(in)
+	if len(out.AllTime.Excluded) != 1 || out.AllTime.Excluded[0].Pool != nil || out.AllTime.Excluded[0].Reason != exclusionPoolListFailed ||
+		!out.AllTime.LowerBound || !out.Degraded {
+		t.Fatalf("list failure: %+v degraded %v", out.AllTime.Excluded, out.Degraded)
 	}
 }

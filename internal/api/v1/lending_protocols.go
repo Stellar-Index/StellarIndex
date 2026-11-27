@@ -172,8 +172,7 @@ func (s *Server) buildLendingProtocols(ctx context.Context) (lendingProtocolsBui
 	})
 	out := make([]LendingProtocolStats, 0, len(lendingProtocols))
 	lowerBound := false
-	revenue, revenueUnread := s.readProtocolRevenue(ctx, reads)
-	flags.Degraded = flags.Degraded || revenueUnread
+	revenue := s.readProtocolRevenue(ctx, reads, blntListFailed)
 	for _, pt := range lendingProtocols {
 		st := LendingProtocolStats{Protocol: pt.protocol, Backstop: []LendingProtocolBackstop{}, Excluded: []LendingStatsExclusion{}, Revenue: revenue[pt.protocol]}
 		var reason string

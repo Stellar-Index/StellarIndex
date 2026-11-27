@@ -7331,6 +7331,8 @@ export interface components {
         LendingProtocolRevenue: {
             /** @description True for BLNT: `protocol_fee_usd` rests on a fee rate inferred from chain data. */
             fee_rate_inferred: boolean;
+            /** @description True when a read behind the block failed or ran past its budget (`price_read_failed`, `revenue_read_failed`, `revenue_timed_out`, `pool_list_read_failed`); the rest of the response is unaffected. */
+            degraded: boolean;
             "1d": components["schemas"]["LendingProtocolRevenueWindow"];
             "7d": components["schemas"]["LendingProtocolRevenueWindow"];
             "30d": components["schemas"]["LendingProtocolRevenueWindow"];
@@ -7350,7 +7352,7 @@ export interface components {
             through_day: string | null;
             /** @description What the window leaves out; any entry sets `lower_bound`. */
             excluded: components["schemas"]["LendingProtocolRevenueExclusion"][];
-            /** @description Blend only (null for BLNT): the window split by pool version. `v1` plus `v2` is the window exactly, before rounding. */
+            /** @description Blend only (null for BLNT): the window split by pool version. Each is rounded on its own, so `v1` plus `v2` may differ from the window by a cent; never derive the total from the versions. */
             versions: {
                 v1?: components["schemas"]["LendingProtocolRevenueAmounts"];
                 v2?: components["schemas"]["LendingProtocolRevenueAmounts"];
@@ -7382,24 +7384,27 @@ export interface components {
         };
         /** @description What a revenue window leaves out and why. */
         LendingProtocolRevenueExclusion: {
-            /** @description Pool contract C-strkey. */
-            pool: string;
+            /** @description Pool contract C-strkey; null for `pool_list_read_failed`. */
+            pool: string | null;
             /** @description Reserve token C-strkey for a reserve-level reason; null for a pool-level one. */
             asset: string | null;
             /**
              * @description Pool-level: `not_valued` the pool has no valued day yet; `days_not_valued` window days outside the pool's valued
              *     days (`count` days); `redo_pending` a pending re-derive will rewrite the pool's days from then on;
              *     `pool_read_failed` its reserves could not be read, so no read-time verdict could be applied; `pool_version_unknown`
-             *     a Blend pool neither V1 nor V2, left out so `versions` add up; `revenue_read_failed` the stored days could not
-             *     be read (the response is also degraded). Reserve-level: `valuation_stale` days stored at an older valuation or
-             *     derive revision, left out until re-valued (`count` days); `price_missing` hours with an amount but no price
-             *     (`count` hours); `withheld` a read-time verdict (scam issuer, thin market, operator withholding) refuses the
-             *     token now, or refused the stored day (`count` days, nothing of it summed); `price_read_failed` the verdict
-             *     could not be read, so the reserve is left out (`count` days; the response is also degraded);
-             *     `amounts_excluded` hour rows or versions the interest record left out of a summed day (`count`).
+             *     a Blend pool neither V1 nor V2, left out; `revenue_read_failed` the stored days could not be read;
+             *     `revenue_timed_out` the block's reads ran past their budget. Protocol-level (`pool` null):
+             *     `pool_list_read_failed` the protocol's pool list could not be read. Reserve-level: `valuation_stale` days
+             *     stored at an older valuation or derive revision, left out until re-valued (`count` days); `price_missing`
+             *     hours with an amount but no price (`count` hours); `withheld` the refusal `/v1/lending/pools/{pool}/revenue`
+             *     applies (scam-flagged issuer, operator withholding, thin latest market), judged now by the same walk over the
+             *     reserve's latest stored day with an amount, or recorded on the stored day (`count` days, nothing of it
+             *     summed); `price_read_failed` that verdict could not be read, so the reserve is left out (`count` days);
+             *     `amounts_excluded` hour rows or versions the interest record left out of a summed day (`count`). Read
+             *     failures and timeouts set the block's `degraded`.
              * @enum {string}
              */
-            reason: "not_valued" | "days_not_valued" | "redo_pending" | "valuation_stale" | "price_missing" | "withheld" | "amounts_excluded" | "price_read_failed" | "pool_read_failed" | "pool_version_unknown" | "revenue_read_failed";
+            reason: "not_valued" | "days_not_valued" | "redo_pending" | "valuation_stale" | "price_missing" | "withheld" | "amounts_excluded" | "price_read_failed" | "pool_read_failed" | "pool_version_unknown" | "revenue_read_failed" | "revenue_timed_out" | "pool_list_read_failed";
             /** @description Days, hours or versions as `reason` says; null for a reason without one. */
             count: number | null;
         };

@@ -3,6 +3,7 @@ package v1_test
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ type revenueStore struct {
 	sums    []timescale.LendingRevenueUSDBucketSum
 	failSum bool
 	spans   []timescale.LendingRevenueUSDSpan
+	reads   atomic.Int32
 }
 
 func (*revenueStore) CountRecentEventsBySource(context.Context) (map[string]int64, error) {
@@ -28,6 +30,7 @@ func (r *revenueStore) LendingRevenueUSDCoverages(context.Context) (map[string]t
 
 func (r *revenueStore) LendingRevenueUSDBucketSums(_ context.Context, spans []timescale.LendingRevenueUSDSpan, _, _ int16, _ string) ([]timescale.LendingRevenueUSDBucketSum, error) {
 	r.spans = spans
+	r.reads.Add(1)
 	if r.failSum {
 		return nil, errors.New("pg down")
 	}
@@ -105,12 +108,44 @@ func TestLendingProtocols_RevenueFromStoredDays(t *testing.T) {
 		t.Fatalf("uncovered BLNT 1d = %+v; want null, not_valued", blnt.Day)
 	}
 
+	// A revenue-only failure is named and degrades the block, not the build: the response stays cacheable.
 	store.failSum = true
 	failed := newProtocolsServer(t, protocolsCase{clean: true, revenue: store})
 	stats, resp := getProtocols(t, failed.srv)
-	assertProtocolsNoStore(t, resp, true)
+	assertProtocolsNoStore(t, resp, false)
 	w := stats[0].Revenue.AllTime
-	if w.InterestAccruedUSD != nil || len(w.Excluded) == 0 || w.Excluded[0].Reason != "revenue_read_failed" {
-		t.Fatalf("failed read served %+v", w)
+	if w.InterestAccruedUSD != nil || len(w.Excluded) == 0 || w.Excluded[0].Reason != "revenue_read_failed" || !stats[0].Revenue.Degraded {
+		t.Fatalf("failed read served %+v degraded %v", w, stats[0].Revenue.Degraded)
+	}
+}
+
+// One asset whose verdict cannot be read (this fixture has no price history, so its day walk fails) is named
+// price_read_failed and summed nowhere; the build is still cached, so a persistent failure is not re-read per request.
+func TestLendingProtocols_RevenueVerdictFailureIsCached(t *testing.T) {
+	through := time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
+	f0 := newProtocolsServer(t, protocolsCase{clean: true})
+	failing := revenueGroup(f0.activePool, f0.xlmSAC, 0, "1.25")
+	failing.LastAmountDay = through
+	store := &revenueStore{
+		covs: map[string]timescale.LendingRevenueUSDCoverage{
+			f0.activePool: {Pool: f0.activePool, FloorDay: through.AddDate(0, 0, -100), ThroughDay: through},
+		},
+		sums: []timescale.LendingRevenueUSDBucketSum{failing, revenueGroup(f0.activePool, f0.otherToken, 0, "2")},
+	}
+	f := newProtocolsServer(t, protocolsCase{clean: true, revenue: store})
+	stats, resp := getProtocols(t, f.srv)
+	assertProtocolsNoStore(t, resp, false)
+	blend := stats[0].Revenue
+	named := false
+	for _, e := range blend.Day.Excluded {
+		named = named || e.Reason == "price_read_failed" && e.Asset != nil && *e.Asset == f0.xlmSAC
+	}
+	if !named || !blend.Degraded || !blend.Day.LowerBound || strOr(blend.Day.InterestAccruedUSD) != "2.00" {
+		t.Fatalf("1d = %s excluded %+v degraded %v; want 2.00 with XLM named price_read_failed",
+			strOr(blend.Day.InterestAccruedUSD), blend.Day.Excluded, blend.Degraded)
+	}
+	getProtocols(t, f.srv)
+	if n := store.reads.Load(); n != 1 {
+		t.Fatalf("%d revenue reads over two requests; want the cached build's one", n)
 	}
 }

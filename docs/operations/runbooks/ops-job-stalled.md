@@ -320,6 +320,8 @@ Revision 4 splits `residual_explained` into `interest_drawn` (≤ 0, interest-au
 2. Check who holds the lock: `SELECT pid, backend_start FROM pg_locks JOIN pg_stat_activity USING (pid) WHERE locktype = 'advisory'`. An instance that died holding it frees it when its session ends.
 3. A cycle that runs out of budget on every try is a lake read that has slowed; the trailing-day re-walk and the sweep still advance once it recovers. Until then the `/v1/lending/protocols` revenue windows name the lagging pools `days_not_valued`.
 
+Limit: each restart resets `started_unix`, so an API that restarts more often than every 30 minutes keeps this alert quiet while it never finishes a cycle. That case is not caught here. A unit that crashes into its start limit fires `stellarindex_systemd_unit_failed`, and an API that is down at scrape time fires `stellarindex_api_down`. A process that crash-loops while still answering scrapes fires neither: look for repeated `lending revenue rollup` start lines in the API log.
+
 ## Lending revenue rollup sweep mismatch
 
 `stellarindex_lending_revenue_rollup_sweep_mismatch` fires when `stellarindex_lending_revenue_rollup_sweep_mismatches_total` rose within the last day: the daily sweep re-valued a stored day from the same derive at the same revisions, no verdict refused either valuation, and the USD differed. The row has been rewritten, so the table is right again, but the valuer gave two answers for one input.

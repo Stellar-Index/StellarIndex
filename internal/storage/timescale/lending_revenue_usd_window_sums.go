@@ -27,6 +27,8 @@ type LendingRevenueUSDBucketSum struct {
 	HoursUnvalued, WithheldDays int64
 	// ExcludedCount sums stale_rows, accrual_excluded_versions and unexplained_loss_versions.
 	ExcludedCount int64
+	// LastAmountDay is the group's latest day with an hour carrying an amount; zero when none does.
+	LastAmountDay time.Time
 }
 
 // LendingRevenueUSDBucketSumsQuery is the one GROUP BY behind [Store.LendingRevenueUSDBucketSums]; each span reads its
@@ -40,7 +42,8 @@ const LendingRevenueUSDBucketSumsQuery = `SELECT d.pool, d.asset,
 		sum(d.default_loss_usd)::text, count(*),
 		coalesce(sum(d.hours_unvalued) FILTER (WHERE d.walk_reason IS DISTINCT FROM $7), 0)::bigint,
 		count(*) FILTER (WHERE d.walk_reason = $7),
-		sum(d.stale_rows + d.accrual_excluded_versions + d.unexplained_loss_versions)::bigint
+		sum(d.stale_rows + d.accrual_excluded_versions + d.unexplained_loss_versions)::bigint,
+		max(d.day) FILTER (WHERE d.hours_valued + d.hours_unvalued > 0)
 	FROM unnest($1::text[], $2::date[], $3::date[], $4::date[]) AS t(pool, from_day, through_day, window_end)
 	JOIN lending_revenue_usd_daily d ON d.pool = t.pool AND d.day BETWEEN t.from_day AND t.through_day
 	GROUP BY 1, 2, 3, 4`
@@ -67,9 +70,13 @@ func (s *Store) LendingRevenueUSDBucketSums(ctx context.Context, spans []Lending
 	for rows.Next() {
 		var b LendingRevenueUSDBucketSum
 		var legs [7]sql.NullString
+		var last sql.NullTime
 		if err := rows.Scan(&b.Pool, &b.Asset, &b.Bucket, &b.Current, &legs[0], &legs[1], &legs[2], &legs[3], &legs[4],
-			&legs[5], &legs[6], &b.Days, &b.HoursUnvalued, &b.WithheldDays, &b.ExcludedCount); err != nil {
+			&legs[5], &legs[6], &b.Days, &b.HoursUnvalued, &b.WithheldDays, &b.ExcludedCount, &last); err != nil {
 			return nil, fmt.Errorf("timescale: scan lending revenue usd bucket sum: %w", err)
+		}
+		if last.Valid {
+			b.LastAmountDay = last.Time.UTC()
 		}
 		for i, l := range legs {
 			if l.Valid {

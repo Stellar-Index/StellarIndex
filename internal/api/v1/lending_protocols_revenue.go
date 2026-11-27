@@ -29,7 +29,12 @@ const (
 	protocolRevenueReadFailed     = "revenue_read_failed"  // the stored days could not be read
 	protocolRevenueVersionUnknown = "pool_version_unknown" // a Blend pool neither V1 nor V2, left out so versions add up
 	protocolRevenueAllExcluded    = "all_excluded"         // usd_reason: every amount in the window was left out
+	protocolRevenueTimedOut       = "revenue_timed_out"    // the block's reads ran past protocolRevenueBudget
 )
+
+// protocolRevenueBudget bounds the revenue block's reads inside the protocols build, so a slow price or lake read
+// nulls the block rather than holding up the rest of the response.
+const protocolRevenueBudget = 5 * time.Second
 
 // protocolRevenueWindows are the windows in wire order: days back from through_day, 0 meaning from the earliest floor.
 var protocolRevenueWindows = [...]int{1, 7, 30, 0}
@@ -38,11 +43,13 @@ var protocolRevenueWindows = [...]int{1, 7, 30, 0}
 // the stored day-by-day valuation (lending_revenue_usd_daily).
 type LendingProtocolRevenue struct {
 	// FeeRateInferred: protocol_fee_usd rests on a fee rate inferred from chain data (BLNT).
-	FeeRateInferred bool                         `json:"fee_rate_inferred"`
-	Day             LendingProtocolRevenueWindow `json:"1d"`
-	Week            LendingProtocolRevenueWindow `json:"7d"`
-	Month           LendingProtocolRevenueWindow `json:"30d"`
-	AllTime         LendingProtocolRevenueWindow `json:"all_time"`
+	FeeRateInferred bool `json:"fee_rate_inferred"`
+	// Degraded: a read behind the block failed or timed out; excluded names what it left out.
+	Degraded bool                         `json:"degraded"`
+	Day      LendingProtocolRevenueWindow `json:"1d"`
+	Week     LendingProtocolRevenueWindow `json:"7d"`
+	Month    LendingProtocolRevenueWindow `json:"30d"`
+	AllTime  LendingProtocolRevenueWindow `json:"all_time"`
 }
 
 // LendingProtocolRevenueWindow is one window's sums, [from_day, through_day] inclusive; both null when no pool is valued.
@@ -51,7 +58,7 @@ type LendingProtocolRevenueWindow struct {
 	ThroughDay *string `json:"through_day"`
 	LendingProtocolRevenueAmounts
 	Excluded []LendingProtocolRevenueExclusion `json:"excluded"`
-	// Versions splits a Blend window by pool version; they add up to the window exactly. Null for BLNT.
+	// Versions splits a Blend window by pool version, each rounded on its own: v1+v2 may miss the total by a cent. Null for BLNT.
 	Versions *LendingProtocolRevenueVersions `json:"versions"`
 }
 
@@ -77,7 +84,7 @@ type LendingProtocolRevenueAmounts struct {
 
 // LendingProtocolRevenueExclusion names what a window leaves out; Count is days, hours or versions by reason.
 type LendingProtocolRevenueExclusion struct {
-	Pool   string  `json:"pool"`
+	Pool   *string `json:"pool"` // null only for pool_list_read_failed
 	Asset  *string `json:"asset"`
 	Reason string  `json:"reason"`
 	Count  *int64  `json:"count"`
@@ -91,6 +98,7 @@ type revenuePool struct {
 // protocolRevenueInput is everything one protocol's block is folded from.
 type protocolRevenueInput struct {
 	fee, versioned bool
+	listFailed     bool // the protocol's pool list could not be read
 	pools          []revenuePool
 	covs           map[string]timescale.LendingRevenueUSDCoverage
 	sums           []timescale.LendingRevenueUSDBucketSum
@@ -211,7 +219,7 @@ type revenueWindowFold struct {
 }
 
 func (f *revenueWindowFold) exclude(pool, asset, reason string, count *int64) {
-	f.w.Excluded = append(f.w.Excluded, LendingProtocolRevenueExclusion{Pool: pool, Asset: nonEmptyPtr(asset), Reason: reason, Count: count})
+	f.w.Excluded = append(f.w.Excluded, LendingProtocolRevenueExclusion{Pool: nonEmptyPtr(pool), Asset: nonEmptyPtr(asset), Reason: reason, Count: count})
 	f.each(pool, func(a *revenueAcc) { a.lower = true })
 }
 
@@ -226,6 +234,9 @@ func (f *revenueWindowFold) each(pool string, fn func(a *revenueAcc)) {
 // pools names every pool left out of, or short in, [from, through] and counts the pools valued inside it.
 func (f *revenueWindowFold) pools(in protocolRevenueInput, from, through time.Time) {
 	windowDays := int64(through.Sub(from)/day24) + 1
+	if in.listFailed {
+		f.exclude("", "", exclusionPoolListFailed, nil)
+	}
 	for _, p := range in.pools {
 		f.version[p.pool] = p.version
 		c, covered := revenueCovered(in.covs, p)
@@ -286,6 +297,12 @@ func foldProtocolRevenue(in protocolRevenueInput) LendingProtocolRevenue {
 			from = through.Add(-time.Duration(days-1) * day24)
 		}
 		*w = foldRevenueWindow(in, from, through, ok, i)
+	}
+	for _, e := range out.AllTime.Excluded { // all_time holds every pool and reserve the others do
+		switch e.Reason {
+		case exclusionPriceReadFailed, protocolRevenueReadFailed, protocolRevenueTimedOut, exclusionPoolListFailed:
+			out.Degraded = true
+		}
 	}
 	return out
 }
@@ -375,43 +392,49 @@ func protocolRevenuePools(protocol string, reads []protocolPoolRead) []revenuePo
 	return out
 }
 
-// readProtocolRevenue builds every protocol's revenue block from one coverage read and one GROUP BY; failed is true when
-// a read failed, and the blocks then name it rather than serve a partial sum as complete.
-func (s *Server) readProtocolRevenue(ctx context.Context, reads []protocolPoolRead) (map[string]LendingProtocolRevenue, bool) {
+// readProtocolRevenue builds every protocol's revenue block from one coverage read, one GROUP BY and one verdict per
+// asset, all within protocolRevenueBudget. A failed or timed-out read is named in the blocks and marks them degraded; it
+// never makes the rest of the build partial.
+func (s *Server) readProtocolRevenue(ctx context.Context, reads []protocolPoolRead, blntListFailed bool) map[string]LendingProtocolRevenue {
 	ins := map[string]*protocolRevenueInput{}
 	for _, pt := range lendingProtocols {
 		ins[pt.protocol] = &protocolRevenueInput{
 			fee: pt.protocol == blnt.SourceName, versioned: pt.protocol != blnt.SourceName,
-			pools: protocolRevenuePools(pt.protocol, reads), verdicts: map[string]string{},
+			listFailed: pt.protocol == blnt.SourceName && blntListFailed,
+			pools:      protocolRevenuePools(pt.protocol, reads), verdicts: map[string]string{},
 		}
 	}
-	failed, unread := s.fillProtocolRevenue(ctx, reads, ins)
+	bctx, cancel := context.WithTimeout(ctx, protocolRevenueBudget)
+	defer cancel()
+	failed, reason := s.fillProtocolRevenue(bctx, ins), protocolRevenueReadFailed
+	if bctx.Err() != nil {
+		failed, reason = true, protocolRevenueTimedOut
+	}
 	out := map[string]LendingProtocolRevenue{}
 	for p, in := range ins {
 		if failed {
 			for i := range in.pools {
 				if in.pools[i].skip == "" {
-					in.pools[i].skip = protocolRevenueReadFailed
+					in.pools[i].skip = reason
 				}
 			}
 		}
 		out[p] = foldProtocolRevenue(*in)
 	}
-	return out, failed || unread
+	return out
 }
 
-// fillProtocolRevenue reads the coverage, the sums and the verdicts into ins. failed: the stored days could not be read;
-// unread: an asset's verdict could not be read, and that asset alone is left out. Without a reader (no Postgres) the
-// inputs stay empty and every pool reads not_valued.
-func (s *Server) fillProtocolRevenue(ctx context.Context, reads []protocolPoolRead, ins map[string]*protocolRevenueInput) (failed, unread bool) {
+// fillProtocolRevenue reads the coverage, the sums and the verdicts into ins; true when the stored days could not be
+// read. Without a reader (no Postgres) the inputs stay empty and every pool reads not_valued.
+func (s *Server) fillProtocolRevenue(ctx context.Context, ins map[string]*protocolRevenueInput) bool {
 	rd, ok := s.ProtocolStats.(lendingRevenueUSDWindowReader)
 	if !ok {
-		return false, false
+		return false
 	}
 	covs, err := rd.LendingRevenueUSDCoverages(ctx)
 	if err != nil {
 		s.logger.Warn("lending protocols: revenue coverage read failed", "err", err)
-		return true, false
+		return true
 	}
 	var spans []timescale.LendingRevenueUSDSpan
 	for _, in := range ins {
@@ -429,7 +452,7 @@ func (s *Server) fillProtocolRevenue(ctx context.Context, reads []protocolPoolRe
 	sums, err := rd.LendingRevenueUSDBucketSums(ctx, spans, lendingRevenueValuationRev, int16(lendinginterest.DeriveRev), exclusionPriceWithheld) //nolint:gosec // a small revision number
 	if err != nil {
 		s.logger.Warn("lending protocols: revenue sums read failed", "err", err)
-		return true, false
+		return true
 	}
 	byPool := map[string]*protocolRevenueInput{}
 	for _, in := range ins {
@@ -442,69 +465,39 @@ func (s *Server) fillProtocolRevenue(ctx context.Context, reads []protocolPoolRe
 			in.sums = append(in.sums, g)
 		}
 	}
-	return false, s.revenueVerdicts(ctx, reads, sums, ins)
+	verdicts := s.revenueVerdicts(ctx, sums)
+	for _, in := range ins {
+		in.verdicts = verdicts
+	}
+	return false
 }
 
-// revenueVerdicts applies the read-time verdicts to every asset with stored days: the live reserve page's refusal (a
-// withholding, a thin market, a flagged issuer), then the issuer check the day walk opens with, which that page runs only
-// on a token it priced. One cached price read and one directory read per distinct asset; never a price walk.
-func (s *Server) revenueVerdicts(ctx context.Context, reads []protocolPoolRead, sums []timescale.LendingRevenueUSDBucketSum, ins map[string]*protocolRevenueInput) bool {
-	live := map[string]*ReserveView{}
-	for i := range reads {
-		for j := range reads[i].res.view.Reserves {
-			rv := &reads[i].res.view.Reserves[j]
-			live[rv.Asset] = rv
-		}
-	}
+// revenueVerdicts is each asset's read-time refusal (withheld or price_read_failed), applied through the walk /revenue
+// and the rollup value with ([Server.reserveUSDWalk]: issuer check, operator withholding, thin latest market): one walk
+// per distinct asset, of its latest stored day carrying an amount, the day whose newest bucket every window ends on.
+func (s *Server) revenueVerdicts(ctx context.Context, sums []timescale.LendingRevenueUSDBucketSum) map[string]string {
+	last := map[string]time.Time{}
 	var assets []string
-	seen := map[string]bool{}
 	for _, g := range sums {
-		if !seen[g.Asset] {
-			seen[g.Asset] = true
+		d, seen := last[g.Asset]
+		if !seen {
 			assets = append(assets, g.Asset)
+		}
+		if !seen || g.LastAmountDay.After(d) {
+			last[g.Asset] = g.LastAmountDay
 		}
 	}
 	reasons := make([]string, len(assets))
 	forEachBounded(s.logger, len(assets), readFanoutConcurrency, func(i int) {
-		reasons[i] = s.revenueVerdictNow(ctx, assets[i], live[assets[i]]) // distinct indices
+		if d := last[assets[i]]; !d.IsZero() { // no amount: nothing to value, nothing to refuse
+			reasons[i] = revenueReadRefusal(s.revenueDayRead(ctx, assets[i], d, 0)) // distinct indices
+		}
 	})
-	unread := false
+	out := map[string]string{}
 	for i, a := range assets {
-		if reasons[i] == "" {
-			continue
-		}
-		unread = unread || reasons[i] == exclusionPriceReadFailed
-		for _, in := range ins {
-			in.verdicts[a] = reasons[i]
+		if reasons[i] != "" {
+			out[a] = reasons[i]
 		}
 	}
-	return unread
-}
-
-// revenueVerdictNow is why asset is refused now: withheld, price_read_failed when a verdict could not be read, else "".
-func (s *Server) revenueVerdictNow(ctx context.Context, asset string, live *ReserveView) string {
-	reason := ""
-	if live != nil {
-		reason = live.usdExclusion
-	} else if rp := s.reservePriceUSD(ctx, asset); rp.price == "" {
-		reason = rp.exclusion()
-	}
-	if reason == exclusionPriceWithheld || reason == exclusionPriceReadFailed {
-		return reason
-	}
-	a, ok, unread := s.reserveTokenAsset(ctx, asset)
-	switch {
-	case unread:
-		return exclusionPriceReadFailed
-	case !ok:
-		return ""
-	}
-	flagged, unread := s.reserveIssuerFlagged(ctx, a)
-	switch {
-	case unread:
-		return exclusionPriceReadFailed
-	case flagged:
-		return exclusionPriceWithheld
-	}
-	return ""
+	return out
 }
