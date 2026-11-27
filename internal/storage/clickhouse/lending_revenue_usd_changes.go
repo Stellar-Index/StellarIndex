@@ -20,12 +20,13 @@ type LendingInterestDay struct {
 
 // LendingInterestChangedDaysQuery pages through the days by (newest derived_at, contract_id, asset, day), after a cursor,
 // so one derive writing more days than a page still moves the cursor. No FINAL: max(derived_at) over every part is the
-// newest derive's either way, so the scan reads derived_at and the key columns only.
-const LendingInterestChangedDaysQuery = `SELECT contract_id, asset, toDate(hour) AS day, max(derived_at) AS newest
+// newest derive's either way, so the scan reads derived_at and the key columns only. The day is a UTC-tagged DateTime:
+// a bare Date decodes at the server zone's midnight, which is the wrong day or, across a DST gap, none.
+const LendingInterestChangedDaysQuery = `SELECT contract_id, asset, toDateTime(toDate(hour), 'UTC') AS day, max(derived_at) AS newest
 	FROM stellar.lending_interest_hourly
 	WHERE derived_at >= fromUnixTimestamp64Milli(?)
 	GROUP BY contract_id, asset, day
-	HAVING (newest, contract_id, asset, day) > (fromUnixTimestamp64Milli(?), ?, ?, toDate(?))
+	HAVING (newest, contract_id, asset, day) > (fromUnixTimestamp64Milli(?), ?, ?, toDateTime(toDate(?), 'UTC'))
 	ORDER BY newest, contract_id, asset, day
 	LIMIT ?`
 
@@ -50,16 +51,9 @@ func (r *ExplorerReader) LendingInterestChangedDays(ctx context.Context, after L
 	return out, rows.Err()
 }
 
-// dateDay is the UTC midnight of a scanned Date column's calendar day. The driver decodes a Date at the server's (or
-// the query's) local midnight, so on a server outside UTC the instant is hours off the day it names.
-func dateDay(t time.Time) time.Time {
-	y, m, d := t.Date()
-	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
-}
-
 // lendingInterestPoolDaysQuery is one pool's days over [from, before): FINAL as the revenue read, so derived_at is the
-// surviving derive's and the stale count is the revenue read's countIf(derive_rev != rev).
-const lendingInterestPoolDaysQuery = `SELECT asset, toDate(hour) AS day, max(derived_at), countIf(derive_rev != ?)
+// surviving derive's and the stale count is the revenue read's countIf(derive_rev != rev). The day is UTC-tagged as above.
+const lendingInterestPoolDaysQuery = `SELECT asset, toDateTime(toDate(hour), 'UTC') AS day, max(derived_at), countIf(derive_rev != ?)
 	FROM (
 		SELECT asset, hour, derived_at, derive_rev FROM stellar.lending_interest_hourly FINAL
 		WHERE contract_id = ? AND hour >= toDateTime(?, 'UTC') AND hour < toDateTime(?, 'UTC')

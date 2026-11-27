@@ -83,8 +83,8 @@ func TestLendingProtocols_RevenueFromStoredDays(t *testing.T) {
 	f0 := newProtocolsServer(t, protocolsCase{clean: true})
 	store := &revenueStore{
 		covs: map[string]timescale.LendingRevenueUSDCoverage{
-			f0.activePool: {Pool: f0.activePool, FloorDay: through.AddDate(0, 0, -100), ThroughDay: through},
-			f0.frozenPool: {Pool: f0.frozenPool, FloorDay: through.AddDate(0, 0, -100), ThroughDay: through},
+			f0.activePool: v1.CurrentRevenueCoverage(timescale.LendingRevenueUSDCoverage{Pool: f0.activePool, FloorDay: through.AddDate(0, 0, -100), ThroughDay: through}),
+			f0.frozenPool: v1.CurrentRevenueCoverage(timescale.LendingRevenueUSDCoverage{Pool: f0.frozenPool, FloorDay: through.AddDate(0, 0, -100), ThroughDay: through}),
 		},
 		sums: []timescale.LendingRevenueUSDBucketSum{
 			revenueGroup(f0.activePool, f0.xlmSAC, 0, "1.25"), revenueGroup(f0.activePool, f0.xlmSAC, 3, "10"),
@@ -128,7 +128,7 @@ func TestLendingProtocols_RevenueVerdictFailureIsCached(t *testing.T) {
 	failing.LastAmountDay = through
 	store := &revenueStore{
 		covs: map[string]timescale.LendingRevenueUSDCoverage{
-			f0.activePool: {Pool: f0.activePool, FloorDay: through.AddDate(0, 0, -100), ThroughDay: through},
+			f0.activePool: v1.CurrentRevenueCoverage(timescale.LendingRevenueUSDCoverage{Pool: f0.activePool, FloorDay: through.AddDate(0, 0, -100), ThroughDay: through}),
 		},
 		sums: []timescale.LendingRevenueUSDBucketSum{failing, revenueGroup(f0.activePool, f0.otherToken, 0, "2")},
 	}

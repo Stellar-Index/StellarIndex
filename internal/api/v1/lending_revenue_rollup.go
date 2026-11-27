@@ -316,10 +316,7 @@ func (r *LendingRevenueRollup) executeRun(ctx context.Context, c *rollupCycle, r
 			rr.hours[k] = append(rr.hours[k], h)
 		}
 	}
-	writes, decided, err := rr.value(ctx, c, infos, inRun, finished)
-	if err != nil {
-		return nil, err
-	}
+	writes, decided := rr.value(ctx, c, infos, inRun, finished)
 	if err := rr.account(c, run, inRun, decided); err != nil {
 		return nil, err
 	}
@@ -338,11 +335,10 @@ type rollupRun struct {
 	hours map[reserveDay][]clickhouse.LendingRevenueBucket
 }
 
-// value decides each queued in-run interest day, returning the rows to write and the reserve-days decided. A final
-// outcome with no row stored or to write is an error: nothing would then back the day coverage claims.
+// value decides each queued in-run interest day, returning the rows to write and the reserve-days decided.
 func (rr *rollupRun) value(ctx context.Context, c *rollupCycle, infos []clickhouse.LendingInterestDay, inRun func(time.Time) bool,
 	finished map[time.Time]bool,
-) ([]timescale.LendingRevenueUSDDay, map[reserveDay]bool, error) {
+) ([]timescale.LendingRevenueUSDDay, map[reserveDay]bool) {
 	var writes []timescale.LendingRevenueUSDDay
 	decided := map[reserveDay]bool{}
 	for _, info := range infos {
@@ -351,18 +347,13 @@ func (rr *rollupRun) value(ctx context.Context, c *rollupCycle, infos []clickhou
 			continue
 		}
 		row, write, final := valueRevenueRollupDay(ctx, c, rr, t, info)
-		k := reserveDay{rr.pool, info.Asset, info.Day}
-		if _, held := rr.have[k]; final && !write && !held {
-			return nil, nil, fmt.Errorf("lending revenue rollup: %s reserve %s day %s: final with no row stored or to write",
-				rr.pool, info.Asset, info.Day.Format(time.DateOnly))
-		}
-		decided[k] = true
+		decided[reserveDay{rr.pool, info.Asset, info.Day}] = true
 		finished[info.Day] = finished[info.Day] && final
 		if write {
 			writes = append(writes, row)
 		}
 	}
-	return writes, decided, nil
+	return writes, decided
 }
 
 // account checks every hour the run read returned for a queued in-run day reached a decision, and counts the days that

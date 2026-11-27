@@ -437,7 +437,7 @@ func decideRollupDay[R any](c *rollupCycle, rows rollupRows[R], v rollupDayValue
 	c.st.ReserveDays++
 	if v.task.changeOnly && v.exists && v.current {
 		c.st.Skipped++
-		return row, false, true
+		return row, false, v.kept(c)
 	}
 	var outcome usdDayOutcome
 	var ok bool
@@ -459,7 +459,7 @@ func decideRollupDay[R any](c *rollupCycle, rows rollupRows[R], v rollupDayValue
 	switch {
 	case v.exists && rows.equal(v.old, row):
 		c.st.Unchanged++
-		return row, false, true
+		return row, false, v.kept(c)
 	case v.exists && v.task.sweep && !v.task.explained && rows.unexplained(v.old, row):
 		c.st.Mismatches++
 		c.d.src.mismatched()
@@ -468,24 +468,41 @@ func decideRollupDay[R any](c *rollupCycle, rows rollupRows[R], v rollupDayValue
 	return row, true, true
 }
 
-// execute values the queued days pool by pool, storing each pool's coverage once its days are done, so a slow pool's
-// fill is kept even when a later pool fails.
+// kept is a final outcome that writes nothing, which only a stored row may back; without one the day is degraded and
+// stays unfinished, so coverage never claims it.
+func (v rollupDayValue[R]) kept(c *rollupCycle) bool {
+	if v.exists {
+		return true
+	}
+	c.st.Degraded++
+	c.d.logger.Error(c.d.src.name+": a final day has no row", "pool", v.key.pool, "asset", v.key.asset, "day", v.key.day)
+	return false
+}
+
+// execute values the queued days pool by pool, storing each pool's coverage once its days are done. A pool that fails
+// keeps its coverage and is logged; the rest still run, and the cycle then fails, so its success is not recorded and
+// the change cursor and planning state do not commit: the failed pool's changes, sweep and exclusion days come again.
 func (d *dayRollup) execute(ctx context.Context, p *rollupPlan, st *LendingRevenueRollupStats) error {
 	byPool := map[string][]poolDay{}
 	for _, pd := range p.order {
 		byPool[pd.pool] = append(byPool[pd.pool], pd)
 	}
 	c := &rollupCycle{d: d, tasks: p.tasks, walks: map[reserveDay]reserveUSDRead{}, st: st}
+	var failed []error
 	for _, pool := range p.pools {
 		unfinished, err := d.executePool(ctx, c, byPool[pool])
-		if err != nil {
-			return err
+		if err == nil {
+			err = d.storeCoverage(ctx, p, pool, unfinished)
 		}
-		if err := d.storeCoverage(ctx, p, pool, unfinished); err != nil {
-			return err
+		if err != nil {
+			if ctx.Err() != nil {
+				return err
+			}
+			d.logger.Error(d.src.name+": pool not valued", "pool", pool, "err", err)
+			failed = append(failed, err)
 		}
 	}
-	return nil
+	return errors.Join(failed...)
 }
 
 // executePool values one pool's queued days in runs of consecutive days and returns its first fill day that reached no
@@ -495,7 +512,7 @@ func (d *dayRollup) executePool(ctx context.Context, c *rollupCycle, days []pool
 	sort.Slice(days, func(i, j int) bool { return days[i].day.Before(days[j].day) })
 	var unfinished time.Time
 	for _, pd := range days {
-		if !pd.day.Equal(pd.day.Truncate(day24)) {
+		if !pd.day.Equal(pd.day.Truncate(day24)) || pd.day.Location() != time.UTC {
 			return unfinished, fmt.Errorf("%s: %s queued %s, not a UTC midnight", d.src.name, pd.pool, pd.day.Format(time.RFC3339))
 		}
 	}

@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+	_ "time/tzdata" // the zones below, whatever the host has installed
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/stellar/go-stellar-sdk/strkey"
@@ -24,10 +25,36 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The real rollup cycle over a lake whose server is not in UTC, as the driver then decodes every Date column at the
-// server's local midnight: the covered days with interest are each stored once, the days before the first interest
-// row store nothing, and every stored row is the day /revenue?interval=1d serves for it, to the cent it serves.
+// The real rollup cycle over a lake whose session runs in another zone and whose driver decodes in it: the covered days
+// with interest are each stored once with the hours of their UTC day (23:00Z on its day, 00:00Z on the next), the days
+// before the first interest row store nothing, and every stored row is the day /revenue?interval=1d serves for it, to
+// the cent it serves. Santiago runs on a day whose local midnight does not exist.
 func TestLendingRevenueRollup_NonUTCLakeStoresWhatRevenueServes(t *testing.T) {
+	berlin, err := time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("Europe/Berlin", func(t *testing.T) {
+		rollupOverZone(t, berlin, time.Date(2032, 7, 1, 0, 0, 0, 0, time.UTC), 2_719_001, 0x51)
+	})
+	santiago, err := time.LoadLocation("America/Santiago")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("America/Santiago gap day", func(t *testing.T) {
+		for d := 1; d <= 30; d++ {
+			if time.Date(2032, 9, d, 0, 0, 0, 0, santiago).Day() != d {
+				rollupOverZone(t, santiago, time.Date(2032, 9, d-4, 0, 0, 0, 0, time.UTC), 2_719_201, 0x53)
+				return
+			}
+		}
+		t.Skip("no midnight DST gap in Santiago's September 2032 in this tzdata")
+	})
+}
+
+// rollupOverZone seeds one pool from d0 over ledgers [base, base+99] and runs the rollup with the lake in loc; day 4 is
+// the day whose boundary hours are checked.
+func rollupOverZone(t *testing.T, loc *time.Location, d0 time.Time, base uint32, seed byte) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	addr := clickhouseAddr(t)
@@ -37,10 +64,9 @@ func TestLendingRevenueRollup_NonUTCLakeStoresWhatRevenueServes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	d0 := time.Date(2032, 7, 1, 0, 0, 0, 0, time.UTC)
 	day := func(i int) time.Time { return d0.Add(time.Duration(i) * 24 * time.Hour) }
 	// Far below every other test's range: stellar.ledgers is shared, and its max is the lake tip other tests pin.
-	const floor, thru = 2_719_001, 2_719_100
+	floor, thru := base, base+99
 	for seq, at := range map[uint32]time.Time{floor: d0.Add(-time.Hour), thru: day(9).Add(24*time.Hour - time.Second)} {
 		if err := conn.Exec(ctx, `INSERT INTO stellar.ledgers (ledger_seq, close_time, ledger_hash, prev_hash, protocol_version)
 			VALUES (?, ?, ?, '00', 23)`, seq, at, fmt.Sprintf("%064d", seq)); err != nil {
@@ -56,29 +82,32 @@ func TestLendingRevenueRollup_NonUTCLakeStoresWhatRevenueServes(t *testing.T) {
 		}
 		return s
 	}
-	pool, asset, xlm := contract(0x51), contract(0x52), c.NativeSACContractID()
+	pool, asset, xlm := contract(seed), contract(seed+1), c.NativeSACContractID()
 	for name, v := range map[string]uint32{"lending_interest": thru, "lending_interest_floor": floor, "lending_interest:" + pool: thru} {
 		if err := conn.Exec(ctx, `INSERT INTO stellar.entry_history_watermark (name, thru_ledger) VALUES (?, ?)`, name, v); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// Interest only on days 3-6, as a pool whose first reserve comes after the derive floor: the fill's first days hold
-	// nothing to value.
+	// nothing to value. XLM also has the last hour of day 4 and the first of day 5, which any zone but UTC puts in
+	// another day.
 	z := func() *big.Int { return new(big.Int) }
-	row := func(a string, d int, gross int64) lendinginterest.HourRow {
+	row := func(a string, hour time.Time, gross int64) lendinginterest.HourRow {
 		g := big.NewInt(gross)
 		return lendinginterest.HourRow{
-			Pool: pool, Asset: a, Protocol: lendinginterest.BlendV2, Hour: day(d).Add(5 * time.Hour), FirstLedger: 1, LastLedger: 2,
+			Pool: pool, Asset: a, Protocol: lendinginterest.BlendV2, Hour: hour, FirstLedger: 1, LastLedger: 2,
 			Versions: 1, AccruedVersions: 1, Gross: g, ProtocolFee: z(), Backstop: big.NewInt(gross / 5), SupplierIntended: g,
 			SupplierRealised: g, BackstopCreditDelta: z(), BackstopResidual: z(), SupplyResidual: z(), DefaultLoss: z(),
 			FeeCreditResidual: z(), ResidualExplained: z(), ResidualAttributed: z(), InterestDrawn: z(), Gulped: z(),
 			ReconcileBackstopLoss: z(),
 		}
 	}
+	at5 := func(d int) time.Time { return day(d).Add(5 * time.Hour) }
 	var rows []lendinginterest.HourRow
 	for d := 3; d <= 6; d++ {
-		rows = append(rows, row(asset, d, int64(1000+d)), row(xlm, d, int64(1_234_567_890+d*1_000_003)))
+		rows = append(rows, row(asset, at5(d), int64(1000+d)), row(xlm, at5(d), int64(1_234_567_890+d*1_000_003)))
 	}
+	rows = append(rows, row(xlm, day(5).Add(-time.Hour), 2_000_000_011), row(xlm, day(5), 3_000_000_017))
 	if err := chstore.InsertLendingInterestRows(ctx, addr, rows, lendinginterest.DeriveRev); err != nil {
 		t.Fatal(err)
 	}
@@ -100,6 +129,33 @@ func TestLendingRevenueRollup_NonUTCLakeStoresWhatRevenueServes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The server's zone reaches the driver through the handshake; a user location is the same decode path, and the
+	// session zone is what the server computes in.
+	lake := clickhouse.Context(ctx, clickhouse.WithUserLocation(loc),
+		clickhouse.WithSettings(clickhouse.Settings{"session_timezone": loc.String()}))
+
+	// Change detection pages by keyset through every (asset, day) once, each a UTC midnight, in this zone too.
+	seen := map[string]bool{}
+	for cur := (chstore.LendingInterestDay{}); ; {
+		page, err := er.LendingInterestChangedDays(lake, cur, 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page) == 0 {
+			break
+		}
+		for _, d := range page {
+			k := d.Asset + " " + d.Day.Format(time.RFC3339)
+			if seen[k] || d.Day.Location() != time.UTC || !d.Day.Equal(d.Day.Truncate(24*time.Hour)) {
+				t.Fatalf("change page gave %s again or off a UTC midnight", k)
+			}
+			seen[k] = true
+		}
+		cur = page[len(page)-1]
+	}
+	if len(seen) != 8 {
+		t.Fatalf("change pages held %d days; want 8: %v", len(seen), seen)
+	}
 
 	dsn := startTimescale(t, ctx)
 	applyMigrations(t, dsn)
@@ -111,14 +167,12 @@ func TestLendingRevenueRollup_NonUTCLakeStoresWhatRevenueServes(t *testing.T) {
 	srv := v1.New(v1.Options{Explorer: er, Lending: store, History: rollupXLMPrice{apiHistoryAdapter{s: store}}})
 	w := srv.NewLendingRevenueRollup(store, slog.Default())
 
-	// The server's zone reaches the driver through the handshake; a user location is the same decode path.
-	lake := clickhouse.Context(ctx, clickhouse.WithUserLocation(time.FixedZone("UTC+2", 2*3600)))
 	st, err := w.Cycle(lake)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !st.Held || st.Written != 8 || st.ReserveDays != 8 || st.Queued != 10 || st.Empty != 6 {
-		t.Fatalf("fill over a UTC+2 lake: %+v; want 10 days read, 6 empty, days 3-6 of both reserves written", st)
+		t.Fatalf("fill: %+v; want 10 days read, 6 empty, days 3-6 of both reserves written", st)
 	}
 	covs, err := store.LendingRevenueUSDCoverages(ctx)
 	if err != nil {
@@ -137,6 +191,15 @@ func TestLendingRevenueRollup_NonUTCLakeStoresWhatRevenueServes(t *testing.T) {
 	}
 	if len(stored) != 8 {
 		t.Fatalf("%d stored rows; want 8: %v", len(got), got)
+	}
+	for _, d := range []int{3, 4, 5, 6} {
+		want := 1
+		if d == 4 || d == 5 { // 23:00Z belongs to day 4, 00:00Z to day 5
+			want = 2
+		}
+		if r := stored[xlm+" "+day(d).Format(time.DateOnly)]; r.HoursValued != want {
+			t.Errorf("XLM day %d: %d hours valued; want %d", d, r.HoursValued, want)
+		}
 	}
 
 	ts := httptest.NewServer(srv.Handler())
@@ -190,7 +253,7 @@ func TestLendingRevenueRollup_NonUTCLakeStoresWhatRevenueServes(t *testing.T) {
 	}
 
 	// A re-derive of X's day 5, seen by change detection over the same lake, re-values exactly that row.
-	if err := chstore.InsertLendingInterestRows(ctx, addr, []lendinginterest.HourRow{row(asset, 5, 7777)}, lendinginterest.DeriveRev); err != nil {
+	if err := chstore.InsertLendingInterestRows(ctx, addr, []lendinginterest.HourRow{row(asset, at5(5), 7777)}, lendinginterest.DeriveRev); err != nil {
 		t.Fatal(err)
 	}
 	if st, err := w.Cycle(lake); err != nil || st.Written != 1 {

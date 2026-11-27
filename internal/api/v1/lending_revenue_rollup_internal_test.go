@@ -27,7 +27,7 @@ type fakeRollupLake struct {
 	clip    map[string]bool          // pools whose run reads come back uncovered
 	// dayList rewrites the interest days' Day as a broken reader might (nil: as read); failRun fails the run reads.
 	dayList func(d time.Time) (time.Time, bool)
-	failRun bool
+	failRun map[string]bool
 }
 
 func (l *fakeRollupLake) derivedAt(pool string, d time.Time) time.Time {
@@ -38,7 +38,7 @@ func (l *fakeRollupLake) derivedAt(pool string, d time.Time) time.Time {
 }
 
 func (l *fakeRollupLake) LendingPoolRevenue(_ context.Context, pool, _ string, q clickhouse.LendingHistoryQuery) (clickhouse.LendingRevenue, error) {
-	if q.Daily && l.failRun {
+	if q.Daily && l.failRun[pool] {
 		return clickhouse.LendingRevenue{}, errors.New("run read failed")
 	}
 	end := rollupDay(l.days[pool])
@@ -300,7 +300,7 @@ func TestLendingRevenueRollup_ClippedRunHoldsCoverage(t *testing.T) {
 func TestLendingRevenueRollup_UnvaluedHoursHoldCoverage(t *testing.T) {
 	plus2 := time.FixedZone("UTC+2", 2*3600)
 	for name, set := range map[string]func(l *fakeRollupLake){
-		"run read fails": func(l *fakeRollupLake) { l.failRun = true },
+		"run read fails": func(l *fakeRollupLake) { l.failRun = map[string]bool{"P": true} },
 		"days at the server's midnight": func(l *fakeRollupLake) {
 			l.dayList = func(d time.Time) (time.Time, bool) {
 				return time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, plus2).UTC(), true
@@ -321,7 +321,7 @@ func TestLendingRevenueRollup_UnvaluedHoursHoldCoverage(t *testing.T) {
 			if c, ok := h.store.covs["P"]; ok {
 				t.Fatalf("coverage stored through %s over days no row was stored for", c.ThroughDay.Format(time.DateOnly))
 			}
-			h.lake.failRun, h.lake.dayList = false, nil
+			h.lake.failRun, h.lake.dayList = nil, nil
 			if st := h.mustCycle(); st.Written != 10 || !h.through("P").Equal(rollupDay(9)) {
 				t.Fatalf("recovered cycle %+v, through %s; want 10 rows, day 9", st, h.through("P").Format(time.DateOnly))
 			}
@@ -329,12 +329,50 @@ func TestLendingRevenueRollup_UnvaluedHoursHoldCoverage(t *testing.T) {
 	}
 }
 
-// A pool-day the planner queues off a UTC midnight fails the cycle before any read.
+// A pool-day the planner queues off a UTC midnight, or at one in another location (map keys compare it), fails before
+// any read.
 func TestDayRollup_QueuedDayOffMidnightFails(t *testing.T) {
 	d := &dayRollup{src: dayRollupSource{name: "test", budget: lendingRevenueRollupBudget}, retry: map[poolDay]bool{}}
-	days := []poolDay{{"P", rollupDay(3).Add(-2 * time.Hour)}}
-	if _, err := d.executePool(context.Background(), &rollupCycle{st: &LendingRevenueRollupStats{}}, days); err == nil {
-		t.Fatal("a day off a UTC midnight was valued")
+	for _, day := range []time.Time{rollupDay(3).Add(-2 * time.Hour), rollupDay(3).In(time.FixedZone("UTC+2", 2*3600))} {
+		if _, err := d.executePool(context.Background(), &rollupCycle{st: &LendingRevenueRollupStats{}}, []poolDay{{"P", day}}); err == nil {
+			t.Errorf("queued %s was valued", day)
+		}
+	}
+}
+
+// A final outcome that writes nothing stands only on a stored row; without one the day is degraded and unfinished.
+func TestDecideRollupDay_KeptNeedsAStoredRow(t *testing.T) {
+	st := &LendingRevenueRollupStats{}
+	c := &rollupCycle{d: &dayRollup{src: dayRollupSource{name: "test"}, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}, st: st}
+	if (rollupDayValue[int]{exists: true}).kept(c) != true || st.Degraded != 0 {
+		t.Fatalf("a stored row did not back the day: %+v", st)
+	}
+	if (rollupDayValue[int]{key: reserveDay{"P", "A", rollupDay(1)}}).kept(c) || st.Degraded != 1 {
+		t.Fatalf("a final day with no row was kept: %+v", st)
+	}
+}
+
+// One pool's failure does not stop the others: their rows and coverage are stored, the failed pool's coverage stays
+// put, the cycle fails (so its success is not recorded) and the change cursor does not commit past its changes.
+func TestLendingRevenueRollup_FailedPoolIsContained(t *testing.T) {
+	h := newRollupHarness(t, map[string]int{"A": 10, "B": 10})
+	h.lake.failRun = map[string]bool{"A": true}
+	h.lake.derived[reserveDay{"A", "AA", rollupDay(3)}] = h.clock.Add(time.Hour) // after the cycle starts: past the cursor
+	if _, err := h.cycle(); err == nil {
+		t.Fatal("a cycle with a failed pool succeeded")
+	}
+	if !h.through("B").Equal(rollupDay(9)) || len(h.store.rows) != 10 {
+		t.Fatalf("B through %s with %d rows; want day 9, 10 rows", h.through("B").Format(time.DateOnly), len(h.store.rows))
+	}
+	if c, ok := h.store.covs["A"]; ok {
+		t.Fatalf("the failed pool's coverage moved to %s", c.ThroughDay.Format(time.DateOnly))
+	}
+	if h.r.cursor.Pool != "" {
+		t.Fatalf("the change cursor committed to %+v past the failed pool's change", h.r.cursor)
+	}
+	h.lake.failRun = nil
+	if st := h.mustCycle(); st.Written != 10 || !h.through("A").Equal(rollupDay(9)) {
+		t.Fatalf("recovered cycle %+v, A through %s; want A's 10 rows, day 9", st, h.through("A").Format(time.DateOnly))
 	}
 }
 
