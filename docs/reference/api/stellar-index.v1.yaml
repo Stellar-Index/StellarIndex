@@ -5009,9 +5009,18 @@ paths:
         the reserve is touched; `rate_as_of` is that update's time) or at
         the backstop's share price; and
         `accrued = current_value - net_flow` (interest earned, interest
-        paid, or backstop earnings including emissions claimed into it),
-        true as of `rate_as_of`. A BLNT clawback counts as a withdrawal,
-        so `accrued` does not include the clawed-back amount as a loss.
+        paid, or backstop earnings), true as of `rate_as_of`. A BLNT
+        clawback counts as a withdrawal, so `accrued` does not include the
+        clawed-back amount as a loss.
+
+        Claimed backstop emissions count in `net_flow` when a `deposit`
+        event carries them and in `accrued` when none does. A Blend V2
+        backstop claim pays backstop LP tokens (not BLND) deposited by a
+        `deposit` event in its own transaction, so a Blend V2 backstop's
+        `accrued` excludes claimed emissions; a BLNT backstop claim pays
+        backstop LP tokens (not BLNT) with no deposit event, so a BLNT
+        backstop's `accrued` includes them; for a Blend V1 backstop claim
+        both are unverified.
 
         `accrued` is served only when `folded_tokens` equals
         `onchain_tokens` and no auction moved the leg (`reconciled:

@@ -161,7 +161,7 @@ func decodeDeposit(e *events.Event) (decoded, error) {
 	return decoded{Pool: pool, UserAddress: user, Amount: amount, Amount2: shares, Attributes: map[string]any{}}, nil
 }
 
-// decodeClaim: topics=[sym, user]; data=i128 amount. NO pool.
+// decodeClaim: topics=[sym, user]; data=i128 amount (V2: backstop LP tokens, deposited by a same-tx deposit). NO pool.
 func decodeClaim(e *events.Event) (decoded, error) {
 	if len(e.Topic) < 2 {
 		return decoded{}, fmt.Errorf("%w: claim needs 2 topics, got %d", ErrMalformedTopic, len(e.Topic))
