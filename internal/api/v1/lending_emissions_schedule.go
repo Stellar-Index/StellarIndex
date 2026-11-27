@@ -79,5 +79,5 @@ func amountUnixSeconds(a canonical.Amount) time.Time {
 	case b.Cmp(big.NewInt(maxScheduleUnix)) > 0:
 		return time.Unix(maxScheduleUnix, 0).UTC()
 	}
-	return time.Unix(b.Int64(), 0).UTC()
+	return time.Unix(b.Int64(), 0).UTC() // i128:ok a contract timestamp, bounded by maxScheduleUnix above
 }
