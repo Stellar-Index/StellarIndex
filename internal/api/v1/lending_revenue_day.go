@@ -12,7 +12,7 @@ import (
 
 // lendingRevenueValuationRev versions how a stored day is valued; bump it when the valuer changes, and readers leave out
 // (and count) rows of an older one until the rollup re-values them.
-const lendingRevenueValuationRev int16 = 1
+const lendingRevenueValuationRev int16 = 2
 
 // lendingRevenueDayWalkBudget replaces the request walk budget for a day walk: a background walk is not cut short at
 // 2s, and one cut short anyway is degraded and never stored.

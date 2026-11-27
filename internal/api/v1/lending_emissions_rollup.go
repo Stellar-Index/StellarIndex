@@ -301,7 +301,15 @@ func (r *LendingEmissionsRollup) valueDay(ctx context.Context, c *rollupCycle, h
 			if cut || time.Time(view.ServedThrough).Before(q.To) {
 				return nil, usdDayDegraded, true
 			}
-			rows, ok := emissionsDayRows(&view, pd.day)
+			rows, ok, offDay := emissionsDayRows(&view, pd.day)
+			if offDay != nil {
+				readErr = fmt.Errorf("lending emissions rollup: %s day %s: the read serves a point at %s, which no row reaches",
+					pd.pool, pd.day.Format(time.DateOnly), offDay.Format(time.RFC3339))
+				return nil, usdDayDegraded, true
+			}
+			if len(rows) == 0 {
+				c.st.Empty++
+			}
 			return rows, emisDayOutcome(rows), ok
 		},
 	})
@@ -333,8 +341,9 @@ func emisRowRefused(d timescale.LendingEmissionsUSDDay) bool {
 }
 
 // emissionsDayRows is every stream line the view serves for day, one row each, exact as served before rounding; false
-// when a USD figure is not a finite decimal.
-func emissionsDayRows(v *LendingEmissionsHistoryView, day time.Time) ([]timescale.LendingEmissionsUSDDay, bool) {
+// when a USD figure is not a finite decimal. offDay is a point the day's read serves at another time: no row would hold
+// it, so the day cannot be called empty.
+func emissionsDayRows(v *LendingEmissionsHistoryView, day time.Time) (_ []timescale.LendingEmissionsUSDDay, ok bool, offDay *time.Time) {
 	b := emisRowBuilder{v: v, day: day, ok: true}
 	if v.Reserves.Available {
 		b.schedule()
@@ -352,10 +361,19 @@ func emissionsDayRows(v *LendingEmissionsHistoryView, day time.Time) ([]timescal
 			}
 		}
 	}
-	return b.out, b.ok
+	return b.out, b.ok, b.offDay
 }
 
-func (b *emisRowBuilder) at(t WireTime) bool { return time.Time(t).Equal(b.day) }
+func (b *emisRowBuilder) at(t WireTime) bool {
+	if time.Time(t).Equal(b.day) {
+		return true
+	}
+	if b.offDay == nil {
+		off := time.Time(t).UTC()
+		b.offDay = &off
+	}
+	return false
+}
 
 func (b *emisRowBuilder) schedule() {
 	rs := &b.v.Reserves
@@ -414,10 +432,11 @@ func (b *emisRowBuilder) alloc() {
 }
 
 type emisRowBuilder struct {
-	v   *LendingEmissionsHistoryView
-	day time.Time
-	out []timescale.LendingEmissionsUSDDay
-	ok  bool
+	v      *LendingEmissionsHistoryView
+	day    time.Time
+	out    []timescale.LendingEmissionsUSDDay
+	ok     bool
+	offDay *time.Time
 }
 
 // row is one stream line's day: its tokens, its served USD before rounding with the hours behind it, and the lower bound

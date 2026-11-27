@@ -185,8 +185,8 @@ func TestDayRollup_EmptyDaysAreCountedChecked(t *testing.T) {
 		return finished, nil
 	}
 	st := f.cycle(t)
-	if st.PoolDays != 0 || st.DaysChecked != 10 || !f.through().Equal(rollupDay(9)) {
-		t.Fatalf("stats %+v, coverage through %v; want 10 days checked, none valued, coverage through day 9", st, f.through())
+	if st.ReserveDays != 0 || st.Queued != 10 || !f.through().Equal(rollupDay(9)) {
+		t.Fatalf("stats %+v, coverage through %v; want 10 days queued, none decided, coverage through day 9", st, f.through())
 	}
 }
 
@@ -287,8 +287,8 @@ func TestDayRollup_BudgetCutChangesCarryOver(t *testing.T) {
 		}
 		before := f.cursor
 		st := f.cycle(t)
-		if st.PoolDays > lendingRevenueRollupPoolDays || f.cursor == before {
-			t.Fatalf("cycle %d: %d pool-days, cursor %d -> %d", c, st.PoolDays, before, f.cursor)
+		if st.Queued > lendingRevenueRollupPoolDays || f.cursor == before {
+			t.Fatalf("cycle %d: %d pool-days, cursor %d -> %d", c, st.Queued, before, f.cursor)
 		}
 		if c == 0 && f.cursor >= lendingRevenueRollupForcedDays {
 			t.Fatalf("first cycle took %d changes past the forced share", f.cursor)
@@ -304,8 +304,9 @@ func TestDayRollup_BudgetCutChangesCarryOver(t *testing.T) {
 	}
 }
 
-// A cycle whose store fails commits nothing of its change position, so the changes it did not store come back next cycle.
-func TestDayRollup_FailedStoreLeavesChangeCursor(t *testing.T) {
+// A cycle whose store fails still moves its change position on, so one stuck pool cannot hold every other pool's
+// changes; the changes it did not store wait in retry and are valued next cycle.
+func TestDayRollup_FailedStoreRetriesItsChanges(t *testing.T) {
 	f := newFakeDayRollup(20)
 	f.stored()
 	a, b := poolDay{fakePool, rollupDay(10)}, poolDay{fakePool, rollupDay(12)}
@@ -315,12 +316,12 @@ func TestDayRollup_FailedStoreLeavesChangeCursor(t *testing.T) {
 	if _, err := f.tryCycle(); err == nil {
 		t.Fatal("a failed store did not fail the cycle")
 	}
-	if f.cursor != 0 || f.rows[a] != 11 || f.rows[b] != 13 {
-		t.Fatalf("after a failed store: cursor %d rows %d %d", f.cursor, f.rows[a], f.rows[b])
+	if f.cursor != 2 || f.rows[a] != 11 || f.rows[b] != 13 || !f.d.retry[a] || !f.d.retry[b] {
+		t.Fatalf("after a failed store: cursor %d rows %d %d retry %v", f.cursor, f.rows[a], f.rows[b], f.d.retry)
 	}
 	f.cycle(t)
-	if f.cursor != 2 || f.rows[a] != 100 || f.rows[b] != 200 || !f.tasks[a].changeOnly || !f.tasks[b].changeOnly {
-		t.Fatalf("next cycle: cursor %d rows %d %d tasks %+v %+v", f.cursor, f.rows[a], f.rows[b], f.tasks[a], f.tasks[b])
+	if f.cursor != 2 || f.rows[a] != 100 || f.rows[b] != 200 || f.d.retry[a] || f.d.retry[b] {
+		t.Fatalf("next cycle: cursor %d rows %d %d retry %v", f.cursor, f.rows[a], f.rows[b], f.d.retry)
 	}
 }
 

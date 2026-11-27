@@ -58,7 +58,7 @@ repo1 local (fast restore), repo2 off-site (durable), rendered by `pgbackrest.co
 
 > **`pgbackrest backup` does NOT write both repos.** With no `--repo` it backs up only repo1; only `archive-push` (WAL) and `expire` act on every repo. The nightly wrapper (`pgbackrest-backup.sh.j2`) runs one `--repo=N --type=$TYPE backup` per `repoN-*` key — diff Mon–Sat, full Sunday, expire per repo —. By hand, add `--repo=2`. Staleness alert: `stellarindex_backup_offsite_stale`.
 
-Pruning repo1's diffs is deferred: repo2 is shallower (1 full + 7-day diffs vs 2 fulls), so repo1 stays the deeper copy.
+Pruning repo1's diffs is deferred: both repos keep 1 full, and repo1 keeps every diff of its chain where repo2 keeps 7 days.
 
 ### 3. Config / vault / secrets → encrypted tarball (high)
 

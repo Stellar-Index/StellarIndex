@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/lendinginterest"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -17,7 +18,10 @@ var revT = time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
 func revDay(back int) time.Time { return revT.Add(-time.Duration(back) * day24) }
 
 func revCov(pool string, floorBack, throughBack int) timescale.LendingRevenueUSDCoverage {
-	return timescale.LendingRevenueUSDCoverage{Pool: pool, FloorDay: revDay(floorBack), ThroughDay: revDay(throughBack)}
+	return timescale.LendingRevenueUSDCoverage{
+		Pool: pool, FloorDay: revDay(floorBack), ThroughDay: revDay(throughBack),
+		ValuationRev: lendingRevenueValuationRev, InterestDeriveRev: int16(lendinginterest.DeriveRev), //nolint:gosec // a small revision number
+	}
 }
 
 // revGroup is one current, fully priced group whose seven legs are all leg.
@@ -66,6 +70,33 @@ func TestProtocolRevenue_EmptyTableIsNullNotZero(t *testing.T) {
 		if w.Versions == nil || w.Versions.V1.InterestAccruedUSD != nil || deref(w.Versions.V2.USDReason) != protocolRevenueNotValued {
 			t.Fatalf("versions = %+v; want null with not_valued", w.Versions)
 		}
+	}
+}
+
+// Inside coverage a day with no row is a day with nothing to value, so a covered window holding no row is an exact zero,
+// not not_valued: the rollup is what keeps that true (TestLendingRevenueRollup_UnvaluedHoursHoldCoverage).
+func TestProtocolRevenue_CoveredWindowWithoutRowsIsZero(t *testing.T) {
+	out := foldProtocolRevenue(revIn(v2Pool, []timescale.LendingRevenueUSDCoverage{revCov("CP2", 40, 0)}))
+	for _, w := range []LendingProtocolRevenueWindow{out.Day, out.Week, out.Month, out.AllTime} {
+		if deref(w.InterestAccruedUSD) != "0.00" || w.USDReason != nil || w.LowerBound || len(w.Excluded) != 0 {
+			t.Fatalf("covered window with no rows served %+v, excluded %+v; want an exact 0.00", w.LendingProtocolRevenueAmounts, w.Excluded)
+		}
+	}
+}
+
+// Coverage written at an older valuation or derive revision vouches for nothing: the pool reads not_valued, never 0.00.
+func TestProtocolRevenue_OldRevisionCoverageIsNotCovered(t *testing.T) {
+	for name, set := range map[string]func(c *timescale.LendingRevenueUSDCoverage){
+		"valuation": func(c *timescale.LendingRevenueUSDCoverage) { c.ValuationRev = lendingRevenueValuationRev - 1 },
+		"derive":    func(c *timescale.LendingRevenueUSDCoverage) { c.InterestDeriveRev-- },
+	} {
+		cov := revCov("CP2", 40, 0)
+		set(&cov)
+		out := foldProtocolRevenue(revIn(v2Pool, []timescale.LendingRevenueUSDCoverage{cov}))
+		if w := out.Day; w.InterestAccruedUSD != nil || deref(w.USDReason) != protocolRevenueNotValued {
+			t.Fatalf("%s: old-revision coverage served %+v; want null, not_valued", name, w.LendingProtocolRevenueAmounts)
+		}
+		revExcl(t, out.Day, "CP2", "", protocolRevenueNotValued, -1)
 	}
 }
 

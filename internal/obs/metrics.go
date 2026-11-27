@@ -124,6 +124,7 @@ func registerPricingMetrics() {
 		AggregatorContributionWriteErrorsTotal,
 		AggregatorEmptyWindowsTotal,
 		AggregatorWindowTruncatedTotal,
+		AggregatorWindowWideMinutesUnresolvedTotal,
 		AggregatorStreamPublishTotal,
 		AnomalyWarnTotal,
 		CustomerWebhookDeliveryAttemptsTotal,
@@ -2190,6 +2191,16 @@ var AggregatorWindowTruncatedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_window_truncated_total",
 		Help: "Aggregator (pair, window) leg fetches still capped at MaxTradesPerWindow after the minute-sum fill — VWAP computed over the newest part of the window only.",
+	},
+	[]string{"pair", "window"},
+)
+
+// AggregatorWindowWideMinutesUnresolvedTotal counts the [AggregatorWindowTruncatedTotal] fetches whose coverage ends at an
+// over-spread minute the fill could not re-read raw, as opposed to minute sums being unusable for the leg.
+var AggregatorWindowWideMinutesUnresolvedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_aggregator_window_wide_minutes_unresolved_total",
+		Help: "Truncated aggregator (pair, window) leg fetches whose coverage ends at an over-spread minute left unresolved by the raw re-read.",
 	},
 	[]string{"pair", "window"},
 )

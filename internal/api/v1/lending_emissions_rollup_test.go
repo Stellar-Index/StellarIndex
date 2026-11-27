@@ -12,8 +12,10 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
+	_ "time/tzdata" // Europe/Berlin whatever the host has installed
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stellar/go-stellar-sdk/network"
@@ -37,7 +39,8 @@ type windowEmisLending struct {
 	alloc    []timescale.EmissionAllocBucket
 	tiers    []timescale.EmissionBackstopClaimBucket
 	skew     map[time.Time]int64
-	failHrs  bool // the hourly read fails, as the store reports it, with the whole days
+	failHrs  bool           // the hourly read fails, as the store reports it, with the whole days
+	zone     *time.Location // buckets days at this zone's midnight, as a read truncating in a session zone would
 }
 
 func inWindow[T any](rows []T, start func(T) time.Time, from, to time.Time) []T {
@@ -50,7 +53,13 @@ func inWindow[T any](rows []T, start func(T) time.Time, from, to time.Time) []T 
 	return out
 }
 
-func dayOf(t time.Time) time.Time { return t.UTC().Truncate(24 * time.Hour) }
+func (r *windowEmisLending) dayOf(t time.Time) time.Time {
+	if r.zone == nil {
+		return t.UTC().Truncate(24 * time.Hour)
+	}
+	y, m, d := t.In(r.zone).Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, r.zone)
+}
 
 func (r *windowEmisLending) LendingEmissionsHistory(_ context.Context, _ string, _ bool, q timescale.EmissionHistoryQuery) (timescale.LendingEmissionsHistory, error) {
 	bto := q.BackstopTo
@@ -88,7 +97,7 @@ func (r *windowEmisLending) LendingEmissionsHistory(_ context.Context, _ string,
 		return canonical.NewAmount(new(big.Int).Add(a.BigInt(), b.BigInt()))
 	}
 	for _, c := range h.Claims {
-		c.Start = dayOf(c.Start)
+		c.Start = r.dayOf(c.Start)
 		if i := slices.IndexFunc(d.Claims, func(o timescale.EmissionClaimBucket) bool {
 			return o.Start.Equal(c.Start) && o.Scope == c.Scope && reflect.DeepEqual(o.TokenID, c.TokenID)
 		}); i >= 0 {
@@ -104,7 +113,7 @@ func (r *windowEmisLending) LendingEmissionsHistory(_ context.Context, _ string,
 		}
 	}
 	for _, a := range h.Alloc {
-		a.Start = dayOf(a.Start)
+		a.Start = r.dayOf(a.Start)
 		if n := len(d.Alloc); n > 0 && d.Alloc[n-1].Start.Equal(a.Start) {
 			o := &d.Alloc[n-1]
 			o.Events, o.Unread, o.BackstopShare, o.PoolShare = o.Events+a.Events, o.Unread+a.Unread, add(o.BackstopShare, a.BackstopShare), add(o.PoolShare, a.PoolShare)
@@ -113,7 +122,7 @@ func (r *windowEmisLending) LendingEmissionsHistory(_ context.Context, _ string,
 		d.Alloc = append(d.Alloc, a)
 	}
 	for _, c := range h.BackstopClaims {
-		c.Start = dayOf(c.Start)
+		c.Start = r.dayOf(c.Start)
 		d.BackstopClaims = append(d.BackstopClaims, c) // one claim per tier-day in these fixtures
 	}
 	if q.Hours && r.failHrs {
@@ -417,7 +426,7 @@ func TestLendingEmissionsRollup_StoredEqualsServed(t *testing.T) {
 	if c := store.covs[pool]; !c.FloorDay.Equal(emisDay(0)) || !c.ThroughDay.Equal(through) || c.Protocol != "blend" {
 		t.Fatalf("coverage %+v, want days %s..%s", c, emisDay(0).Format(time.DateOnly), through.Format(time.DateOnly))
 	}
-	if st.DaysChecked != int(through.Sub(emisDay(0))/(24*time.Hour))+1 || st.Written != len(store.rows) {
+	if st.Queued != int(through.Sub(emisDay(0))/(24*time.Hour))+1 || st.Written != len(store.rows) {
 		t.Errorf("stats %+v for %d rows", st, len(store.rows))
 	}
 	for i := range 6 {
@@ -527,10 +536,10 @@ func TestLendingEmissionsRollup_V1BLNTAndIdentity(t *testing.T) {
 	assertStoredEqualsServed(t, srv, store, pool, emisDay(0))
 }
 
-// TestLendingEmissionsRollup_FailedStoreKeepsCoverageAndState: a cycle whose row write fails stores no coverage and
-// commits no planning state (the next cycle reads exclusions from the same point); the next successful cycle stores the
-// rows, then the coverage, and moves the exclusion read on.
-func TestLendingEmissionsRollup_FailedStoreKeepsCoverageAndState(t *testing.T) {
+// TestLendingEmissionsRollup_FailedStoreKeepsCoverage: a cycle whose row write fails returns its error and stores no
+// coverage, but its planning state still commits (one failed pool must not hold the others' exclusion read back); the
+// next cycle stores the retried rows, then the coverage.
+func TestLendingEmissionsRollup_FailedStoreKeepsCoverage(t *testing.T) {
 	srv, store, pool := blendV2RollupServer(t)
 	r := srv.NewLendingEmissionsRollup(store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	store.failReplace = 1
@@ -543,8 +552,8 @@ func TestLendingEmissionsRollup_FailedStoreKeepsCoverageAndState(t *testing.T) {
 	if _, err := r.Cycle(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(store.since) != 2 || !store.since[1].Equal(store.since[0]) {
-		t.Fatalf("exclusion reads since %v, want the failed cycle's point re-read", store.since)
+	if len(store.since) != 2 || !store.since[1].After(store.since[0]) {
+		t.Fatalf("exclusion reads since %v, want the read moved on past the failed cycle", store.since)
 	}
 	if _, ok := store.covs[pool]; !ok || len(store.rows) == 0 {
 		t.Fatalf("after a good cycle: coverage %+v, %d rows", store.covs, len(store.rows))
@@ -574,6 +583,45 @@ func TestLendingEmissionsRollup_CutReadIsRetriedNotStored(t *testing.T) {
 		t.Fatalf("retried day 0: %+v", d)
 	}
 	assertStoredEqualsServed(t, srv, store, pool, emisDay(0))
+}
+
+// TestLendingEmissionsRollup_OffDayPointFailsThePool: a read that buckets its days at another zone's midnight serves its
+// points off the UTC day the rollup asked for. The day is not empty, so the cycle fails and coverage never claims it.
+func TestLendingEmissionsRollup_OffDayPointFailsThePool(t *testing.T) {
+	berlin, err := time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lr, prices := blendV2Rollup(t, v1.Options{})
+	lr.zone = berlin
+	srv := emisRollupServer(t, lr, emisSAC(t, blndAssetID), prices, v1.Options{})
+	pool := mkCStrkey(t, 1)
+	store := newMemEmisStore(map[string]time.Time{pool: emisAt(0, 1)})
+	r := srv.NewLendingEmissionsRollup(store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	st, err := r.Cycle(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "no row reaches") {
+		t.Fatalf("cycle over off-day points: %+v, %v; want the pool failed", st, err)
+	}
+	if c, ok := store.covs[pool]; ok || len(store.rows) != 0 {
+		t.Fatalf("coverage %+v (%v), %d rows; want neither", c, ok, len(store.rows))
+	}
+}
+
+// TestLendingEmissionsRollup_OldRevisionCoverageIsReproved: coverage another valuation revision wrote vouches for nothing,
+// so the fill re-values the pool from its floor rather than past that coverage, and the empty days stay counted as such.
+func TestLendingEmissionsRollup_OldRevisionCoverageIsReproved(t *testing.T) {
+	srv, store, pool := blendV2RollupServer(t)
+	through := time.Now().UTC().Truncate(24 * time.Hour).Add(-24 * time.Hour)
+	store.covs[pool] = timescale.LendingEmissionsUSDCoverage{Pool: pool, Protocol: "blend", FloorDay: emisDay(0), ThroughDay: through}
+	st := rollOnce(t, srv, store)
+	for i := range 5 {
+		if len(store.day(pool, emisDay(i))) == 0 || store.covs[pool].ValuationRev == 0 {
+			t.Fatalf("after old-revision coverage: stats %+v, coverage %+v, day %d unstored; want days 0-4 re-valued", st, store.covs[pool], i)
+		}
+	}
+	if st.Empty == 0 || st.Empty >= st.Queued {
+		t.Errorf("stats %+v; want the days past the last emission counted empty, not all of them", st)
+	}
 }
 
 // The emissions rollup's started and last-success gauges are the ones its stalled alert reads.

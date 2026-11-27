@@ -20,12 +20,13 @@ type LendingInterestDay struct {
 
 // LendingInterestChangedDaysQuery pages through the days by (newest derived_at, contract_id, asset, day), after a cursor,
 // so one derive writing more days than a page still moves the cursor. No FINAL: max(derived_at) over every part is the
-// newest derive's either way, so the scan reads derived_at and the key columns only.
-const LendingInterestChangedDaysQuery = `SELECT contract_id, asset, toDate(hour) AS day, max(derived_at) AS newest
+// newest derive's either way, so the scan reads derived_at and the key columns only. The day is a UTC-tagged DateTime:
+// a bare Date decodes at the server zone's midnight, which is the wrong day or, across a DST gap, none.
+const LendingInterestChangedDaysQuery = `SELECT contract_id, asset, toDateTime(toDate(hour), 'UTC') AS day, max(derived_at) AS newest
 	FROM stellar.lending_interest_hourly
 	WHERE derived_at >= fromUnixTimestamp64Milli(?)
 	GROUP BY contract_id, asset, day
-	HAVING (newest, contract_id, asset, day) > (fromUnixTimestamp64Milli(?), ?, ?, toDate(?))
+	HAVING (newest, contract_id, asset, day) > (fromUnixTimestamp64Milli(?), ?, ?, toDateTime(toDate(?), 'UTC'))
 	ORDER BY newest, contract_id, asset, day
 	LIMIT ?`
 
@@ -44,15 +45,15 @@ func (r *ExplorerReader) LendingInterestChangedDays(ctx context.Context, after L
 		if err := rows.Scan(&d.Pool, &d.Asset, &d.Day, &d.DerivedAt); err != nil {
 			return nil, fmt.Errorf("clickhouse: scan lending interest changed day: %w", err)
 		}
-		d.Day, d.DerivedAt = d.Day.UTC(), d.DerivedAt.UTC()
+		d.Day, d.DerivedAt = dateDay(d.Day), d.DerivedAt.UTC()
 		out = append(out, d)
 	}
 	return out, rows.Err()
 }
 
 // lendingInterestPoolDaysQuery is one pool's days over [from, before): FINAL as the revenue read, so derived_at is the
-// surviving derive's and the stale count is the revenue read's countIf(derive_rev != rev).
-const lendingInterestPoolDaysQuery = `SELECT asset, toDate(hour) AS day, max(derived_at), countIf(derive_rev != ?)
+// surviving derive's and the stale count is the revenue read's countIf(derive_rev != rev). The day is UTC-tagged as above.
+const lendingInterestPoolDaysQuery = `SELECT asset, toDateTime(toDate(hour), 'UTC') AS day, max(derived_at), countIf(derive_rev != ?)
 	FROM (
 		SELECT asset, hour, derived_at, derive_rev FROM stellar.lending_interest_hourly FINAL
 		WHERE contract_id = ? AND hour >= toDateTime(?, 'UTC') AND hour < toDateTime(?, 'UTC')
@@ -75,7 +76,7 @@ func (r *ExplorerReader) LendingInterestPoolDays(ctx context.Context, pool strin
 		if err := rows.Scan(&d.Asset, &d.Day, &d.DerivedAt, &d.StaleRows); err != nil {
 			return nil, fmt.Errorf("clickhouse: scan lending interest day %s: %w", pool, err)
 		}
-		d.Day, d.DerivedAt = d.Day.UTC(), d.DerivedAt.UTC()
+		d.Day, d.DerivedAt = dateDay(d.Day), d.DerivedAt.UTC()
 		out = append(out, d)
 	}
 	return out, rows.Err()
