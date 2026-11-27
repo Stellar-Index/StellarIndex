@@ -27,34 +27,9 @@
 # tree saw the fixture dir vanish mid-scan, and restoring .gitignore with
 # `git checkout` would discard a developer's uncommitted edit.
 set -uo pipefail
-
-# A git hook exports GIT_DIR/GIT_INDEX_FILE; without this the fixture's
-# `git init`/`git add` would act on the REAL repository.
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
-  GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR
-
-cd "$(dirname "$0")/../.." || exit 1
-
-TMP="$(mktemp -d)"
-# shellcheck disable=SC2317,SC2329  # invoked indirectly by the EXIT trap
-cleanup() { rm -rf "$TMP"; }
-trap cleanup EXIT
-TREE="$TMP/tree"
-mkdir -p "$TREE"
-# Tracked + untracked non-ignored files: the same set the gate scans and
-# resolves targets against. A file deleted but not yet staged is skipped.
-git ls-files -z -co --exclude-standard \
-  | tar --null -T - -cf - 2>/dev/null | tar -xf - -C "$TREE" || true
-if [ ! -f "$TREE/scripts/ci/lint_doc_links.py" ] || [ ! -f "$TREE/.gitignore" ]; then
-  echo "lint-doc-links-test: could not copy the tree into $TREE" >&2
-  exit 1
-fi
-# tar keeps modes; the copy must be writable even where the source is not.
-if ! { chmod -R u+w "$TREE" && git -C "$TREE" init -q && git -C "$TREE" add -A; }; then
-  echo "lint-doc-links-test: could not build the fixture repo in $TREE" >&2
-  exit 1
-fi
-cd "$TREE" || exit 1
+# shellcheck source=scripts/ci/lib/selftest-tree.sh
+. "$(dirname "$0")/lib/selftest-tree.sh"
+selftest_tree lint-doc-links-test scripts/ci/lint_doc_links.py
 
 GATE="scripts/ci/lint-doc-links.sh"
 FIX="docs/zz-lint-doc-links-fixture.md"

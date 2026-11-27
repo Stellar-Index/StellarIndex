@@ -23,6 +23,10 @@
 #
 # Run: bash scripts/dev/cut-release_test.sh
 set -uo pipefail
+# Once, before any fixture: a hook-exported GIT_DIR would point every fixture
+# git call, and the stub make's commit, at the real repository.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
+  GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPT="$REPO_ROOT/scripts/dev/cut-release.sh"
@@ -61,9 +65,6 @@ echo "unexpected make target: $*" >&2
 exit 1
 EOF
   chmod +x "$FAKEBIN/make"
-
-  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
-        GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR
 
   REPO="$TMP/repo"
   ORIGIN="$TMP/origin.git"
@@ -189,9 +190,6 @@ EOF
 # not the prepush gate itself). Populates <tmp>/repo and <tmp>/origin.git.
 _sla_fixture_setup() {
   local tmp="$1" fakebin repo origin
-
-  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
-        GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR
 
   fakebin="$tmp/bin"
   repo="$tmp/repo"

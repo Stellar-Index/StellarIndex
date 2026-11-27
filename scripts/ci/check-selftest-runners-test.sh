@@ -5,6 +5,9 @@
 #
 # Run: bash scripts/ci/check-selftest-runners-test.sh
 set -uo pipefail
+# The fixture scripts below are text, but this file is scanned by the guard too.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
+  GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR
 
 cd "$(dirname "$0")/../.." || exit 1
 CHECK="$PWD/scripts/ci/check-selftest-runners.sh"
@@ -90,6 +93,22 @@ expect "a baselined path entry that now has a runner is stale" 1 "stale baseline
 setup './scripts/ci/a-test.sh' 'run: ./scripts/ci/b-test.sh' 'configs/gone-test.sh'
 expect "a baselined path entry that no longer exists is stale" 1 "stale baseline entry configs/gone-test.sh"
 OTHER=''
+
+setup './scripts/ci/a-test.sh' 'run: ./scripts/ci/b-test.sh' ''
+printf '#!/usr/bin/env bash\ngit add -N x\ngit commit -qm fixture\n' >"$TMP/f/ci/a-test.sh"
+expect "a self-test committing in the real repo fails and is named" 1 "a-test.sh:2: git add -N x"
+
+# shellcheck disable=SC2016  # the fixture scripts are literal text
+printf '. "$(dirname "$0")/lib/selftest-tree.sh"\nselftest_tree a\ngit commit -qm x\n' >"$TMP/f/ci/a-test.sh"
+expect "a self-test that sources the selftest-tree helper passes" 0
+
+# shellcheck disable=SC2016  # the fixture scripts are literal text
+printf 'unset GIT_DIR GIT_INDEX_FILE\nT=$(mktemp -d)\ngit -C "$T" commit -qm x\n' >"$TMP/f/ci/a-test.sh"
+expect "a self-test committing in its own temp repo passes" 0
+
+# shellcheck disable=SC2016  # the fixture scripts are literal text
+printf 'T=$(mktemp -d)\ngit -C "$T" -c user.name=t reset -q\n' >"$TMP/f/ci/a-test.sh"
+expect "a temp repo without the GIT_DIR unset still fails" 1 "a-test.sh:2:"
 
 echo "check-selftest-runners-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

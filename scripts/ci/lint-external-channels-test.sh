@@ -9,21 +9,20 @@
 # trip the very gate it exercises, and the only way out would be a
 # second exemption. Reading them keeps the exemption list at two.
 #
-# The fixture doc is deliberately UNTRACKED and the git index is never
-# touched: the gate reads untracked, non-ignored files, so a plain file
-# is visible to it (same reasoning as lint-doc-links-test.sh).
+# The fixture doc is deliberately UNTRACKED: the gate reads untracked,
+# non-ignored files, so a plain file is visible to it. It is written into a
+# throwaway copy of the tree, never the real one.
 set -uo pipefail
-cd "$(dirname "$0")/../.." || exit 1
-
 GATE="scripts/ci/lint-external-channels.sh"
 REAL_MANIFEST="docs/operations/external-channels.md"
 FIX="docs/zz-external-channels-fixture.md"
 FIXTURE_PAT="zz-dead-channel-fixture-string"
-TMP=$(mktemp -d)
+# shellcheck source=scripts/ci/lib/selftest-tree.sh
+. "$(dirname "$0")/lib/selftest-tree.sh"
+selftest_tree lint-external-channels-test "$GATE" "$REAL_MANIFEST"
+TMP="$SELFTEST_TMP/manifests"
+mkdir -p "$TMP"
 PASS=0; FAIL=0
-# shellcheck disable=SC2317,SC2329  # invoked indirectly by the EXIT trap
-cleanup() { rm -f "$FIX"; rm -rf "$TMP"; }
-trap cleanup EXIT
 
 check() { # <name> <expected ok|red> [manifest]
   local name="$1" want="$2" rc
