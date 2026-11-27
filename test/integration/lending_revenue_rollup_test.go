@@ -56,7 +56,8 @@ func TestLendingRevenueRollup_FillChangesAndLock(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	const pool, asset = "CPOOLROLLUPA", "CASSETROLLUPX"
+	// asset is a real contract id with no token metadata in the lake: its decimals read succeeds and finds none.
+	const pool, asset = "CPOOLROLLUPA", "CBZG63DMOVYC2YLTONSXILLYAAAAAAAAAAAAAAAAAAAAAAAAAAAABETN"
 	xlm := c.NativeSACContractID()
 	for name, v := range map[string]uint32{"lending_interest": thru, "lending_interest_floor": floor, "lending_interest:" + pool: thru} {
 		if err := conn.Exec(ctx, `INSERT INTO stellar.entry_history_watermark (name, thru_ledger) VALUES (?, ?)`, name, v); err != nil {
@@ -124,7 +125,7 @@ func TestLendingRevenueRollup_FillChangesAndLock(t *testing.T) {
 	dsn := startTimescale(t, ctx)
 	applyMigrations(t, dsn)
 	store, db := openOrientationStore(t, ctx, dsn)
-	srv := v1.New(v1.Options{Explorer: er, History: rollupXLMPrice{apiHistoryAdapter{s: store}}})
+	srv := v1.New(v1.Options{Explorer: er, TokenDecimals: er, History: rollupXLMPrice{apiHistoryAdapter{s: store}}})
 	w := srv.NewLendingRevenueRollup(store, slog.Default())
 	cycle := func(w *v1.LendingRevenueRollup) v1.LendingRevenueRollupStats {
 		t.Helper()

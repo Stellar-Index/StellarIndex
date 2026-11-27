@@ -167,7 +167,7 @@ func rollupOverZone(t *testing.T, loc *time.Location, d0 time.Time, base uint32,
 		VALUES ($1, $2, $3, 1, now())`, blend.SourceName, pool, blend.MainnetPoolFactory); err != nil {
 		t.Fatal(err)
 	}
-	srv := v1.New(v1.Options{Explorer: er, Lending: store, History: rollupXLMPrice{apiHistoryAdapter{s: store}}})
+	srv := v1.New(v1.Options{Explorer: er, Lending: store, TokenDecimals: er, History: rollupXLMPrice{apiHistoryAdapter{s: store}}})
 	w := srv.NewLendingRevenueRollup(store, slog.Default())
 
 	st, err := w.Cycle(lake)
