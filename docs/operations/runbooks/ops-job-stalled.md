@@ -337,6 +337,8 @@ Limit: each restart resets `started_unix`, so an API that restarts more often th
 2. Check the advisory lock holder as for the revenue rollup above.
 3. Each pool-day is one `/emissions/history?interval=1d` read; a cycle that runs out of budget every time is that read slowing. The trailing days and the sweep still advance once it recovers. The revenue rollup's restart limit applies here too.
 
+The cycle log's `pools_skipped` counts pools left out that cycle: lineage unknown or unread, lake tip or a writer's cursor unplaced; a failed lineage read is also logged as `pool not valued` and fails the cycle. The pool list and each pool's first day are re-read once a day, so a new pool joins within a day. A replay that rewrites an older day is picked up by the daily sweep, up to 24 hours later. Any reader of `lending_emissions_usd_daily` must treat a pool with no coverage row, or a day past its `through_day`, as unknown, never as zero.
+
 ## Lending emissions rollup sweep mismatch
 
 `stellarindex_lending_emissions_rollup_sweep_mismatch` fires when `stellarindex_lending_emissions_rollup_sweep_mismatches_total` rose within the last day: the sweep re-valued a stored day whose lines carry the same tokens at the same valuation revision, no verdict or identity refusal on either side, and the USD differed. The rows were rewritten.
