@@ -39,13 +39,13 @@ const networkThroughputFlightKey = "throughput"
 type networkThroughputEntry struct {
 	buckets  []clickhouse.ThroughputBucket
 	cachedAt time.Time
-	// refreshFailed: the last refresh failed or was skipped; only a put clears it.
+	// refreshFailed: the last refresh that ran failed or panicked; only a put clears it, a refusal leaves it.
 	refreshFailed bool
 }
 
-// endRefresh ends the flight, recording a failure on the entry first.
+// endRefresh ends the flight, recording a failure (not a refusal) on the entry first.
 func (c *networkThroughputCache) endRefresh(fl *keyFlight, err error) {
-	if err != nil {
+	if err != nil && !refreshRefused(err) {
 		c.mu.Lock()
 		c.entry.refreshFailed = c.has
 		c.mu.Unlock()
@@ -127,11 +127,13 @@ func (h *Handler) refreshNetworkThroughput() *keyFlight {
 // it, so the retry lands warm.
 func (h *Handler) networkThroughputCached(ctx context.Context, windowDays int) (buckets []clickhouse.ThroughputBucket, asOf time.Time, degraded bool, err error) {
 	if e, ok, fresh := h.throughput.get(); ok {
+		refused := false
 		if !fresh {
-			h.refreshNetworkThroughput() //nolint:contextcheck // intentional detach — the rescan must outlive this request (see refreshNetworkThroughput)
-			e, _, _ = h.throughput.get() // a refresh skipped just now is already a known failure
+			fl := h.refreshNetworkThroughput() //nolint:contextcheck // intentional detach — the rescan must outlive this request (see refreshNetworkThroughput)
+			e, _, _ = h.throughput.get()
+			refused = fl.refused()
 		}
-		stale := !fresh && swrServedStale(e.cachedAt, networkThroughputTTL, networkThroughputRefreshTimeout, e.refreshFailed)
+		stale := !fresh && (refused || swrServedStale(e.cachedAt, networkThroughputTTL, networkThroughputRefreshTimeout, e.refreshFailed))
 		return sliceThroughput(e.buckets, windowDays), e.cachedAt, stale, nil
 	}
 	fl := h.refreshNetworkThroughput() //nolint:contextcheck // intentional detach — a request that times out must not kill the fill

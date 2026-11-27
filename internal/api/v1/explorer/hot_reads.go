@@ -52,8 +52,8 @@ func (f *perKeyFlight) overran(key string, budget time.Duration) bool {
 }
 
 // servedFreshness is an SWR serve's two verdicts. Age past the bound alone is stale: the refresh the read starts has not failed.
-// degraded means the body is carried forward over a failure (the last refresh failed or was skipped, the one running overran
-// its budget, or the payload is provisional), or a section was dropped; on a served old entry it implies stale.
+// degraded means the body is carried forward unrefreshed (the last refresh failed, the one running overran its budget, this
+// serve's refresh was refused a gate slot, or the payload is provisional), or a section was dropped; it implies stale.
 // reason names which of those it is (an obs.Degraded* value) whenever degraded is set.
 type servedFreshness struct {
 	stale, degraded bool
@@ -67,16 +67,36 @@ func (fr servedFreshness) note(w http.ResponseWriter) {
 	}
 }
 
-// expiredFreshness is the verdict for an entry served past its TTL, stale per [swrServedStale].
-func expiredFreshness(stale, refreshFailed, overran bool) servedFreshness {
-	fr := servedFreshness{stale: stale || refreshFailed || overran, degraded: refreshFailed || overran}
+// expiredFreshness is the verdict for an entry served past its TTL, stale per [swrServedStale]. refused is this serve's own
+// refresh being turned away by the gate ([keyFlight.refused]): nothing is refreshing the copy, as in the markets cache.
+func expiredFreshness(stale, refreshFailed, overran, refused bool) servedFreshness {
+	degraded := refreshFailed || overran || refused
+	fr := servedFreshness{stale: stale || degraded, degraded: degraded}
 	switch {
 	case refreshFailed:
 		fr.reason = obs.DegradedRefreshFailed
 	case overran:
 		fr.reason = obs.DegradedRefreshOverrun
+	case refused:
+		fr.reason = obs.DegradedRefreshRefused
 	}
 	return fr
+}
+
+// refreshRefused reports an error that ends a flight before any read ran (no gate slot, or the owner's charge refused). It says
+// nothing about whether the read works, so it must never be recorded as the entry's refresh outcome.
+func refreshRefused(err error) bool {
+	return errors.Is(err, errRefreshSaturated) || errors.Is(err, errOwnerRefused)
+}
+
+// refused reports a flight already ended by a refusal ([refreshRefused]); false while it runs.
+func (fl *keyFlight) refused() bool {
+	select {
+	case <-fl.done:
+		return refreshRefused(fl.err)
+	default:
+		return false
+	}
 }
 
 // begin returns the flight for key and whether the caller owns it. Owners must call end (with the compute's error); waiters select on done.
@@ -135,7 +155,7 @@ type assetHoldersEntry struct {
 	computedAt time.Time
 	cachedAt   time.Time
 	asOfLedger uint32
-	// refreshFailed: the last refresh of this board failed or was skipped; only a put clears it.
+	// refreshFailed: the last refresh of this board that ran failed or panicked; only a put clears it, a refusal leaves it.
 	refreshFailed bool
 }
 
@@ -216,7 +236,7 @@ func (c *assetHoldersCache) put(asset string, e assetHoldersEntry) {
 	c.entries[asset] = e
 }
 
-// markRefreshFailed records on asset's entry, if any, that its refresh failed or was skipped.
+// markRefreshFailed records on asset's entry, if any, that its refresh failed.
 func (c *assetHoldersCache) markRefreshFailed(asset string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -226,9 +246,9 @@ func (c *assetHoldersCache) markRefreshFailed(asset string) {
 	}
 }
 
-// endRefresh ends asset's flight, recording a failure on its entry first.
+// endRefresh ends asset's flight, recording a failure (not a refusal) on its entry first.
 func (c *assetHoldersCache) endRefresh(asset string, fl *keyFlight, err error) {
-	if err != nil {
+	if err != nil && !refreshRefused(err) {
 		c.markRefreshFailed(asset)
 	}
 	c.flight.end(asset, fl, err)
@@ -296,13 +316,11 @@ func (h *Handler) assetHoldersCached(ctx context.Context, asset string, limit in
 	if e, ok, fresh := h.assetHolders.get(asset); ok {
 		if !fresh {
 			// Stale path: an entry is served either way, so skip rather than wait.
-			h.refreshAssetHolders(asset, tryAdmit) //nolint:contextcheck // intentional detach — the rescan must outlive this request (see refreshAssetHolders)
+			fl := h.refreshAssetHolders(asset, tryAdmit) //nolint:contextcheck // intentional detach — the rescan must outlive this request (see refreshAssetHolders)
 			if cur, ok, _ := h.assetHolders.get(asset); ok {
-				e = cur // a refresh skipped just now is already a known failure
+				e = cur
 			}
-		}
-		if !fresh {
-			fr = swrFreshness(e.cachedAt, assetHoldersTTL, assetHoldersRefreshTimeout, e.refreshFailed, &h.assetHolders.flight, asset)
+			fr = swrFreshness(e.cachedAt, assetHoldersTTL, assetHoldersRefreshTimeout, e.refreshFailed, &h.assetHolders.flight, asset, fl.refused())
 		}
 		return sliceHolders(e.holders, limit), e.total, e.vintage(), fr, nil
 	}
@@ -360,13 +378,13 @@ type contractsDirEntry struct {
 	types    map[string]bool // contract id -> isSAC; nil when the lookup failed
 	since    uint32
 	cachedAt time.Time
-	// refreshFailed: the last refresh of this window failed or was skipped; only a put clears it.
+	// refreshFailed: the last refresh of this window that ran failed or panicked; only a put clears it, a refusal leaves it.
 	refreshFailed bool
 }
 
 // swrFreshness is the [expiredFreshness] verdict for an entry cached at cachedAt, served past ttl while flight's key refreshes it.
-func swrFreshness(cachedAt time.Time, ttl, refreshTimeout time.Duration, refreshFailed bool, flight *perKeyFlight, key string) servedFreshness {
-	return expiredFreshness(swrServedStale(cachedAt, ttl, refreshTimeout, refreshFailed), refreshFailed, flight.overran(key, refreshTimeout))
+func swrFreshness(cachedAt time.Time, ttl, refreshTimeout time.Duration, refreshFailed bool, flight *perKeyFlight, key string, refused bool) servedFreshness {
+	return expiredFreshness(swrServedStale(cachedAt, ttl, refreshTimeout, refreshFailed), refreshFailed, flight.overran(key, refreshTimeout), refused)
 }
 
 // swrServedStale is [swrverdict.Stale] for an entry cached at cachedAt.
@@ -403,7 +421,7 @@ func (c *contractsDirCache) put(window int, e contractsDirEntry) {
 	c.entries[window] = e
 }
 
-// markRefreshFailed records on window's entry, if any, that its refresh failed or was skipped.
+// markRefreshFailed records on window's entry, if any, that its refresh failed.
 func (c *contractsDirCache) markRefreshFailed(window int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -413,9 +431,9 @@ func (c *contractsDirCache) markRefreshFailed(window int) {
 	}
 }
 
-// endRefresh ends window's flight, recording a failure on its entry first.
+// endRefresh ends window's flight, recording a failure (not a refusal) on its entry first.
 func (c *contractsDirCache) endRefresh(window int, key string, fl *keyFlight, err error) {
-	if err != nil {
+	if err != nil && !refreshRefused(err) {
 		c.markRefreshFailed(window)
 	}
 	c.flight.end(key, fl, err)
@@ -485,11 +503,11 @@ func (h *Handler) refreshContractsDir(window int) *keyFlight {
 func (h *Handler) recentContractsCached(ctx context.Context, window, limit int) (rows []clickhouse.ContractDirectoryRow, types map[string]bool, since uint32, asOf time.Time, fr servedFreshness, err error) {
 	if e, ok, fresh := h.contractsDir.get(window); ok {
 		if !fresh {
-			h.refreshContractsDir(window) //nolint:contextcheck // intentional detach — see refreshContractsDir
+			fl := h.refreshContractsDir(window) //nolint:contextcheck // intentional detach — see refreshContractsDir
 			if cur, ok, _ := h.contractsDir.get(window); ok {
-				e = cur // a refresh skipped just now is already a known failure
+				e = cur
 			}
-			fr = swrFreshness(e.cachedAt, contractsDirTTL, contractsDirRefreshTimeout, e.refreshFailed, &h.contractsDir.flight, strconv.Itoa(window))
+			fr = swrFreshness(e.cachedAt, contractsDirTTL, contractsDirRefreshTimeout, e.refreshFailed, &h.contractsDir.flight, strconv.Itoa(window), fl.refused())
 		}
 		return sliceContracts(e.rows, limit), e.types, e.since, e.cachedAt, fr, nil
 	}

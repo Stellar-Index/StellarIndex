@@ -45,7 +45,7 @@ type ContractStatsView struct {
 type contractStatsEntry struct {
 	view     ContractStatsView
 	cachedAt time.Time
-	// refreshFailed: the last refresh failed, panicked or was skipped; only a put clears it.
+	// refreshFailed: the last refresh that ran failed or panicked; only a put clears it, a refusal leaves it.
 	refreshFailed bool
 }
 
@@ -71,7 +71,7 @@ func (c *contractStatsCache) put(e contractStatsEntry) {
 	c.entry = &e
 }
 
-// markRefreshFailed records on the entry, if any, that its refresh failed or was skipped.
+// markRefreshFailed records on the entry, if any, that its refresh failed.
 func (c *contractStatsCache) markRefreshFailed() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -119,8 +119,7 @@ func (h *Handler) refreshContractStats() *keyFlight {
 	}
 	gate := h.detachedGate()
 	if !gate.TryAcquireClass("contract_stats") {
-		h.contractStats.markRefreshFailed()
-		h.contractStats.flight.end(contractStatsKey, fl, errRefreshSaturated)
+		h.contractStats.flight.end(contractStatsKey, fl, errRefreshSaturated) // a refusal is not a failed refresh: refreshFailed stays as it was
 		return fl
 	}
 	go func() {
@@ -170,15 +169,13 @@ func (h *Handler) ContractStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if e, ok, fresh := h.contractStats.get(); ok {
-		if !fresh {
-			h.refreshContractStats() //nolint:contextcheck // intentional detach — see refreshContractStats
-			if cur, ok, _ := h.contractStats.get(); ok {
-				e = cur // a refresh skipped just now is already a known failure
-			}
-		}
 		var fr servedFreshness
 		if !fresh {
-			fr = swrFreshness(e.cachedAt, contractStatsTTL, contractStatsRefreshTimeout, e.refreshFailed, &h.contractStats.flight, contractStatsKey)
+			fl := h.refreshContractStats() //nolint:contextcheck // intentional detach — see refreshContractStats
+			if cur, ok, _ := h.contractStats.get(); ok {
+				e = cur
+			}
+			fr = swrFreshness(e.cachedAt, contractStatsTTL, contractStatsRefreshTimeout, e.refreshFailed, &h.contractStats.flight, contractStatsKey, fl.refused())
 		}
 		fr.note(w)
 		h.writeCachedJSON(r.Context(), w, e.view, fr.stale, fr.degraded, e.cachedAt)
