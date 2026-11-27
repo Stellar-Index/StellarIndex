@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/lendinginterest"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -352,27 +353,67 @@ func TestDecideRollupDay_KeptNeedsAStoredRow(t *testing.T) {
 	}
 }
 
-// One pool's failure does not stop the others: their rows and coverage are stored, the failed pool's coverage stays
-// put, the cycle fails (so its success is not recorded) and the change cursor does not commit past its changes.
+// One pool failing every cycle stops nothing else: the other pools' rows and coverage are stored, the change cursor
+// moves on past more changes than one page holds, so a healthy pool's re-derive is valued; every such cycle fails, so
+// its success is not recorded; the failed pool's coverage stays put and its unvalued days wait in a bounded retry,
+// valued once it recovers.
 func TestLendingRevenueRollup_FailedPoolIsContained(t *testing.T) {
-	h := newRollupHarness(t, map[string]int{"A": 10, "B": 10})
+	h := newRollupHarness(t, map[string]int{"A": 6000, "B": 10})
 	h.lake.failRun = map[string]bool{"A": true}
-	h.lake.derived[reserveDay{"A", "AA", rollupDay(3)}] = h.clock.Add(time.Hour) // after the cycle starts: past the cursor
 	if _, err := h.cycle(); err == nil {
 		t.Fatal("a cycle with a failed pool succeeded")
 	}
 	if !h.through("B").Equal(rollupDay(9)) || len(h.store.rows) != 10 {
 		t.Fatalf("B through %s with %d rows; want day 9, 10 rows", h.through("B").Format(time.DateOnly), len(h.store.rows))
 	}
+	// More of A's changes than a change page holds, then a re-derive of B's day 3 after them all.
+	base := h.clock
+	for i := range lendingRevenueRollupChangeLimit + 100 {
+		h.lake.derived[reserveDay{"A", "AA", rollupDay(i)}] = base.Add(time.Hour)
+	}
+	h.lake.derived[reserveDay{"B", "AB", rollupDay(3)}] = base.Add(2 * time.Hour)
+	for c := 0; ; c++ {
+		if c == 80 {
+			t.Fatalf("B's re-derive not valued after %d cycles; cursor at %+v", c, h.r.cursor)
+		}
+		if _, err := h.cycle(); err == nil {
+			t.Fatalf("cycle %d with A failing succeeded", c)
+		}
+		if r, _ := h.row("B", 3); r.InterestDerivedAt.Equal(base.Add(2 * time.Hour)) {
+			break
+		}
+	}
 	if c, ok := h.store.covs["A"]; ok {
 		t.Fatalf("the failed pool's coverage moved to %s", c.ThroughDay.Format(time.DateOnly))
 	}
-	if h.r.cursor.Pool != "" {
-		t.Fatalf("the change cursor committed to %+v past the failed pool's change", h.r.cursor)
+	var waiting []poolDay
+	for pd := range h.r.retry {
+		if pd.pool == "A" {
+			waiting = append(waiting, pd)
+		}
+	}
+	if len(waiting) == 0 || len(h.r.retry) > lendingRevenueRollupForcedDays/2 {
+		t.Fatalf("%d of A's days in retry, %d in all; want some, at most %d", len(waiting), len(h.r.retry), lendingRevenueRollupForcedDays/2)
 	}
 	h.lake.failRun = nil
-	if st := h.mustCycle(); st.Written != 10 || !h.through("A").Equal(rollupDay(9)) {
-		t.Fatalf("recovered cycle %+v, A through %s; want A's 10 rows, day 9", st, h.through("A").Format(time.DateOnly))
+	h.mustCycle()
+	for _, pd := range waiting {
+		if _, ok := h.store.rows[reserveDay{"A", "AA", pd.day}]; !ok || h.r.retry[pd] {
+			t.Fatalf("A's retried day %s: stored %v, still in retry %v", pd.day.Format(time.DateOnly), ok, h.r.retry[pd])
+		}
+	}
+}
+
+// A coverage row of an older derive revision is not the fill's to extend: it re-proves from the floor.
+func TestLendingRevenueRollup_DeriveRevBumpRefillsFromFloor(t *testing.T) {
+	h := newRollupHarness(t, map[string]int{"P": 100})
+	h.store.covs["P"] = timescale.LendingRevenueUSDCoverage{
+		Pool: "P", FloorDay: rollupDay(0), ThroughDay: rollupDay(50), ValuationRev: lendingRevenueValuationRev,
+		InterestDeriveRev: int16(lendinginterest.DeriveRev) - 1, //nolint:gosec // a small revision number
+	}
+	h.mustCycle()
+	if got := h.through("P"); !got.Equal(rollupDay(lendingRevenueRollupFillChunk - 1)) {
+		t.Fatalf("coverage through %s; want the floor plus one fill chunk", got.Format(time.DateOnly))
 	}
 }
 

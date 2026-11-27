@@ -66,6 +66,7 @@ type LendingRevenueRollupStats struct {
 	Queued, Empty                            int
 	ReserveDays, Written, Unchanged, Skipped int
 	Mismatches, Degraded, Refused            int
+	RetryDropped                             int // unvalued days past the retry cap, left to the fill and the sweep
 }
 
 // LendingRevenueRollup keeps lending_revenue_usd_daily: one row per (pool, asset, UTC day), each hour valued at the price a
@@ -162,7 +163,8 @@ func (r *LendingRevenueRollup) spans(ctx context.Context) (map[string]rollupSpan
 	}
 	covs := make(map[string]rollupCoverage, len(stored))
 	for pool, c := range stored {
-		covs[pool] = rollupCoverage{floorDay: c.FloorDay, throughDay: c.ThroughDay, current: c.ValuationRev == lendingRevenueValuationRev}
+		covs[pool] = rollupCoverage{floorDay: c.FloorDay, throughDay: c.ThroughDay, current: c.ValuationRev == lendingRevenueValuationRev &&
+			c.InterestDeriveRev == int16(lendinginterest.DeriveRev)} //nolint:gosec // a small revision number
 	}
 	at := r.now().UTC().Truncate(time.Hour)
 	spans := map[string]rollupSpan{}
