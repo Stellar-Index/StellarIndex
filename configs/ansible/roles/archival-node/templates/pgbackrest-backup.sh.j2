@@ -2,7 +2,7 @@
 # Scheduled pgBackRest backup for the stellarindex stanza — ONE backup
 # PER CONFIGURED REPO. Weekly full (Sunday) + differential the rest of
 # the week; expire runs per repo against that repo's own retention
-# (repo1-retention-full=2 local; repo2-retention-full/diff lean, S3).
+# (repo1-retention-full=1 local; repo2-retention-full/diff lean, S3).
 # Installed by the archival-node Ansible role; runs daily via
 # pgbackrest-backup.timer (User=postgres). Satisfies
 # stellarindex_timescale_backup_none_24h (24h, page) + _backup_failed

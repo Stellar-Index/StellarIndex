@@ -88,7 +88,7 @@ cat > "$TWO_REPO" <<EOT
 # rendered by ansible
 [global]
 repo1-path=/var/lib/pgbackrest
-repo1-retention-full=2
+repo1-retention-full=1
 repo1-bundle=y
 repo2-type=s3
 repo2-s3-endpoint=s3.example
@@ -107,7 +107,7 @@ ONE_REPO="$TMP/one.conf"
 cat > "$ONE_REPO" <<EOT
 [global]
 repo1-path=/var/lib/pgbackrest
-repo1-retention-full=2
+repo1-retention-full=1
 [stellarindex]
 pg1-path=/var/lib/postgresql/15/main
 EOT

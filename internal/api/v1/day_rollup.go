@@ -117,6 +117,10 @@ func (d *dayRollup) run(ctx context.Context) {
 			return
 		case <-t.C:
 		}
+		// select picks at random when both are ready; a cancelled worker must not start another cycle.
+		if ctx.Err() != nil {
+			return
+		}
 	}
 }
 

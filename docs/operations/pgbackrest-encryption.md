@@ -40,7 +40,7 @@ set makes it refuse to read it (stored vs running config disagree).
 
 The only path is **create a new repository**. The old repo stays plaintext
 until deleted, and the new one starts with no history; retention
-(`repo1-retention-full=2`) rebuilds from the first new full backup.
+(`repo1-retention-full=1`) rebuilds from the first new full backup.
 
 Setting `pgbackrest_repo1_cipher_pass` and re-applying WITHOUT §4 leaves a
 config that cannot read its own backups. Do not do half of this.
