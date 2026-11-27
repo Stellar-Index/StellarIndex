@@ -18,12 +18,12 @@ const lendingRevenueValuationRev int16 = 1
 // 2s, and one cut short anyway is degraded and never stored.
 const lendingRevenueDayWalkBudget = 30 * time.Second
 
-type revenueDayOutcome int
+type revenueDayOutcome = usdDayOutcome
 
 const (
-	revenueDayValued   revenueDayOutcome = iota
-	revenueDayDegraded                   // a read failed or was cut short: nothing stored, retried
-	revenueDayRefused                    // a read-time verdict refused the reserve: stored unpriced, walk_reason withheld
+	revenueDayValued   = usdDayValued
+	revenueDayDegraded = usdDayDegraded
+	revenueDayRefused  = usdDayRefused
 )
 
 // revenueDayRefusedRow reports whether row records a verdict refusal; only a verdict gives the withheld reason.
@@ -44,19 +44,11 @@ func (s *Server) revenueDayRead(ctx context.Context, assetC string, day time.Tim
 // valueRevenueDay values one day's hour rows with read, through the same bucket valuer as /revenue. A day with nothing
 // to value is zero without a read; walk is called only when one is needed.
 func valueRevenueDay(day time.Time, hours []clickhouse.LendingRevenueBucket, walk func() reserveUSDRead) revenueDay {
-	return valueUSDDay[revenueUSDLegRats](day, revenueHours(hours), walk)
-}
-
-// revenueReadRefusal is why a walked read refuses its reserve outright: withheld for a read-time verdict (a flagged
-// issuer, an operator withholding, a thin latest market), price_read_failed for a read that failed or was cut short.
-func revenueReadRefusal(r reserveUSDRead) string {
-	switch {
-	case r.verdict:
-		return exclusionPriceWithheld
-	case r.series.degraded || r.series.reason == exclusionPriceReadFailed:
-		return exclusionPriceReadFailed
+	d, err := valueUSDDay[revenueUSDLegRats](day, revenueHours(hours), walk)
+	if err != nil { // unreachable: revenueHours gives every hour all seven legs; never stored, retried
+		return revenueDay{outcome: usdDayDegraded}
 	}
-	return ""
+	return d
 }
 
 // revenueDayRow is the stored form of a valued day; ok is false when a leg is not a finite decimal (never, for decimal

@@ -490,7 +490,7 @@ func (s *Server) revenueVerdicts(ctx context.Context, sums []timescale.LendingRe
 	reasons := make([]string, len(assets))
 	forEachBounded(s.logger, len(assets), readFanoutConcurrency, func(i int) {
 		if d := last[assets[i]]; !d.IsZero() { // no amount: nothing to value, nothing to refuse
-			reasons[i] = revenueReadRefusal(s.revenueDayRead(ctx, assets[i], d, 0)) // distinct indices
+			reasons[i] = usdReadRefusal(s.revenueDayRead(ctx, assets[i], d, 0)) // distinct indices
 		}
 	})
 	out := map[string]string{}

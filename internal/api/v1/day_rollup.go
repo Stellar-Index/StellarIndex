@@ -13,25 +13,41 @@ import (
 
 const day24 = 24 * time.Hour
 
+// rollupBudget is a rollup's cadence and per-cycle work budget.
+type rollupBudget struct {
+	cycle, cycleTimeout, releaseTimeout time.Duration
+	// poolDays bounds the (pool, day) valuations one cycle makes. The sweep, retries, changes, stale rows and exclusions
+	// fill the queue to forcedDays, the trailing days to trailingDays, and the self-fill the rest, so each always advances.
+	poolDays, forcedDays, trailingDays int
+	fillChunk                          int // days per self-fill read
+	rewalkDays                         int // trailing days re-walked every cycle, for late price buckets
+	sweepCycles                        int // cycles per full sweep
+	maxRun                             int // days per run read
+}
+
 // dayRollupSource is what a per-day USD rollup gives the cycle it shares with the others: its lock, its reads, its change
 // detection, its valuation, its store and its metrics. Every func is required.
 type dayRollupSource struct {
 	name, lockName string // name prefixes the cycle's log lines
+	budget         rollupBudget
 	ready          func() error
 	lock           func(ctx context.Context, name string, onLost func(), logger *slog.Logger) (*timescale.InstanceLock, error)
 	// spans are each pool's wholly valuable days and what its coverage row holds.
 	spans func(ctx context.Context) (map[string]rollupSpan, map[string]rollupCoverage, error)
-	// bootstrap starts change detection, true when it did so now: exclusions are then read from a sweep's length back.
+	// bootstrap starts change detection, true when it did so now: exclusions are then read from a day back.
 	bootstrap func(ctx context.Context, started time.Time) (bool, error)
 	// changes queues the changed days; commit advances its position once the cycle has executed them.
 	changes                func(ctx context.Context, p *rollupPlan) (commit func(), err error)
 	stale                  func(ctx context.Context, p *rollupPlan) error
 	exclusionsChangedSince func(ctx context.Context, since time.Time) ([][2]time.Time, error)
-	// valueRun values one run of a pool's consecutive queued days and returns the days that reached a final outcome.
-	valueRun      func(ctx context.Context, tasks map[poolDay]rollupTask, run []poolDay, walks map[reserveDay]reserveUSDRead, st *LendingRevenueRollupStats) (map[time.Time]bool, error)
+	walk                   func(ctx context.Context, asset string, day time.Time) reserveUSDRead
+	// valueRun values one run of a pool's consecutive queued days, each through [decideRollupDay], stores what it writes
+	// and returns the days that reached a final outcome.
+	valueRun      func(ctx context.Context, c *rollupCycle, run []poolDay) (map[time.Time]bool, error)
 	storeCoverage func(ctx context.Context, pool string, sp rollupSpan, through time.Time) error
 	started       func(at time.Time)
 	succeeded     func(at time.Time, st LendingRevenueRollupStats)
+	mismatched    func() // a sweep found a stored row differing for no reason
 }
 
 // rollupCoverage is what a pool's coverage row holds: its days through throughDay from floorDay, current when stored at
@@ -90,7 +106,7 @@ func (sp rollupSpan) holds(d time.Time) bool { return !d.Before(sp.floor) && !d.
 // run cycles until ctx ends; a failed cycle is logged and the next one retries.
 func (d *dayRollup) run(ctx context.Context) {
 	d.src.started(d.now())
-	t := time.NewTicker(lendingRevenueRollupCycle)
+	t := time.NewTicker(d.src.budget.cycle)
 	defer t.Stop()
 	for {
 		d.runCycle(ctx)
@@ -104,7 +120,7 @@ func (d *dayRollup) run(ctx context.Context) {
 
 // runCycle runs one cycle under a budget of the worker's own, cancelled when ctx ends.
 func (d *dayRollup) runCycle(ctx context.Context) {
-	cctx, cancel := context.WithTimeout(context.Background(), lendingRevenueRollupCycleTimeout)
+	cctx, cancel := context.WithTimeout(context.Background(), d.src.budget.cycleTimeout)
 	defer cancel()
 	defer context.AfterFunc(ctx, cancel)()
 	st, err := d.cycle(cctx) //nolint:contextcheck // the cycle's budget is the worker's own; AfterFunc ties it to ctx
@@ -118,8 +134,7 @@ func (d *dayRollup) runCycle(ctx context.Context) {
 	}
 }
 
-// cycle is one pass under the lock, each step within its share of [lendingRevenueRollupPoolDays]; [dayRollup.run]
-// bounds it.
+// cycle is one pass under the lock, each step within its share of the budget; [dayRollup.run] bounds it.
 func (d *dayRollup) cycle(ctx context.Context) (LendingRevenueRollupStats, error) {
 	var st LendingRevenueRollupStats
 	if err := d.src.ready(); err != nil {
@@ -150,7 +165,7 @@ func (d *dayRollup) cycle(ctx context.Context) (LendingRevenueRollupStats, error
 
 // release frees the lock on a context of its own, so a cancelled or timed-out cycle still unlocks.
 func (d *dayRollup) release(lock *timescale.InstanceLock) {
-	ctx, cancel := context.WithTimeout(context.Background(), lendingRevenueRollupReleaseTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), d.src.budget.releaseTimeout)
 	defer cancel()
 	if err := lock.Release(ctx); err != nil {
 		d.logger.Warn(d.src.name+": lock release", "err", err)
@@ -160,6 +175,7 @@ func (d *dayRollup) release(lock *timescale.InstanceLock) {
 // rollupPlan is one cycle's queue of pool-days, in queue order and within limit, and the planning state the cycle
 // commits only once it has executed.
 type rollupPlan struct {
+	budget rollupBudget
 	spans  map[string]rollupSpan
 	pools  []string // spans' keys, sorted
 	covs   map[string]rollupCoverage
@@ -194,6 +210,19 @@ func (p *rollupPlan) add(pd poolDay, t rollupTask) bool {
 	return true
 }
 
+// queueChangePage queues changes in order as change-only days, skipping those already held, and returns the last change
+// it got past (cursor when none), so a page the budget cuts resumes at the cut.
+func queueChangePage[C any](p *rollupPlan, cursor C, changes []C, day func(C) poolDay, held func(C) bool) C {
+	last := cursor
+	for _, c := range changes {
+		if !held(c) && !p.add(day(c), rollupTask{changeOnly: true}) {
+			return last
+		}
+		last = c
+	}
+	return last
+}
+
 // plan queues the cycle's pool-days in priority order; the forced share's cap leaves the trailing days and the self-fill
 // room in every cycle.
 func (d *dayRollup) plan(ctx context.Context, started time.Time) (*rollupPlan, func(), error) {
@@ -208,8 +237,9 @@ func (d *dayRollup) plan(ctx context.Context, started time.Time) (*rollupPlan, f
 	if booted {
 		d.state.exclusionsSince = started.Add(-day24)
 	}
+	b := d.src.budget
 	p := &rollupPlan{
-		spans: spans, covs: covs, tasks: map[poolDay]rollupTask{}, filled: map[string]time.Time{}, limit: lendingRevenueRollupForcedDays,
+		budget: b, spans: spans, covs: covs, tasks: map[poolDay]rollupTask{}, filled: map[string]time.Time{}, limit: b.forcedDays,
 		exclusionsSince: d.state.exclusionsSince, windows: slices.Clone(d.state.windows), sweepDay: d.state.sweepDay,
 	}
 	for pool := range spans {
@@ -228,13 +258,13 @@ func (d *dayRollup) plan(ctx context.Context, started time.Time) (*rollupPlan, f
 	if err := d.planExclusions(ctx, p, started); err != nil {
 		return nil, nil, err
 	}
-	p.limit = lendingRevenueRollupTrailingDays
+	p.limit = b.trailingDays
 	for _, pool := range p.pools {
-		for i := range lendingRevenueRollupRewalkDays {
+		for i := range b.rewalkDays {
 			p.add(poolDay{pool, spans[pool].through.Add(-time.Duration(i) * day24)}, rollupTask{})
 		}
 	}
-	p.limit = lendingRevenueRollupPoolDays
+	p.limit = b.poolDays
 	for _, pool := range p.pools {
 		p.planFill(pool, spans[pool])
 	}
@@ -318,7 +348,7 @@ func (p *rollupPlan) planSweep() {
 		return
 	}
 	n := int(hi.Sub(lo)/day24) + 1
-	k := (n + lendingRevenueRollupSweepCycles - 1) / lendingRevenueRollupSweepCycles
+	k := (n + p.budget.sweepCycles - 1) / p.budget.sweepCycles
 	if p.sweepDay.Before(lo) || p.sweepDay.After(hi) {
 		p.sweepDay = lo
 	}
@@ -356,12 +386,84 @@ func (p *rollupPlan) planFill(pool string, sp rollupSpan) {
 		from = minTime(c.throughDay, sp.through).Add(day24)
 	}
 	p.filled[pool] = from.Add(-day24)
-	for d := from; !d.After(sp.through) && d.Before(from.Add(lendingRevenueRollupFillChunk*day24)); d = d.Add(day24) {
+	for d := from; !d.After(sp.through) && d.Before(from.Add(time.Duration(p.budget.fillChunk)*day24)); d = d.Add(day24) {
 		if !p.add(poolDay{pool, d}, rollupTask{fill: true}) {
 			return
 		}
 		p.filled[pool] = d
 	}
+}
+
+// rollupCycle is one executing cycle as a run valuer sees it: the queue, the walks and the stats.
+type rollupCycle struct {
+	d     *dayRollup
+	tasks map[poolDay]rollupTask
+	walks map[reserveDay]reserveUSDRead
+	st    *LendingRevenueRollupStats
+}
+
+// walk reads asset's walk of day once per cycle, whatever pools hold the asset.
+func (c *rollupCycle) walk(ctx context.Context, asset string, day time.Time) reserveUSDRead {
+	k := reserveDay{asset: asset, day: day}
+	w, ok := c.walks[k]
+	if !ok {
+		w = c.d.src.walk(ctx, asset, day)
+		c.walks[k] = w
+	}
+	return w
+}
+
+// rollupRows is how a rollup's stored rows compare: equal over every stored fact, and unexplained when a difference
+// is one nothing but the valuation accounts for (same source and revisions, no refusal on either side).
+type rollupRows[R any] struct {
+	equal, unexplained func(old, row R) bool
+}
+
+// rollupDayValue is one queued key-day: its stored row, whether that row is already current for the day's source, and
+// its valuation (ok false when the row is not representable).
+type rollupDayValue[R any] struct {
+	key             reserveDay
+	task            rollupTask
+	old             R
+	exists, current bool
+	value           func() (row R, outcome usdDayOutcome, ok bool)
+}
+
+// decideRollupDay values one queued key-day: write is true for a row to store, final when the day reached a final
+// outcome. A degraded or unrepresentable day is never written; a refused one is written unpriced.
+func decideRollupDay[R any](c *rollupCycle, rows rollupRows[R], v rollupDayValue[R]) (row R, write, final bool) {
+	c.st.PoolDays++
+	if v.task.changeOnly && v.exists && v.current {
+		c.st.Skipped++
+		return row, false, true
+	}
+	var outcome usdDayOutcome
+	var ok bool
+	switch row, outcome, ok = v.value(); outcome {
+	case usdDayValued:
+	case usdDayRefused:
+		c.st.Refused++
+	case usdDayDegraded:
+		c.st.Degraded++
+		var zero R
+		return zero, false, false
+	}
+	k := v.key
+	if !ok {
+		c.st.Degraded++
+		c.d.logger.Error(c.d.src.name+": a leg is not a finite decimal", "pool", k.pool, "asset", k.asset, "day", k.day)
+		return row, false, false
+	}
+	switch {
+	case v.exists && rows.equal(v.old, row):
+		c.st.Unchanged++
+		return row, false, true
+	case v.exists && v.task.sweep && !v.task.explained && rows.unexplained(v.old, row):
+		c.st.Mismatches++
+		c.d.src.mismatched()
+		c.d.logger.Warn(c.d.src.name+": sweep mismatch, rewriting", "pool", k.pool, "asset", k.asset, "day", k.day.Format(time.DateOnly))
+	}
+	return row, true, true
 }
 
 // execute values the queued days pool by pool, storing each pool's coverage once its days are done, so a slow pool's
@@ -371,9 +473,9 @@ func (d *dayRollup) execute(ctx context.Context, p *rollupPlan, st *LendingReven
 	for _, pd := range p.order {
 		byPool[pd.pool] = append(byPool[pd.pool], pd)
 	}
-	walks := map[reserveDay]reserveUSDRead{} // one walk per (asset, day) per cycle, whatever pools hold the asset
+	c := &rollupCycle{d: d, tasks: p.tasks, walks: map[reserveDay]reserveUSDRead{}, st: st}
 	for _, pool := range p.pools {
-		unfinished, err := d.executePool(ctx, p.tasks, byPool[pool], walks, st)
+		unfinished, err := d.executePool(ctx, c, byPool[pool])
 		if err != nil {
 			return err
 		}
@@ -386,15 +488,16 @@ func (d *dayRollup) execute(ctx context.Context, p *rollupPlan, st *LendingReven
 
 // executePool values one pool's queued days in runs of consecutive days and returns its first fill day that reached no
 // final outcome (zero: none).
-func (d *dayRollup) executePool(ctx context.Context, tasks map[poolDay]rollupTask, days []poolDay, walks map[reserveDay]reserveUSDRead, st *LendingRevenueRollupStats) (time.Time, error) {
+func (d *dayRollup) executePool(ctx context.Context, c *rollupCycle, days []poolDay) (time.Time, error) {
+	maxRun := d.src.budget.maxRun
 	sort.Slice(days, func(i, j int) bool { return days[i].day.Before(days[j].day) })
 	var unfinished time.Time
 	for i := 0; i < len(days); {
 		j := i + 1
-		for j < len(days) && j-i < lendingRevenueRollupMaxRun && days[j].day.Sub(days[i].day) < lendingRevenueRollupMaxRun*day24 {
+		for j < len(days) && j-i < maxRun && days[j].day.Sub(days[i].day) < time.Duration(maxRun)*day24 {
 			j++
 		}
-		finished, err := d.src.valueRun(ctx, tasks, days[i:j], walks, st)
+		finished, err := d.src.valueRun(ctx, c, days[i:j])
 		if err != nil {
 			return unfinished, err
 		}
@@ -404,7 +507,7 @@ func (d *dayRollup) executePool(ctx context.Context, tasks map[poolDay]rollupTas
 				continue
 			}
 			d.retry[pd] = true
-			if tasks[pd].fill && unfinished.IsZero() {
+			if c.tasks[pd].fill && unfinished.IsZero() {
 				unfinished = pd.day
 			}
 		}

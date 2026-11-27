@@ -1,9 +1,30 @@
 package v1
 
 import (
+	"fmt"
 	"math/big"
 	"time"
 )
+
+type usdDayOutcome int
+
+const (
+	usdDayValued   usdDayOutcome = iota
+	usdDayDegraded               // a read failed or was cut short: nothing stored, retried
+	usdDayRefused                // a read-time verdict refused the asset: stored unpriced, walk_reason withheld
+)
+
+// usdReadRefusal is why a walked read refuses its asset outright: withheld for a read-time verdict (a flagged issuer,
+// an operator withholding, a thin latest market), price_read_failed for a read that failed or was cut short.
+func usdReadRefusal(r reserveUSDRead) string {
+	switch {
+	case r.verdict:
+		return exclusionPriceWithheld
+	case r.series.degraded || r.series.reason == exclusionPriceReadFailed:
+		return exclusionPriceReadFailed
+	}
+	return ""
+}
 
 // usdLegs is a valuer's fixed legs as an array type L, so a zero sum still has every leg; P is *L, seen as a slice.
 type usdLegs[L any] interface {
@@ -28,7 +49,7 @@ type usdAmountHour struct {
 type usdDay[L any, P usdLegs[L]] struct {
 	sum     usdSum[L, P]
 	reason  string
-	outcome revenueDayOutcome
+	outcome usdDayOutcome
 }
 
 // usdWire is a sum's served facts; legs are rounded once, and nil together when reason is set.
@@ -139,7 +160,8 @@ func zeroAmounts(n int) []*big.Int {
 }
 
 // valueUSDBucket values the bucket at start, whose amounts are total, from hours[h:] that fall inside it and returns the
-// index past them; whatever of total those hours do not account for counts as one unpriced hour.
+// index past them; whatever of total those hours do not account for counts as one unpriced hour. total and every hour
+// carry one amount per leg: valueUSDDay checks that, and revenue's view builds them with all seven.
 func valueUSDBucket[L any, P usdLegs[L]](start time.Time, total []*big.Int, hours []usdAmountHour, h int, u reserveUSDSeries, width time.Duration) (usdSum[L, P], int) {
 	var sum usdSum[L, P]
 	seen := zeroAmounts(len(total))
@@ -164,10 +186,16 @@ func valueUSDBucket[L any, P usdLegs[L]](start time.Time, total []*big.Int, hour
 }
 
 // valueUSDDay values one UTC day's hours with walk's read. A day with nothing to value is zero without a read; walk is
-// called only when one is needed, and a refused or failed read values nothing.
-func valueUSDDay[L any, P usdLegs[L]](day time.Time, hours []usdAmountHour, walk func() reserveUSDRead) usdDay[L, P] {
+// called only when one is needed, and a refused or failed read values nothing. An hour without one amount per leg is an
+// error, before any read.
+func valueUSDDay[L any, P usdLegs[L]](day time.Time, hours []usdAmountHour, walk func() reserveUSDRead) (usdDay[L, P], error) {
 	var d usdDay[L, P]
 	total := zeroAmounts(len(d.sum.legs()))
+	for _, h := range hours {
+		if len(h.amounts) != len(total) {
+			return d, fmt.Errorf("usd day valuer: hour %s has %d amounts for %d legs", h.start.Format(time.RFC3339), len(h.amounts), len(total))
+		}
+	}
 	amountHours := 0
 	for _, h := range hours {
 		for i, a := range h.amounts {
@@ -178,21 +206,21 @@ func valueUSDDay[L any, P usdLegs[L]](day time.Time, hours []usdAmountHour, walk
 		}
 	}
 	if amountHours == 0 {
-		return d
+		return d, nil
 	}
 	r := walk()
-	switch revenueReadRefusal(r) {
+	switch usdReadRefusal(r) {
 	case exclusionPriceWithheld:
 		// Every hour carrying an amount is unpriced, so the stored row's legs are NULL: a refusal is never a zero.
-		d.outcome, d.reason, d.sum.unpriced = revenueDayRefused, r.series.reason, amountHours
-		return d
+		d.outcome, d.reason, d.sum.unpriced = usdDayRefused, r.series.reason, amountHours
+		return d, nil
 	case exclusionPriceReadFailed:
-		d.outcome = revenueDayDegraded
-		return d
+		d.outcome = usdDayDegraded
+		return d, nil
 	}
 	d.sum, _ = valueUSDBucket[L, P](day, total, hours, 0, r.series, day24)
 	d.reason = r.series.reason
-	return d
+	return d, nil
 }
 
 // storedLegs is the day's legs as exact decimals, all nil when no hour was valued against an unpriced one; ok is false

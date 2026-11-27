@@ -32,6 +32,13 @@ const (
 	lendingRevenueRollupReleaseTimeout = 5 * time.Second
 )
 
+var lendingRevenueRollupBudget = rollupBudget{
+	cycle: lendingRevenueRollupCycle, cycleTimeout: lendingRevenueRollupCycleTimeout, releaseTimeout: lendingRevenueRollupReleaseTimeout,
+	poolDays: lendingRevenueRollupPoolDays, forcedDays: lendingRevenueRollupForcedDays, trailingDays: lendingRevenueRollupTrailingDays,
+	fillChunk: lendingRevenueRollupFillChunk, rewalkDays: lendingRevenueRollupRewalkDays, sweepCycles: lendingRevenueRollupSweepCycles,
+	maxRun: lendingRevenueRollupMaxRun,
+}
+
 // LendingRevenueRollupStore is the Postgres side of the rollup.
 type LendingRevenueRollupStore interface {
 	HoldInstanceLock(ctx context.Context, name string, onLost func(), logger *slog.Logger) (*timescale.InstanceLock, error)
@@ -86,10 +93,11 @@ func (s *Server) NewLendingRevenueRollup(store LendingRevenueRollupStore, logger
 func (r *LendingRevenueRollup) rollup() *dayRollup {
 	return &dayRollup{
 		src: dayRollupSource{
-			name: "lending revenue rollup", lockName: timescale.LendingRevenueRollupLockName,
+			name: "lending revenue rollup", lockName: timescale.LendingRevenueRollupLockName, budget: lendingRevenueRollupBudget,
 			ready: r.ready, lock: r.store.HoldInstanceLock, spans: r.spans, bootstrap: r.bootstrap, changes: r.planChanges,
-			stale: r.planStale, exclusionsChangedSince: r.store.SourceExclusionWindowsChangedSince, valueRun: r.executeRun,
-			storeCoverage: r.storeCoverage, started: lendingRevenueRollupStarted, succeeded: lendingRevenueRollupSucceeded,
+			stale: r.planStale, exclusionsChangedSince: r.store.SourceExclusionWindowsChangedSince, walk: r.walk,
+			valueRun: r.executeRun, storeCoverage: r.storeCoverage, started: lendingRevenueRollupStarted,
+			succeeded: lendingRevenueRollupSucceeded, mismatched: obs.LendingRevenueRollupSweepMismatchesTotal.Inc,
 		},
 		logger: r.logger, now: r.now, state: &r.days, retry: r.retry,
 	}
@@ -209,20 +217,16 @@ func (r *LendingRevenueRollup) planChanges(ctx context.Context, p *rollupPlan) (
 // queueChanges queues the changes the store does not already hold, in order, and returns the last change it got past
 // (cursor when none). A stored row valued from that derive or a newer one costs no budget.
 func (r *LendingRevenueRollup) queueChanges(ctx context.Context, p *rollupPlan, cursor clickhouse.LendingInterestDay, changes []clickhouse.LendingInterestDay) (clickhouse.LendingInterestDay, error) {
-	last := cursor
 	stored, err := r.storedRows(ctx, changes)
 	if err != nil {
-		return last, err
+		return cursor, err
 	}
-	for _, c := range changes {
-		if old, ok := stored[reserveDay{c.Pool, c.Asset, c.Day}]; !ok || !rollupRowCurrent(old, c) {
-			if !p.add(poolDay{c.Pool, c.Day}, rollupTask{changeOnly: true}) {
-				return last, nil
-			}
-		}
-		last = c
+	day := func(c clickhouse.LendingInterestDay) poolDay { return poolDay{c.Pool, c.Day} }
+	held := func(c clickhouse.LendingInterestDay) bool {
+		old, ok := stored[reserveDay{c.Pool, c.Asset, c.Day}]
+		return ok && rollupRowCurrent(old, c)
 	}
-	return last, nil
+	return queueChangePage(p, cursor, changes, day, held), nil
 }
 
 // storedRows reads the stored rows of changes' days, one read per pool over its changed days' range.
@@ -275,7 +279,7 @@ func (r *LendingRevenueRollup) storeCoverage(ctx context.Context, pool string, s
 // executeRun values one run: the interest days first, then the rows (so a derive in between reads as newer next cycle),
 // then the stored days, then one write, with no transaction across a read. finished holds the run's days whose every
 // reserve reached a final outcome: valued, stored with its reason, refused and recorded, or proven to have no interest.
-func (r *LendingRevenueRollup) executeRun(ctx context.Context, tasks map[poolDay]rollupTask, run []poolDay, walks map[reserveDay]reserveUSDRead, st *LendingRevenueRollupStats) (map[time.Time]bool, error) {
+func (r *LendingRevenueRollup) executeRun(ctx context.Context, c *rollupCycle, run []poolDay) (map[time.Time]bool, error) {
 	pool, from, last := run[0].pool, run[0].day, run[len(run)-1].day
 	before := last.Add(day24)
 	infos, err := r.lake.LendingInterestPoolDays(ctx, pool, from, before)
@@ -312,11 +316,11 @@ func (r *LendingRevenueRollup) executeRun(ctx context.Context, tasks map[poolDay
 	}
 	var writes []timescale.LendingRevenueUSDDay
 	for _, info := range infos {
-		t, queued := tasks[poolDay{pool, info.Day}]
+		t, queued := c.tasks[poolDay{pool, info.Day}]
 		if !queued || !inRun(info.Day) {
 			continue
 		}
-		row, write, final := r.valueDay(ctx, &rr, t, info, walks, st)
+		row, write, final := valueRevenueRollupDay(ctx, c, &rr, t, info)
 		finished[info.Day] = finished[info.Day] && final
 		if write {
 			writes = append(writes, row)
@@ -325,7 +329,7 @@ func (r *LendingRevenueRollup) executeRun(ctx context.Context, tasks map[poolDay
 	if err := r.store.UpsertLendingRevenueUSDDays(ctx, writes); err != nil {
 		return nil, err
 	}
-	st.Written += len(writes)
+	c.st.Written += len(writes)
 	obs.LendingRevenueRollupRowsValuedTotal.Add(float64(len(writes)))
 	return finished, nil
 }
@@ -337,59 +341,34 @@ type rollupRun struct {
 	hours map[reserveDay][]clickhouse.LendingRevenueBucket
 }
 
-// valueDay values one queued reserve-day: write is true for a row to store, final when the day reached a final outcome.
-// A degraded or unrepresentable day is never written; a refused one is written unpriced, its legs NULL.
-func (r *LendingRevenueRollup) valueDay(ctx context.Context, run *rollupRun, t rollupTask, info clickhouse.LendingInterestDay, walks map[reserveDay]reserveUSDRead, st *LendingRevenueRollupStats) (row timescale.LendingRevenueUSDDay, write, final bool) {
-	st.PoolDays++
+var revenueRollupRows = rollupRows[timescale.LendingRevenueUSDDay]{equal: revenueDayRowsEqual, unexplained: revenueRowsUnexplained}
+
+// valueRevenueRollupDay values one queued reserve-day through the cycle's decision; a refused day is stored with its
+// legs NULL.
+func valueRevenueRollupDay(ctx context.Context, c *rollupCycle, run *rollupRun, t rollupTask, info clickhouse.LendingInterestDay) (timescale.LendingRevenueUSDDay, bool, bool) {
 	k := reserveDay{run.pool, info.Asset, info.Day}
 	old, exists := run.have[k]
-	if t.changeOnly && exists && rollupRowCurrent(old, info) {
-		st.Skipped++
-		return row, false, true
-	}
-	d := valueRevenueDay(info.Day, run.hours[k], func() reserveUSDRead {
-		wk := reserveDay{asset: info.Asset, day: info.Day}
-		w, ok := walks[wk]
-		if !ok {
-			w = r.walk(ctx, info.Asset, info.Day)
-			walks[wk] = w
-		}
-		return w
+	return decideRollupDay(c, revenueRollupRows, rollupDayValue[timescale.LendingRevenueUSDDay]{
+		key: k, task: t, old: old, exists: exists, current: exists && rollupRowCurrent(old, info),
+		value: func() (timescale.LendingRevenueUSDDay, usdDayOutcome, bool) {
+			d := valueRevenueDay(info.Day, run.hours[k], func() reserveUSDRead { return c.walk(ctx, info.Asset, info.Day) })
+			if d.outcome == usdDayDegraded {
+				return timescale.LendingRevenueUSDDay{}, d.outcome, true
+			}
+			sums := clickhouse.NewLendingRevenueSums()
+			for _, h := range run.hours[k] {
+				sums.Add(h.Sums)
+			}
+			row, ok := revenueDayRow(run.pool, info.Asset, info, sums, d)
+			return row, d.outcome, ok
+		},
 	})
-	switch d.outcome {
-	case revenueDayValued:
-	case revenueDayRefused:
-		st.Refused++
-	case revenueDayDegraded:
-		st.Degraded++
-		return row, false, false
-	}
-	sums := clickhouse.NewLendingRevenueSums()
-	for _, h := range run.hours[k] {
-		sums.Add(h.Sums)
-	}
-	row, ok := revenueDayRow(run.pool, info.Asset, info, sums, d)
-	if !ok {
-		st.Degraded++
-		r.logger.Error("lending revenue rollup: a leg is not a finite decimal", "pool", run.pool, "asset", info.Asset, "day", info.Day)
-		return row, false, false
-	}
-	switch {
-	case exists && revenueDayRowsEqual(old, row):
-		st.Unchanged++
-		return row, false, true
-	case exists && rollupSweepMismatch(t, old, row):
-		st.Mismatches++
-		obs.LendingRevenueRollupSweepMismatchesTotal.Inc()
-		r.logger.Warn("lending revenue rollup: sweep mismatch, rewriting", "pool", run.pool, "asset", info.Asset, "day", info.Day.Format(time.DateOnly))
-	}
-	return row, true, true
 }
 
-// rollupSweepMismatch reports a difference nothing explains: a day only the sweep queued, valued from the same derive at
-// the same revisions, neither row a verdict refusal, stating other USD.
-func rollupSweepMismatch(t rollupTask, old, row timescale.LendingRevenueUSDDay) bool {
-	return t.sweep && !t.explained && old.InterestDerivedAt.Equal(row.InterestDerivedAt) &&
+// revenueRowsUnexplained reports a difference nothing explains: valued from the same derive at the same revisions,
+// neither row a verdict refusal, stating other USD.
+func revenueRowsUnexplained(old, row timescale.LendingRevenueUSDDay) bool {
+	return old.InterestDerivedAt.Equal(row.InterestDerivedAt) &&
 		old.ValuationRev == row.ValuationRev && old.InterestDeriveRev == row.InterestDeriveRev &&
 		!revenueDayRefusedRow(old) && !revenueDayRefusedRow(row) && !revenueDayValuesEqual(old, row)
 }

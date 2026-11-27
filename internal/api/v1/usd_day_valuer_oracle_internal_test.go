@@ -136,6 +136,79 @@ func oracleValueRevenueBucket(b clickhouse.LendingRevenueBucket, hours []clickho
 	return sum, h
 }
 
+func oracleValueRevenueReserve(rv *LendingRevenueReserveView, res clickhouse.LendingRevenueReserve, u reserveUSDSeries, width time.Duration) (oracleRevenueUSDSum, []oracleRevenueUSDSum) {
+	var total oracleRevenueUSDSum
+	buckets := make([]oracleRevenueUSDSum, len(res.Buckets))
+	h := 0
+	for j, b := range res.Buckets {
+		buckets[j], h = oracleValueRevenueBucket(b, res.Hours, h, u, width)
+		total.add(&buckets[j])
+	}
+	reason := u.reason
+	switch {
+	case rv.Totals == nil:
+		reason = revenueUSDAmountsExcluded
+	case total.priced+total.unpriced == 0:
+		reason = ""
+	}
+	for j := range buckets {
+		if j < len(rv.Points) {
+			pr := reason
+			if pr != revenueUSDAmountsExcluded && buckets[j].priced+buckets[j].unpriced == 0 {
+				pr = ""
+			}
+			rv.Points[j].USD = buckets[j].wire(pr, false)
+		}
+	}
+	rv.USD = total.wire(reason, rv.LowerBound)
+	return total, buckets
+}
+
+func oracleValueRevenueView(v *LendingRevenueView, rev clickhouse.LendingRevenue, series []reserveUSDSeries) (oracleRevenueUSDSum, []oracleRevenueUSDSum) {
+	width := time.Hour
+	if v.Interval == "1d" {
+		width = 24 * time.Hour
+	}
+	v.PriceMaxAgeHours = int(lendingUSDHourlyPriceMaxAge / time.Hour)
+	v.TotalsUSD.Excluded = []LendingRevenueUSDExclusion{}
+	var pool oracleRevenueUSDSum
+	reserves := make([]oracleRevenueUSDSum, len(v.Reserves))
+	valued, priceGap := 0, false
+	for i := range v.Reserves {
+		rv := &v.Reserves[i]
+		t, _ := oracleValueRevenueReserve(rv, rev.Reserves[i], series[i], width)
+		reserves[i] = t
+		switch {
+		case rv.Totals == nil: // named in excluded already
+		case rv.USD.USDReason != nil:
+			reason := *rv.USD.USDReason
+			if reason == lendingUSDNoPriceInBound {
+				reason = revenueUSDPriceMissing
+			}
+			v.TotalsUSD.Excluded = append(v.TotalsUSD.Excluded, LendingRevenueUSDExclusion{Asset: rv.Asset, Reason: reason, Count: t.unpriced})
+			pool.unpriced += t.unpriced
+			priceGap = true
+		default:
+			if t.unpriced > 0 {
+				v.TotalsUSD.Excluded = append(v.TotalsUSD.Excluded, LendingRevenueUSDExclusion{Asset: rv.Asset, Reason: revenueUSDPriceMissing, Count: t.unpriced})
+			}
+			pool.add(&t)
+			valued++
+		}
+	}
+	reason := ""
+	switch {
+	case valued > 0:
+	case priceGap:
+		reason = revenueUSDPriceMissing
+	case len(v.Reserves) > 0 || v.LowerBound:
+		reason = revenueUSDAmountsExcluded
+	}
+	pool.bases = nil // a basis describes one token's series, not a sum across reserves
+	v.TotalsUSD.LendingRevenueUSD = pool.wire(reason, v.LowerBound || len(v.TotalsUSD.Excluded) > 0)
+	return pool, reserves
+}
+
 type oracleRevenueDay struct {
 	sum     oracleRevenueUSDSum
 	reason  string
@@ -155,7 +228,7 @@ func oracleValueRevenueDay(day time.Time, hours []clickhouse.LendingRevenueBucke
 		return oracleRevenueDay{}
 	}
 	r := walk()
-	switch revenueReadRefusal(r) {
+	switch usdReadRefusal(r) {
 	case exclusionPriceWithheld:
 		return oracleRevenueDay{outcome: revenueDayRefused, reason: r.series.reason, sum: oracleRevenueUSDSum{unpriced: amountHours}}
 	case exclusionPriceReadFailed:
