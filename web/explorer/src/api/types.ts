@@ -2723,13 +2723,27 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Lending pool — emissions over time, in token units.
+         * Lending pool — emissions over time, in token units and USD.
          * @description The pool's emissions per bucket over `[from, to)`, in base units of
          *     the emission token (`emission_token`, scaled by
          *     `emission_token_decimals`), as four separate streams. They describe
          *     the same tokens at different stages (scheduled, allocated to the
          *     backstop, claimed), so they are never added together, and no total
-         *     across them is served. No USD is served yet.
+         *     across them is served, in tokens or in USD.
+         *
+         *     Every amount of the emission token also carries `usd`, valued as
+         *     `/revenue` values interest: each hour's tokens at that hour's USD
+         *     price (the newest hourly VWAP at or before it, at most
+         *     `price_max_age_hours` old, never a later one), summed exactly and
+         *     rounded once to cents per figure, so rounded points need not add up
+         *     to the rounded total. A `1d` bucket is valued from its hours. USD is
+         *     served only when `emission_token` is the SAC of the protocol's
+         *     verified token (BLND for Blend, BLNT for BLNT); Blend V1's token is
+         *     not read, so its USD is null (`emission_token_unread`). A figure
+         *     that could not be valued in full is a lower bound
+         *     (`unpriced_hours`); one with nothing valued is null with
+         *     `usd_reason`, never `0.00`. `backstop_claims` values `blnt_amount`
+         *     only: LP tokens and shares are not the emission token.
          *
          *     `reserves` is the SCHEDULED emission per reserve token id
          *     (`token_id = reserve_index * 2` is the dToken, `side: borrow`; `+ 1`
@@ -7559,6 +7573,41 @@ export interface components {
              * @description Distinct claimers within the bucket.
              */
             claimers: number;
+            usd: components["schemas"]["LendingEmissionUSD"];
+        };
+        /** @description How much of a figure's emission tokens were valued, as on `/revenue`'s `usd`. */
+        LendingEmissionUSDCoverage: {
+            /** @description Hours carrying tokens that were valued. */
+            priced_hours: number;
+            /** @description Hours carrying tokens with no price within the bound, or a bucket's tokens its hours do not account for (counted as one): left out, so the figure is a lower bound. */
+            unpriced_hours: number;
+            /** @description Valued hours whose price is more than one hour older than the hour. */
+            price_carried_hours: number;
+            /**
+             * @description Set when every valued hour's price has this basis, as on `/revenue`; omitted when traded against fiat:USD or when bases mix.
+             * @enum {string}
+             */
+            price_basis?: "transitive" | "stablecoin_proxy";
+            /** @description When the valued hours' bases mix, the count of valued hours per non-fiat basis. Omitted otherwise. */
+            price_basis_hours?: {
+                [key: string]: number;
+            };
+            /** @description Some tokens are left out: an unpriced hour, or (stream and line totals) the stream's own lower bound. */
+            lower_bound: boolean;
+            /**
+             * @description Why nothing is valued. `emission_token_unread`: the pool's emission token is not read (always for Blend V1, whose storage layout is unverified). `emission_token_unverified`: the token is not the SAC of the protocol's verified token (BLND for Blend, BLNT for BLNT), matched by code and issuer, never code alone. `no_price_within_bound`: no hour carrying tokens had a price. Otherwise the price series' refusal: `unpriced`, `decimals_unknown`, `price_scale_mismatch`, `withheld` (a scam-flagged issuer, an operator withholding, or a thin market), `price_read_failed`.
+             * @enum {string|null}
+             */
+            usd_reason: "emission_token_unread" | "emission_token_unverified" | "no_price_within_bound" | "unpriced" | "decimals_unknown" | "price_scale_mismatch" | "withheld" | "price_read_failed" | null;
+        };
+        /** @description Emission tokens in USD, each hour at that hour's price, summed exactly and rounded once to cents; null with `usd_reason` when nothing could be valued. Zero tokens are `0.00` whatever the price. */
+        LendingEmissionUSD: components["schemas"]["LendingEmissionUSDCoverage"] & {
+            amount_usd: string | null;
+        };
+        /** @description A backstop allocation's two shares in USD, valued as `LendingEmissionUSD`; null together. */
+        LendingEmissionAllocUSD: components["schemas"]["LendingEmissionUSDCoverage"] & {
+            backstop_emissions_usd: string | null;
+            pool_emissions_usd: string | null;
         };
         /** @description A backstop's gulp_emissions naming the pool, in emission-token base units. */
         LendingEmissionAllocSums: {
@@ -21438,6 +21487,7 @@ export interface operations {
                      *         "emission_token": "CD25MNVTZDL4Y3XBCPCJXGXATV5WUHHOWMYFF4YBEGU5FCPGMYTVG5JY",
                      *         "emission_token_decimals": 7,
                      *         "eps_decimals": 7,
+                     *         "price_max_age_hours": 6,
                      *         "lower_bound": true,
                      *         "excluded": [
                      *           {
@@ -21462,16 +21512,40 @@ export interface operations {
                      *               "tokens": "35702479338.83712",
                      *               "approximate": false,
                      *               "approximate_reason": null,
+                     *               "usd": {
+                     *                 "amount_usd": "15.71",
+                     *                 "priced_hours": 48,
+                     *                 "unpriced_hours": 0,
+                     *                 "price_carried_hours": 2,
+                     *                 "lower_bound": false,
+                     *                 "usd_reason": null
+                     *               },
                      *               "points": [
                      *                 {
                      *                   "t": "2026-11-01T00:00:00Z",
                      *                   "partial": false,
-                     *                   "tokens": "17851239669.41856"
+                     *                   "tokens": "17851239669.41856",
+                     *                   "usd": {
+                     *                     "amount_usd": "7.85",
+                     *                     "priced_hours": 24,
+                     *                     "unpriced_hours": 0,
+                     *                     "price_carried_hours": 2,
+                     *                     "lower_bound": false,
+                     *                     "usd_reason": null
+                     *                   }
                      *                 },
                      *                 {
                      *                   "t": "2026-11-02T00:00:00Z",
                      *                   "partial": false,
-                     *                   "tokens": "17851239669.41856"
+                     *                   "tokens": "17851239669.41856",
+                     *                   "usd": {
+                     *                     "amount_usd": "7.86",
+                     *                     "priced_hours": 24,
+                     *                     "unpriced_hours": 0,
+                     *                     "price_carried_hours": 0,
+                     *                     "lower_bound": false,
+                     *                     "usd_reason": null
+                     *                   }
                      *                 }
                      *               ]
                      *             }
@@ -21486,20 +21560,44 @@ export interface operations {
                      *             "claims": 30,
                      *             "amount": "120000000000"
                      *           },
+                     *           "usd": {
+                     *             "amount_usd": "52.80",
+                     *             "priced_hours": 15,
+                     *             "unpriced_hours": 0,
+                     *             "price_carried_hours": 0,
+                     *             "lower_bound": false,
+                     *             "usd_reason": null
+                     *           },
                      *           "points": [
                      *             {
                      *               "t": "2026-11-01T00:00:00Z",
                      *               "partial": false,
                      *               "claimers": 14,
                      *               "claims": 18,
-                     *               "amount": "70000000000"
+                     *               "amount": "70000000000",
+                     *               "usd": {
+                     *                 "amount_usd": "30.80",
+                     *                 "priced_hours": 9,
+                     *                 "unpriced_hours": 0,
+                     *                 "price_carried_hours": 0,
+                     *                 "lower_bound": false,
+                     *                 "usd_reason": null
+                     *               }
                      *             },
                      *             {
                      *               "t": "2026-11-02T00:00:00Z",
                      *               "partial": false,
                      *               "claimers": 10,
                      *               "claims": 12,
-                     *               "amount": "50000000000"
+                     *               "amount": "50000000000",
+                     *               "usd": {
+                     *                 "amount_usd": "22.00",
+                     *                 "priced_hours": 6,
+                     *                 "unpriced_hours": 0,
+                     *                 "price_carried_hours": 0,
+                     *                 "lower_bound": false,
+                     *                 "usd_reason": null
+                     *               }
                      *             }
                      *           ],
                      *           "by_reserve": {
@@ -21513,13 +21611,29 @@ export interface operations {
                      *                   "claims": 18,
                      *                   "amount": "29000000000"
                      *                 },
+                     *                 "usd": {
+                     *                   "amount_usd": "12.76",
+                     *                   "priced_hours": 7,
+                     *                   "unpriced_hours": 0,
+                     *                   "price_carried_hours": 0,
+                     *                   "lower_bound": true,
+                     *                   "usd_reason": null
+                     *                 },
                      *                 "points": [
                      *                   {
                      *                     "t": "2026-11-01T00:00:00Z",
                      *                     "partial": false,
                      *                     "claimers": 9,
                      *                     "claims": 18,
-                     *                     "amount": "29000000000"
+                     *                     "amount": "29000000000",
+                     *                     "usd": {
+                     *                       "amount_usd": "12.76",
+                     *                       "priced_hours": 7,
+                     *                       "unpriced_hours": 0,
+                     *                       "price_carried_hours": 0,
+                     *                       "lower_bound": false,
+                     *                       "usd_reason": null
+                     *                     }
                      *                   }
                      *                 ]
                      *               }
@@ -21538,13 +21652,31 @@ export interface operations {
                      *             "backstop_emissions": "210000000000",
                      *             "pool_emissions": "90000000000"
                      *           },
+                     *           "usd": {
+                     *             "backstop_emissions_usd": "92.40",
+                     *             "pool_emissions_usd": "39.60",
+                     *             "priced_hours": 1,
+                     *             "unpriced_hours": 0,
+                     *             "price_carried_hours": 0,
+                     *             "lower_bound": false,
+                     *             "usd_reason": null
+                     *           },
                      *           "points": [
                      *             {
                      *               "t": "2026-11-02T00:00:00Z",
                      *               "partial": false,
                      *               "events": 1,
                      *               "backstop_emissions": "210000000000",
-                     *               "pool_emissions": "90000000000"
+                     *               "pool_emissions": "90000000000",
+                     *               "usd": {
+                     *                 "backstop_emissions_usd": "92.40",
+                     *                 "pool_emissions_usd": "39.60",
+                     *                 "priced_hours": 1,
+                     *                 "unpriced_hours": 0,
+                     *                 "price_carried_hours": 0,
+                     *                 "lower_bound": false,
+                     *                 "usd_reason": null
+                     *               }
                      *             }
                      *           ]
                      *         },
@@ -21595,6 +21727,8 @@ export interface operations {
                             emission_token_decimals: number | null;
                             /** @description Scale of the rates the schedule is built from: eps / 10^eps_decimals is base units per second. */
                             eps_decimals: number;
+                            /** @description The oldest hourly price an hour is valued at; an hour past it is unpriced. */
+                            price_max_age_hours: number;
                             /** @description Some stream is a lower bound; `excluded` names why. */
                             lower_bound: boolean;
                             excluded: {
@@ -21632,11 +21766,13 @@ export interface operations {
                                     approximate: boolean;
                                     /** @enum {string|null} */
                                     approximate_reason: "same_ledger_update_order_unknown" | null;
+                                    usd: components["schemas"]["LendingEmissionUSD"];
                                     points: {
                                         /** Format: date-time */
                                         t: string;
                                         partial: boolean;
                                         tokens: string;
+                                        usd: components["schemas"]["LendingEmissionUSD"];
                                     }[];
                                 }[];
                             };
@@ -21646,6 +21782,7 @@ export interface operations {
                                 served_through: components["schemas"]["LendingEmissionServedThrough"];
                                 lower_bound: boolean;
                                 totals: components["schemas"]["LendingEmissionClaimSums"];
+                                usd: components["schemas"]["LendingEmissionUSD"];
                                 points: components["schemas"]["LendingEmissionClaimsPoint"][];
                                 by_reserve: {
                                     lower_bound: boolean;
@@ -21656,6 +21793,7 @@ export interface operations {
                                         /** @enum {string} */
                                         side: "supply" | "borrow";
                                         totals: components["schemas"]["LendingEmissionClaimSums"];
+                                        usd: components["schemas"]["LendingEmissionUSD"];
                                         points: components["schemas"]["LendingEmissionClaimsPoint"][];
                                     }[];
                                 };
@@ -21670,10 +21808,13 @@ export interface operations {
                                 /** @enum {string|null} */
                                 tier_split_reason: "tier_split_not_on_chain" | null;
                                 totals: components["schemas"]["LendingEmissionAllocSums"];
+                                /** @description Null when the stream is unavailable. */
+                                usd: null | components["schemas"]["LendingEmissionAllocUSD"];
                                 points: (components["schemas"]["LendingEmissionAllocSums"] & {
                                     /** Format: date-time */
                                     t: string;
                                     partial: boolean;
+                                    usd: components["schemas"]["LendingEmissionAllocUSD"];
                                 })[];
                             };
                             backstop_claims: {
@@ -21692,12 +21833,14 @@ export interface operations {
                                     /** @enum {string} */
                                     tier: "FirstLoss" | "SecondLoss" | "ThirdLoss";
                                     totals: components["schemas"]["LendingEmissionBackstopClaimSums"];
+                                    usd: components["schemas"]["LendingEmissionUSD"];
                                     points: (components["schemas"]["LendingEmissionBackstopClaimSums"] & {
                                         /** Format: date-time */
                                         t: string;
                                         partial: boolean;
                                         /** Format: int64 */
                                         claimers: number;
+                                        usd: components["schemas"]["LendingEmissionUSD"];
                                     })[];
                                 }[];
                             };

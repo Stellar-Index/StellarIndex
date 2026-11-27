@@ -43,24 +43,13 @@ const (
 // emissionTokenPrice prices the pool's emission token at the /v1/lending/protocols token read, only when the token is the
 // SAC of that protocol's verified-catalogue asset: a pool names its own emission token, so a code match is not identity.
 func (s *Server) emissionTokenPrice(ctx context.Context, protocol, token string, lakeDecimals *int) kpiTokenPrice {
-	if token == "" {
-		return kpiTokenPrice{reason: emissionUSDTokenUnread}
-	}
-	ticker := ""
-	for _, pt := range lendingProtocols {
-		if pt.protocol == protocol {
-			ticker = pt.ticker
-		}
-	}
-	if ticker == "" || s.VerifiedCurrencies == nil || s.NetworkPassphrase == "" {
-		return kpiTokenPrice{reason: emissionUSDTokenUnverified}
+	ticker, reason := s.emissionTokenIdentity(protocol, token)
+	if reason != "" {
+		return kpiTokenPrice{reason: reason}
 	}
 	var flags Flags
 	tok, _ := s.readProtocolToken(ctx, ticker, &flags)
 	if tok == nil {
-		return kpiTokenPrice{reason: emissionUSDTokenUnverified}
-	}
-	if sac, ok := xdrjson.SACContractID(tok.AssetID, s.NetworkPassphrase); !ok || sac != token {
 		return kpiTokenPrice{reason: emissionUSDTokenUnverified}
 	}
 	switch {
@@ -72,6 +61,30 @@ func (s *Server) emissionTokenPrice(ctx context.Context, protocol, token string,
 		return kpiTokenPrice{reason: emissionUSDScaleMismatch}
 	}
 	return kpiTokenPrice{price: *tok.PriceUSD, decimals: tok.Decimals, stale: s.kpiPriceStale(ctx, tok, flags.Stale)}
+}
+
+// emissionTokenIdentity is the protocol token's ticker when token is the SAC of its verified-catalogue asset, else why not.
+func (s *Server) emissionTokenIdentity(protocol, token string) (string, string) {
+	if token == "" {
+		return "", emissionUSDTokenUnread
+	}
+	ticker := ""
+	for _, pt := range lendingProtocols {
+		if pt.protocol == protocol {
+			ticker = pt.ticker
+		}
+	}
+	if ticker == "" || s.VerifiedCurrencies == nil || s.NetworkPassphrase == "" {
+		return "", emissionUSDTokenUnverified
+	}
+	a, ok := s.verifiedProtocolAsset(ticker)
+	if !ok {
+		return "", emissionUSDTokenUnverified
+	}
+	if sac, ok := xdrjson.SACContractID(a.String(), s.NetworkPassphrase); !ok || sac != token {
+		return "", emissionUSDTokenUnverified
+	}
+	return ticker, ""
 }
 
 // valueEmissions sets every stream's current rate and each reserve stream's emissions_apr against the pool's /reserves views.
