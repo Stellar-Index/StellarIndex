@@ -20,7 +20,9 @@ import type { paths } from '@/api/types';
 import { LendingPoolPathView } from './LendingPoolPathView';
 import { AuctionsPanel } from './AuctionsPanel';
 import { BackstopPanel } from './BackstopPanel';
+import { BadDebtPanel } from './BadDebtPanel';
 import { EmissionsPanel } from './EmissionsPanel';
+import { RevenuePanel } from './RevenuePanel';
 import { ConfigHistory } from './ConfigHistory';
 import { PoolDetails } from './PoolDetails';
 import { PoolHeadlineStats } from './PoolHeadlineStats';
@@ -276,6 +278,8 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
       <TopAccountsPanel pool={pool} />
       <BackstopPanel pool={pool} />
       <EmissionsPanel pool={pool} />
+      <RevenuePanel pool={pool} />
+      <BadDebtPanel pool={pool} />
       <AuctionsPanel
         pool={pool}
         total={listed ? (data?.auctions_total ?? 0) : null}

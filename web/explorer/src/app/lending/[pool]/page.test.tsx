@@ -16,6 +16,8 @@ vi.mock('./PoolDetails', () => ({ PoolDetails: () => <div /> }));
 vi.mock('./ConfigHistory', () => ({ ConfigHistory: () => <div /> }));
 vi.mock('./BackstopPanel', () => ({ BackstopPanel: () => <div /> }));
 vi.mock('./EmissionsPanel', () => ({ EmissionsPanel: () => <div /> }));
+vi.mock('./RevenuePanel', () => ({ RevenuePanel: () => <div /> }));
+vi.mock('./BadDebtPanel', () => ({ BadDebtPanel: () => <div /> }));
 vi.mock('./AuctionsPanel', () => ({ AuctionsPanel: () => <div /> }));
 vi.mock('./TopAccountsPanel', () => ({ TopAccountsPanel: () => <div /> }));
 vi.mock('./PoolHeadlineStats', () => ({ PoolHeadlineStats: () => <div /> }));
