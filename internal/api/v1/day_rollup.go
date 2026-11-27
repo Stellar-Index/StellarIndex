@@ -26,7 +26,8 @@ type rollupBudget struct {
 }
 
 // dayRollupSource is what a per-day USD rollup gives the cycle it shares with the others: its lock, its reads, its change
-// detection, its valuation, its store and its metrics. Every func is required.
+// detection, its valuation, its store and its metrics. Every func is required but walk, which only a valueRun reading
+// through [rollupCycle.walk] needs.
 type dayRollupSource struct {
 	name, lockName string // name prefixes the cycle's log lines
 	budget         rollupBudget
@@ -129,7 +130,7 @@ func (d *dayRollup) runCycle(ctx context.Context) {
 		d.logger.Warn(d.src.name+" cycle failed", "err", err)
 	case err == nil && st.Held:
 		d.src.succeeded(d.now(), st)
-		d.logger.Info(d.src.name+" cycle", "pool_days", st.PoolDays, "written", st.Written,
+		d.logger.Info(d.src.name+" cycle", "days_checked", st.DaysChecked, "pool_days", st.PoolDays, "written", st.Written,
 			"mismatches", st.Mismatches, "degraded", st.Degraded, "refused", st.Refused)
 	}
 }
@@ -501,6 +502,7 @@ func (d *dayRollup) executePool(ctx context.Context, c *rollupCycle, days []pool
 		if err != nil {
 			return unfinished, err
 		}
+		c.st.DaysChecked += j - i
 		for _, pd := range days[i:j] {
 			if finished[pd.day] {
 				delete(d.retry, pd)

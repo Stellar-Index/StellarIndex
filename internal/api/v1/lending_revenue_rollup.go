@@ -61,7 +61,10 @@ type lendingRevenueRollupLake interface {
 
 // LendingRevenueRollupStats is what one cycle did.
 type LendingRevenueRollupStats struct {
-	Held                                  bool // false: another process holds the lock; the cycle did nothing
+	Held bool // false: another process holds the lock; the cycle did nothing
+	// DaysChecked counts the queued pool-days the cycle read, PoolDays those of them with something to value: a cycle
+	// moving coverage over empty days checks days and values none.
+	DaysChecked                           int
 	PoolDays, Written, Unchanged, Skipped int
 	Mismatches, Degraded, Refused         int
 }
