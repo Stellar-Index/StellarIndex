@@ -27,7 +27,8 @@ type rollupBudget struct {
 }
 
 // dayRollupSource is what a per-day USD rollup gives the cycle it shares with the others: its lock, its reads, its change
-// detection, its valuation, its store and its metrics. Every func is required.
+// detection, its valuation, its store and its metrics. Every func is required but walk, which only a valueRun reading
+// through [rollupCycle.walk] needs.
 type dayRollupSource struct {
 	name, lockName string // name prefixes the cycle's log lines
 	budget         rollupBudget
@@ -50,6 +51,9 @@ type dayRollupSource struct {
 	started       func(at time.Time)
 	succeeded     func(at time.Time, st LendingRevenueRollupStats)
 	mismatched    func() // a sweep found a stored row differing for no reason
+	// unplanned, when set, reports the pools the last spans read left out and the errors among them: those pools wait while
+	// the rest run, and the errors still fail the cycle.
+	unplanned func() (skipped int, err error)
 }
 
 // rollupCoverage is what a pool's coverage row holds: its days through throughDay from floorDay, current when stored at
@@ -132,11 +136,13 @@ func (d *dayRollup) runCycle(ctx context.Context) {
 	st, err := d.cycle(cctx) //nolint:contextcheck // the cycle's budget is the worker's own; AfterFunc ties it to ctx
 	switch {
 	case err != nil && ctx.Err() == nil:
-		d.logger.Warn(d.src.name+" cycle failed", "err", err, "written", st.Written, "retry_dropped", st.RetryDropped)
+		d.logger.Warn(d.src.name+" cycle failed", "err", err, "written", st.Written, "retry_dropped", st.RetryDropped,
+			"pools_skipped", st.PoolsSkipped)
 	case err == nil && st.Held:
 		d.src.succeeded(d.now(), st)
 		d.logger.Info(d.src.name+" cycle", "queued", st.Queued, "empty", st.Empty, "reserve_days", st.ReserveDays, "written", st.Written,
-			"mismatches", st.Mismatches, "degraded", st.Degraded, "refused", st.Refused, "retry_dropped", st.RetryDropped)
+			"mismatches", st.Mismatches, "degraded", st.Degraded, "refused", st.Refused, "retry_dropped", st.RetryDropped,
+			"pools_skipped", st.PoolsSkipped)
 	}
 }
 
@@ -161,7 +167,11 @@ func (d *dayRollup) cycle(ctx context.Context) (LendingRevenueRollupStats, error
 	if err != nil {
 		return st, err
 	}
-	err = d.execute(cctx, p, &st)
+	var unplannedErr error
+	if d.src.unplanned != nil {
+		st.PoolsSkipped, unplannedErr = d.src.unplanned()
+	}
+	err = errors.Join(d.execute(cctx, p, &st), unplannedErr)
 	if err != nil && cctx.Err() != nil {
 		return st, err
 	}

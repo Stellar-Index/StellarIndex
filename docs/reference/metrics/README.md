@@ -1115,6 +1115,36 @@ Gauge, label `reason` (`degraded` / `refused`).
 
 Reserve-days the last cycle left unstored: `degraded` (a price read failed or was cut short; retried next cycle) or `refused` (a read-time verdict; the sweep retries daily).
 
+### `stellarindex_lending_emissions_rollup_last_success_unix`
+
+Gauge, no labels.
+
+Unix seconds of the lending emissions USD rollup's last completed cycle that held its lock. Only the instance holding the lock sets it.
+
+### `stellarindex_lending_emissions_rollup_started_unix`
+
+Gauge, no labels.
+
+Unix seconds this process started the lending emissions USD rollup worker; 0 when the worker is disabled. With `last_success_unix` it lets `stellarindex_lending_emissions_rollup_stalled` cover a worker that has never succeeded since it started.
+
+### `stellarindex_lending_emissions_rollup_rows_valued_total`
+
+Counter, no labels.
+
+`lending_emissions_usd_daily` rows written because their day was missing or differed from a fresh valuation.
+
+### `stellarindex_lending_emissions_rollup_sweep_mismatches_total`
+
+Counter, no labels.
+
+Stored days whose same tokens the daily sweep's fresh valuation priced differently, with no refusal on either side; each is rewritten and logged.
+
+### `stellarindex_lending_emissions_rollup_days_not_valued`
+
+Gauge, label `reason` (`degraded` / `refused`).
+
+Pool-days the last cycle left unstored (`degraded`: a read failed or was cut short; retried next cycle) or stored unpriced (`refused`: a read-time verdict or the emission-token identity gate; the sweep re-checks daily).
+
 ### `stellarindex_change_summary_passes_total`
 
 Counter, label `outcome` (`ok` / `partial` / `failed`).

@@ -294,15 +294,17 @@ type apiWrite struct{ insert, update, delete bool }
 
 var (
 	writeIUD = apiWrite{true, true, true}
-	// apiWritableTables is the exact write set 0213 and 0239 grant stellarindex_api.
+	// apiWritableTables is the exact write set 0213, 0239 and 0240 grant stellarindex_api.
 	apiWritableTables = map[string]apiWrite{
 		"accounts": writeIUD, "api_keys": writeIUD, "api_usage_events": writeIUD,
 		"audit_log": {insert: true, update: true}, "customer_webhooks": writeIUD,
 		"erased_account_slugs": {insert: true}, "fx_fixings": writeIUD,
 		"fx_quotes": writeIUD, "invites": writeIUD, "login_code_lockouts": writeIUD,
-		"lending_revenue_usd_coverage": {insert: true, update: true},
-		"lending_revenue_usd_daily":    {insert: true, update: true},
-		"magic_link_tokens":            writeIUD, "price_alerts": writeIUD, "sessions": writeIUD,
+		"lending_emissions_usd_coverage": {insert: true, update: true},
+		"lending_emissions_usd_daily":    writeIUD,
+		"lending_revenue_usd_coverage":   {insert: true, update: true},
+		"lending_revenue_usd_daily":      {insert: true, update: true},
+		"magic_link_tokens":              writeIUD, "price_alerts": writeIUD, "sessions": writeIUD,
 		"source_entry_counts": writeIUD, "status_notices": writeIUD, "usage_daily": writeIUD,
 		"users": writeIUD, "webauthn_credentials": writeIUD, "webhook_deliveries": writeIUD,
 	}

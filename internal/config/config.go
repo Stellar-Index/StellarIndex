@@ -18,25 +18,26 @@ import (
 
 // Config is the root configuration for every Stellar Index binary; every field needs a `doc:` tag (make docs-config fails without it).
 type Config struct {
-	Region               RegionConfig               `toml:"region" doc:"Region identity — ID, display name, home domain."`
-	Stellar              StellarConfig              `toml:"stellar" doc:"Endpoints for stellar-core and stellar-rpc."`
-	Storage              StorageConfig              `toml:"storage" doc:"Postgres/TimescaleDB, Redis, MinIO connection details."`
-	Ingestion            IngestionConfig            `toml:"ingestion" doc:"Source orchestration — which connectors to run, backfill bounds, cursor store."`
-	Oracle               OracleConfig               `toml:"oracle" doc:"On-chain oracle contract addresses (Reflector, Redstone, Band)."`
-	External             ExternalConfig             `toml:"external" doc:"Off-chain connectors — CEX/FX/aggregator sources that run parallel to the on-chain dispatcher."`
-	Aggregate            AggregateConfig            `toml:"aggregate" doc:"VWAP/TWAP windows + outlier thresholds."`
-	Anomaly              AnomalyConfig              `toml:"anomaly" doc:"Per-asset-class anomaly detection thresholds (Phase 1) + Phase-2 freeze thresholds (per-asset MAD-baseline + multi-factor confidence + source count). Both layers run; either freezes on its own (Phase 1: class freeze_pct AND source_count<=1; Phase 2: the 3-signal AND) and both share one freeze lifecycle (ADR-0019)."`
-	API                  APIConfig                  `toml:"api" doc:"Public API serving plane — port, auth mode, rate limits, CDN."`
-	Metadata             MetadataConfig             `toml:"metadata" doc:"Asset metadata overlay — SEP-1 issuer→home-domain map, operator overrides."`
-	Supply               SupplyConfig               `toml:"supply" doc:"Supply pipeline config — SDF reserve list, operator-managed reserve balances (fallback when the LCM AccountEntry observer hasn't yet covered the watched set), watched classic + SEP-41 asset lists, SAC wrappers, and aggregator-refresh cadence. ADR-0011 (XLM) + ADR-0022 (classic) + ADR-0023 (SEP-41)."`
-	Trades               TradesConfig               `toml:"trades" doc:"Trade-insert policy — operator-declared USD-pegged stablecoins so on-chain DEX trades populate trades.usd_volume at insert time (launch-readiness L2.2 phase 1)."`
-	PricingGuard         PricingGuardConfig         `toml:"pricing_guard" doc:"Serving-side price guards — the thin-market substance gate that withholds aggregated price claims for on-chain pairs whose trailing market activity is below the serve floor (2026-08-04 valuation incident)."`
-	Divergence           DivergenceConfig           `toml:"divergence" doc:"Cross-check references the divergence service consults (CoinGecko, plus the on-chain Reflector/Redstone/Band/Chainlink oracle feeds read from ingested oracle_updates rows). Empty disables; the divergence_warning envelope flag stays unset."`
-	PriceAlerts          PriceAlertsConfig          `toml:"price_alerts" doc:"Customer price-threshold alert evaluator. Off by default; when enabled the aggregator sweeps price_alerts against the latest closed VWAP every tick and enqueues price.alert webhook deliveries."`
-	LendingRevenueRollup LendingRevenueRollupConfig `toml:"lending_revenue_rollup" doc:"Lending revenue USD daily rollup (migration 0239), run in the API binary. Off by default."`
-	SignupReaper         SignupReaperConfig         `toml:"signup_reaper" doc:"F-1255 speculative-account reaper. Deletes orphan accounts left by a lost signup race (Suspended with a 'signup-race:' reason, no user, no key). Runs in the API binary when the dashboard is wired. On by default — the rows are pure garbage."`
-	HashDB               HashDBConfig               `toml:"hashdb" doc:"Drift detector — on-disk (ledger_seq -> sha256(LCM)) record appended by the indexer's live ingest loop and periodically re-verified against a fresh re-read of the same bucket, catching upstream rewrites of previously-fetched ledger bytes. Off by default (opt-in first deploy)."`
-	Obs                  ObsConfig                  `toml:"obs" doc:"Metrics, logs, traces — exporters + sampling."`
+	Region                 RegionConfig                 `toml:"region" doc:"Region identity — ID, display name, home domain."`
+	Stellar                StellarConfig                `toml:"stellar" doc:"Endpoints for stellar-core and stellar-rpc."`
+	Storage                StorageConfig                `toml:"storage" doc:"Postgres/TimescaleDB, Redis, MinIO connection details."`
+	Ingestion              IngestionConfig              `toml:"ingestion" doc:"Source orchestration — which connectors to run, backfill bounds, cursor store."`
+	Oracle                 OracleConfig                 `toml:"oracle" doc:"On-chain oracle contract addresses (Reflector, Redstone, Band)."`
+	External               ExternalConfig               `toml:"external" doc:"Off-chain connectors — CEX/FX/aggregator sources that run parallel to the on-chain dispatcher."`
+	Aggregate              AggregateConfig              `toml:"aggregate" doc:"VWAP/TWAP windows + outlier thresholds."`
+	Anomaly                AnomalyConfig                `toml:"anomaly" doc:"Per-asset-class anomaly detection thresholds (Phase 1) + Phase-2 freeze thresholds (per-asset MAD-baseline + multi-factor confidence + source count). Both layers run; either freezes on its own (Phase 1: class freeze_pct AND source_count<=1; Phase 2: the 3-signal AND) and both share one freeze lifecycle (ADR-0019)."`
+	API                    APIConfig                    `toml:"api" doc:"Public API serving plane — port, auth mode, rate limits, CDN."`
+	Metadata               MetadataConfig               `toml:"metadata" doc:"Asset metadata overlay — SEP-1 issuer→home-domain map, operator overrides."`
+	Supply                 SupplyConfig                 `toml:"supply" doc:"Supply pipeline config — SDF reserve list, operator-managed reserve balances (fallback when the LCM AccountEntry observer hasn't yet covered the watched set), watched classic + SEP-41 asset lists, SAC wrappers, and aggregator-refresh cadence. ADR-0011 (XLM) + ADR-0022 (classic) + ADR-0023 (SEP-41)."`
+	Trades                 TradesConfig                 `toml:"trades" doc:"Trade-insert policy — operator-declared USD-pegged stablecoins so on-chain DEX trades populate trades.usd_volume at insert time (launch-readiness L2.2 phase 1)."`
+	PricingGuard           PricingGuardConfig           `toml:"pricing_guard" doc:"Serving-side price guards — the thin-market substance gate that withholds aggregated price claims for on-chain pairs whose trailing market activity is below the serve floor (2026-08-04 valuation incident)."`
+	Divergence             DivergenceConfig             `toml:"divergence" doc:"Cross-check references the divergence service consults (CoinGecko, plus the on-chain Reflector/Redstone/Band/Chainlink oracle feeds read from ingested oracle_updates rows). Empty disables; the divergence_warning envelope flag stays unset."`
+	PriceAlerts            PriceAlertsConfig            `toml:"price_alerts" doc:"Customer price-threshold alert evaluator. Off by default; when enabled the aggregator sweeps price_alerts against the latest closed VWAP every tick and enqueues price.alert webhook deliveries."`
+	LendingRevenueRollup   LendingRevenueRollupConfig   `toml:"lending_revenue_rollup" doc:"Lending revenue USD daily rollup (migration 0239), run in the API binary. Off by default."`
+	LendingEmissionsRollup LendingEmissionsRollupConfig `toml:"lending_emissions_rollup" doc:"Lending emissions USD daily rollup (migration 0240), run in the API binary. Off by default."`
+	SignupReaper           SignupReaperConfig           `toml:"signup_reaper" doc:"F-1255 speculative-account reaper. Deletes orphan accounts left by a lost signup race (Suspended with a 'signup-race:' reason, no user, no key). Runs in the API binary when the dashboard is wired. On by default — the rows are pure garbage."`
+	HashDB                 HashDBConfig                 `toml:"hashdb" doc:"Drift detector — on-disk (ledger_seq -> sha256(LCM)) record appended by the indexer's live ingest loop and periodically re-verified against a fresh re-read of the same bucket, catching upstream rewrites of previously-fetched ledger bytes. Off by default (opt-in first deploy)."`
+	Obs                    ObsConfig                    `toml:"obs" doc:"Metrics, logs, traces — exporters + sampling."`
 }
 
 // HashDBConfig gates the hashdb drift detector (internal/hashdb); one Enabled flag covers append and verify since either alone detects nothing.
