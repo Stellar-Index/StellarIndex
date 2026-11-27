@@ -8,6 +8,13 @@ var LendingRevenueRollupLastSuccessUnix = prometheus.NewGauge(prometheus.GaugeOp
 	Help: "Unix seconds of the lending revenue USD rollup's last completed cycle that held its lock.",
 })
 
+// LendingRevenueRollupStartedUnix is when this process started the rollup worker; 0 where it is disabled, so the stall
+// alert covers a worker that has never succeeded since it started.
+var LendingRevenueRollupStartedUnix = prometheus.NewGauge(prometheus.GaugeOpts{
+	Name: "stellarindex_lending_revenue_rollup_started_unix",
+	Help: "Unix seconds this process started the lending revenue USD rollup worker; 0 when the worker is disabled.",
+})
+
 // LendingRevenueRollupRowsValuedTotal counts lending_revenue_usd_daily rows written (new or changed).
 var LendingRevenueRollupRowsValuedTotal = prometheus.NewCounter(prometheus.CounterOpts{
 	Name: "stellarindex_lending_revenue_rollup_rows_valued_total",
@@ -27,7 +34,7 @@ var LendingRevenueRollupDaysNotValued = prometheus.NewGaugeVec(prometheus.GaugeO
 }, []string{"reason"})
 
 func init() {
-	Registry.MustRegister(LendingRevenueRollupLastSuccessUnix, LendingRevenueRollupRowsValuedTotal,
+	Registry.MustRegister(LendingRevenueRollupLastSuccessUnix, LendingRevenueRollupStartedUnix, LendingRevenueRollupRowsValuedTotal,
 		LendingRevenueRollupSweepMismatchesTotal, LendingRevenueRollupDaysNotValued)
 	for _, r := range []string{"degraded", "refused"} {
 		LendingRevenueRollupDaysNotValued.WithLabelValues(r)

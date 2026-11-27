@@ -87,6 +87,7 @@ type protocolsCase struct {
 	blntListFail      bool
 	blntListsBlendOne bool
 	thinBLNT          bool // BLND 0.05 clears the substance floor, BLNT 0.01 trades below it
+	revenue           v1.ProtocolStatsReader
 }
 
 type protocolsFixture struct {
@@ -142,6 +143,7 @@ func newProtocolsServer(t *testing.T, c protocolsCase) protocolsFixture {
 		Prices:             priceReader,
 		Supply:             &stubSupplyLooker{hit: true, snap: supply.Supply{CirculatingSupply: big.NewInt(1e14), TotalSupply: big.NewInt(2e14)}},
 		VerifiedCurrencies: cat,
+		ProtocolStats:      c.revenue,
 	})
 	return protocolsFixture{ratesFixture: f, explorer: ex, srv: srv}
 }

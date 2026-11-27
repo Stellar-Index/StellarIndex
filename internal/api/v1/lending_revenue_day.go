@@ -60,15 +60,27 @@ func valueRevenueDay(day time.Time, hours []clickhouse.LendingRevenueBucket, wal
 		return revenueDay{}
 	}
 	r := walk()
-	switch {
-	case r.verdict:
+	switch revenueReadRefusal(r) {
+	case exclusionPriceWithheld:
 		// Every hour carrying an amount is unpriced, so the stored row's legs are NULL: a refusal is never a zero.
 		return revenueDay{outcome: revenueDayRefused, reason: r.series.reason, sum: revenueUSDSum{unpriced: amountHours}}
-	case r.series.degraded || r.series.reason == exclusionPriceReadFailed:
+	case exclusionPriceReadFailed:
 		return revenueDay{outcome: revenueDayDegraded}
 	}
 	sum, _ := valueRevenueBucket(b, hours, 0, r.series, 24*time.Hour)
 	return revenueDay{sum: sum, reason: r.series.reason}
+}
+
+// revenueReadRefusal is why a walked read refuses its reserve outright: withheld for a read-time verdict (a flagged
+// issuer, an operator withholding, a thin latest market), price_read_failed for a read that failed or was cut short.
+func revenueReadRefusal(r reserveUSDRead) string {
+	switch {
+	case r.verdict:
+		return exclusionPriceWithheld
+	case r.series.degraded || r.series.reason == exclusionPriceReadFailed:
+		return exclusionPriceReadFailed
+	}
+	return ""
 }
 
 // revenueDayRow is the stored form of a valued day; ok is false when a leg is not a finite decimal (never, for decimal

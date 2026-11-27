@@ -55,6 +55,7 @@ type LendingProtocolStats struct {
 	BackstopTotalUSD      *string                 `json:"backstop_total_usd"`
 	BackstopUSDLowerBound bool                    `json:"backstop_usd_lower_bound"`
 	Excluded              []LendingStatsExclusion `json:"excluded"`
+	Revenue               LendingProtocolRevenue  `json:"revenue"`
 }
 
 // LendingProtocolToken is the protocol token's price, supply and market cap as /v1/assets/{id} serves them.
@@ -171,8 +172,9 @@ func (s *Server) buildLendingProtocols(ctx context.Context) (lendingProtocolsBui
 	})
 	out := make([]LendingProtocolStats, 0, len(lendingProtocols))
 	lowerBound := false
+	revenue := s.readProtocolRevenue(ctx, reads, blntListFailed)
 	for _, pt := range lendingProtocols {
-		st := LendingProtocolStats{Protocol: pt.protocol, Backstop: []LendingProtocolBackstop{}, Excluded: []LendingStatsExclusion{}}
+		st := LendingProtocolStats{Protocol: pt.protocol, Backstop: []LendingProtocolBackstop{}, Excluded: []LendingStatsExclusion{}, Revenue: revenue[pt.protocol]}
 		var reason string
 		st.Token, reason = s.readProtocolToken(ctx, pt.ticker, &flags)
 		if reason != "" {
