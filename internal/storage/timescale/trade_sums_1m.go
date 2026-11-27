@@ -22,10 +22,11 @@ type TradeMinuteSum struct {
 }
 
 // tradeSums1mRangeTemplate takes literal bounds so the planner excludes chunks at plan time, as LatestTradesForPair does.
+// %[3]s is the relation read: the view itself, or [tradeSums1mLiveTemplate] computing it from raw trades.
 const tradeSums1mRangeTemplate = `
         SELECT source, bucket, true AS forward,
                base_sum, quote_sum, trade_count, min_price::text, max_price::text
-          FROM trade_sums_1m
+          FROM %[3]s
          WHERE base_asset = $1 AND quote_asset = $2
            AND bucket >= TIMESTAMPTZ '%[1]s'
            AND bucket  < TIMESTAMPTZ '%[2]s'
@@ -34,7 +35,7 @@ const tradeSums1mRangeTemplate = `
          UNION ALL
         SELECT source, bucket, false AS forward,
                base_sum, quote_sum, trade_count, min_price::text, max_price::text
-          FROM trade_sums_1m
+          FROM %[3]s
          WHERE base_asset = $2 AND quote_asset = $1
            AND bucket >= TIMESTAMPTZ '%[1]s'
            AND bucket  < TIMESTAMPTZ '%[2]s'
@@ -63,10 +64,19 @@ func (s *Store) TradeSums1mInRange(ctx context.Context, p canonical.Pair, from, 
 			watermark = dirty[0][0].Truncate(time.Minute)
 		}
 	}
-	q := fmt.Sprintf(tradeSums1mRangeTemplate, from.UTC().Format(time.RFC3339Nano), to.UTC().Format(time.RFC3339Nano)) //nolint:gosec // G201: formatted time.Time values, not input
+	q := fmt.Sprintf(tradeSums1mRangeTemplate, from.UTC().Format(time.RFC3339Nano), to.UTC().Format(time.RFC3339Nano), "trade_sums_1m") //nolint:gosec // G201: formatted time.Time values, not input
+	out, err := s.queryTradeMinuteSums(ctx, "TradeSums1mInRange", q, p)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	return out, watermark, nil
+}
+
+// queryTradeMinuteSums runs a [tradeSums1mRangeTemplate] query and orients its rows to p.
+func (s *Store) queryTradeMinuteSums(ctx context.Context, op, q string, p canonical.Pair) ([]TradeMinuteSum, error) {
 	rows, err := s.db.QueryContext(ctx, q, p.Base.String(), p.Quote.String(), nonVWAPSourcesArg())
 	if err != nil {
-		return nil, time.Time{}, fmt.Errorf("timescale: TradeSums1mInRange: %w", err)
+		return nil, fmt.Errorf("timescale: %s: %w", op, err)
 	}
 	defer func() { _ = rows.Close() }()
 	var out []TradeMinuteSum
@@ -75,12 +85,12 @@ func (s *Store) TradeSums1mInRange(ctx context.Context, p canonical.Pair, from, 
 		var forward bool
 		var minS, maxS sql.NullString
 		if err := rows.Scan(&r.Source, &r.Bucket, &forward, &r.BaseSum, &r.QuoteSum, &r.Count, &minS, &maxS); err != nil {
-			return nil, time.Time{}, fmt.Errorf("timescale: TradeSums1mInRange scan: %w", err)
+			return nil, fmt.Errorf("timescale: %s scan: %w", op, err)
 		}
 		lo, okLo := new(big.Rat).SetString(minS.String)
 		hi, okHi := new(big.Rat).SetString(maxS.String)
 		if !minS.Valid || !maxS.Valid || !okLo || !okHi || lo.Sign() <= 0 || hi.Sign() <= 0 {
-			return nil, time.Time{}, fmt.Errorf("timescale: TradeSums1mInRange: %s %v price bounds %q..%q", r.Source, r.Bucket, minS.String, maxS.String)
+			return nil, fmt.Errorf("timescale: %s: %s %v price bounds %q..%q", op, r.Source, r.Bucket, minS.String, maxS.String)
 		}
 		r.MinPrice, r.MaxPrice = lo, hi
 		if !forward {
@@ -90,7 +100,7 @@ func (s *Store) TradeSums1mInRange(ctx context.Context, p canonical.Pair, from, 
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, time.Time{}, fmt.Errorf("timescale: TradeSums1mInRange rows: %w", err)
+		return nil, fmt.Errorf("timescale: %s rows: %w", op, err)
 	}
-	return out, watermark, nil
+	return out, nil
 }
