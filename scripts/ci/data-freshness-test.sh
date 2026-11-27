@@ -95,7 +95,8 @@ PROBE="$WORK/probe.sh"
   printf '%s\n' "${STRICT:-set -euo pipefail}"
   # shellcheck disable=SC2016  # emitted into the harness verbatim; $1 must not expand here
   printf 'TMP="$1"\n'
-  printf 'CH_NETRC=/dev/null\nPROBE_FAILED=0\n'
+  # shellcheck disable=SC2016  # emitted into the harness verbatim
+  printf 'CH_NETRC=/dev/null\nPROBE_FAILED=0\nCHAIN_AGE="${CHAIN_AGE_TEST-NULL}"\n'
   awk '/^SF_AGE/ { p = 1 } /^chmod 0644 "\$TMP"$/ { p = 0 } p' "$SRC"
 } > "$PROBE"
 if grep -q 'stellar.supply_flows' "$PROBE" && grep -q 'curl' "$PROBE" \
@@ -139,7 +140,7 @@ export PATH="$WORK/bin:$PATH"
 run() {
   PROM="$WORK/out.$RANDOM.prom"
   printf 'stellarindex_data_freshness_stale{domain="oracle",source="coingecko"} 0\n' > "$PROM"
-  ERR="$(CURL_RC="$1" CURL_OUT="$2" bash "$PROBE" "$PROM" 2>&1 >/dev/null)"
+  ERR="$(CURL_RC="$1" CURL_OUT="$2" CHAIN_AGE_TEST="${3-NULL}" bash "$PROBE" "$PROM" 2>&1 >/dev/null)"
   RC=$?
 }
 sep41_lines() { grep -c 'sep41_supply' "$PROM"; }
@@ -179,6 +180,43 @@ if [[ $RC -eq 0 && "$(gauge stellarindex_data_freshness_age_seconds)" == 7200 &&
 else
   bad "rc=$RC file: $(cat "$PROM")"
 fi
+
+# ─── 5b. an EMPTY supply_flows is stale only on a chain older than the threshold ─
+#
+# `empty` is what the probe's SQL answers for a table with no rows. A chain younger than
+# the 3600 s threshold cannot be overdue; an old chain with nothing is the production
+# signal; an unmeasurable chain age fails safe (stale).
+echo "data-freshness-test: empty supply_flows vs chain age"
+run 0 "empty" 600
+if [[ $RC -eq 0 && "$(gauge stellarindex_data_freshness_stale)" == 0 && "$(gauge stellarindex_data_freshness_empty)" == 1 && -z "$(gauge stellarindex_data_freshness_age_seconds)" ]]; then
+  ok "empty, young chain (600 s) → stale=0, empty=1, no age sample"
+else
+  bad "rc=$RC file: $(cat "$PROM")"
+fi
+run 0 "empty" 3600
+if [[ "$(gauge stellarindex_data_freshness_stale)" == 0 ]]; then ok "empty, chain exactly at the threshold → stale=0"; else bad "file: $(cat "$PROM")"; fi
+run 0 "empty" 3601
+if [[ "$(gauge stellarindex_data_freshness_stale)" == 1 && "$(gauge stellarindex_data_freshness_empty)" == 1 ]]; then
+  ok "empty, old chain (3601 s) → stale=1, empty=1"
+else
+  bad "file: $(cat "$PROM")"
+fi
+run 0 "empty" 1700000000
+if [[ "$(gauge stellarindex_data_freshness_stale)" == 1 ]]; then ok "empty, mainnet-age chain → stale=1 (the production signal)"; else bad "file: $(cat "$PROM")"; fi
+run 0 "empty" NULL
+if [[ "$(gauge stellarindex_data_freshness_stale)" == 1 && "$(gauge stellarindex_data_freshness_empty)" == 1 ]]; then
+  ok "empty, chain age unmeasurable → stale=1 (fail safe)"
+else
+  bad "file: $(cat "$PROM")"
+fi
+run 0 "42" 100
+if [[ "$(gauge stellarindex_data_freshness_stale)" == 0 && -z "$(gauge stellarindex_data_freshness_empty)" ]]; then
+  ok "non-empty on a young chain is unchanged: no empty gauge"
+else
+  bad "file: $(cat "$PROM")"
+fi
+run 0 "7200" 100
+if [[ "$(gauge stellarindex_data_freshness_stale)" == 1 ]]; then ok "non-empty and overdue on a young chain stays stale=1"; else bad "file: $(cat "$PROM")"; fi
 
 # ─── 6. the FX staleness budget must MIRROR the serving code ─────────
 #
@@ -440,7 +478,7 @@ QSRC="$WORK/queries.sh"
 {
   printf '%s\n' "${STRICT:-set -euo pipefail}"
   # shellcheck disable=SC2016  # emitted into the harness verbatim; must not expand here
-  printf 'PSQL="$1"\nSTELLARINDEX_POSTGRES_DSN="postgres://dummy"\nTMP="$2"\nOPS="$3"\nCONFIG=/dev/null\nPROBE_FAILED=0\n'
+  printf 'PSQL="$1"\nSTELLARINDEX_POSTGRES_DSN="postgres://dummy"\nTMP="$2"\nOPS="$3"\nCONFIG=/dev/null\nPROBE_FAILED=0\nCHAIN_AGE=NULL\n'
   awk '/^# shellcheck disable=SC2129/ { p = 1; next } /^SF_AGE=""$/ { p = 0 } p' "$SRC"
 } > "$QSRC"
 guarded_count="$(grep -c '^if ! PGDSN=' "$QSRC")"
@@ -583,6 +621,87 @@ for daily in ecb tiingo; do
     bad "oracle '$daily' is not on the 345600 s arm: '$ORACLE_THR'"
   fi
 done
+
+# ─── 9. the Postgres freshness query, run for real ────────────────────
+#
+# The empty-table rule lives in the SQL, which the stubs above never execute. Extract the
+# shipped query and run it in a throwaway postgres container over minimal fixtures. Skipped
+# (loudly) without docker.
+echo "data-freshness-test: Postgres freshness query vs chain age"
+FSQL="$WORK/fresh.sql"
+awk '/psql-dsn -v ON_ERROR_STOP=1 -v chain_age=/ { p = 1; next } p && /^SQL$/ { exit } p' "$SRC" > "$FSQL"
+if ! grep -q ':chain_age' "$FSQL"; then
+  bad "could not extract the freshness query from the shipped script — the markers drifted"
+elif ! docker info > /dev/null 2>&1; then
+  echo "  SKIP docker unavailable: the empty-table SQL was not executed"
+else
+  PGC="dftest-$$-$RANDOM"
+  trap 'docker rm -f "$PGC" > /dev/null 2>&1; rm -rf "$WORK"' EXIT
+  docker run -d --rm --name "$PGC" -e POSTGRES_HOST_AUTH_METHOD=trust postgres:16-alpine > /dev/null
+  # The image starts a throwaway server for init, then restarts it: ready twice in the log.
+  for _ in $(seq 1 90); do
+    [[ "$(docker logs "$PGC" 2>&1 | grep -c 'ready to accept connections')" -ge 2 ]] && break
+    sleep 1
+  done
+  dpsql() { docker exec -i "$PGC" psql -U postgres -v ON_ERROR_STOP=1 -tA -F$'\t' "$@"; }
+  dpsql -q > /dev/null <<'SQL'
+CREATE TABLE oracle_updates (source text, ingested_at timestamptz);
+CREATE TABLE fx_quotes (source text, bucket timestamptz);
+CREATE TABLE source_volume_1h (source text, bucket timestamptz);
+CREATE TABLE asset_supply_history (asset_key text, time timestamptz);
+CREATE TABLE completeness_snapshots (source text, computed_at timestamptz);
+CREATE TABLE issuers (sep1_payload_fetched_at timestamptz);
+SQL
+  fresh() { dpsql -v chain_age="$1" < "$FSQL"; }
+  line() { grep -F "$2" <<< "$1"; }
+  s_sep1='stellarindex_data_freshness_stale{domain="sep1",source="issuers"}'
+  s_sup='stellarindex_data_freshness_stale{domain="supply",source="asset_supply_history"}'
+  e_sep1='stellarindex_data_freshness_empty{domain="sep1",source="issuers"} 1'
+  e_sup='stellarindex_data_freshness_empty{domain="supply",source="asset_supply_history"} 1'
+
+  out="$(fresh 600)"
+  if [[ "$(line "$out" "$s_sep1")" == "$s_sep1 0" && "$(line "$out" "$s_sup")" == "$s_sup 0" && -n "$(line "$out" "$e_sep1")" && -n "$(line "$out" "$e_sup")" ]]; then
+    ok "empty sep1/supply on a young chain (600 s): stale=0 and empty=1"
+  else
+    bad "young chain + empty: $out"
+  fi
+  out="$(fresh 150000)"
+  if [[ "$(line "$out" "$s_sep1")" == "$s_sep1 0" && "$(line "$out" "$s_sup")" == "$s_sup 1" ]]; then
+    ok "chain between the two thresholds: each source judged against its OWN threshold"
+  else
+    bad "per-source threshold: $out"
+  fi
+  out="$(fresh 1700000000)"
+  if [[ "$(line "$out" "$s_sep1")" == "$s_sep1 1" && "$(line "$out" "$s_sup")" == "$s_sup 1" && -n "$(line "$out" "$e_sep1")" ]]; then
+    ok "empty on an old chain: stale=1 (the production signal)"
+  else
+    bad "old chain + empty: $out"
+  fi
+  out="$(fresh NULL)"
+  if [[ "$(line "$out" "$s_sep1")" == "$s_sep1 1" && "$(line "$out" "$s_sup")" == "$s_sup 1" ]]; then
+    ok "empty with chain age unmeasurable: stale=1 (fail safe)"
+  else
+    bad "unmeasurable chain + empty: $out"
+  fi
+
+  dpsql -q > /dev/null <<'SQL'
+INSERT INTO issuers VALUES (now() - interval '1 hour');
+INSERT INTO asset_supply_history VALUES ('a', now() - interval '40 hours');
+INSERT INTO oracle_updates VALUES ('coingecko', now() - interval '1 hour'), ('reflector', now() - interval '5 hours');
+SQL
+  out="$(fresh 600)"
+  if [[ "$(line "$out" "$s_sep1")" == "$s_sep1 0" && -z "$(line "$out" "$e_sep1")" && "$(line "$out" "$s_sup")" == "$s_sup 1" && -z "$(line "$out" "$e_sup")" ]]; then
+    ok "non-empty sources are unchanged on a young chain: real age rules, no empty gauge (supply 40 h > 30 h threshold)"
+  else
+    bad "non-empty: $out"
+  fi
+  if [[ "$(line "$out" 'stellarindex_data_freshness_stale{domain="oracle",source="reflector"}')" == *" 1" && "$(line "$out" 'stellarindex_data_freshness_stale{domain="oracle",source="coingecko"}')" == *" 0" ]]; then
+    ok "oracle rows (never empty) keep their age verdicts"
+  else
+    bad "oracle: $out"
+  fi
+  docker rm -f "$PGC" > /dev/null 2>&1
+fi
 
 printf 'data-freshness-test: %d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]
