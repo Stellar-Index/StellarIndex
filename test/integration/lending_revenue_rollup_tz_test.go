@@ -108,6 +108,9 @@ func rollupOverZone(t *testing.T, loc *time.Location, d0 time.Time, base uint32,
 		rows = append(rows, row(asset, at5(d), int64(1000+d)), row(xlm, at5(d), int64(1_234_567_890+d*1_000_003)))
 	}
 	rows = append(rows, row(xlm, day(5).Add(-time.Hour), 2_000_000_011), row(xlm, day(5), 3_000_000_017))
+	// Y holds nothing but boundary hours, so a day list drawn in another zone names a day the hours are not on.
+	edge := contract(seed + 2)
+	rows = append(rows, row(edge, day(5).Add(-time.Hour), 5011), row(edge, day(7), 7013))
 	if err := chstore.InsertLendingInterestRows(ctx, addr, rows, lendinginterest.DeriveRev); err != nil {
 		t.Fatal(err)
 	}
@@ -153,8 +156,8 @@ func rollupOverZone(t *testing.T, loc *time.Location, d0 time.Time, base uint32,
 		}
 		cur = page[len(page)-1]
 	}
-	if len(seen) != 8 {
-		t.Fatalf("change pages held %d days; want 8: %v", len(seen), seen)
+	if len(seen) != 10 {
+		t.Fatalf("change pages held %d days; want 10: %v", len(seen), seen)
 	}
 
 	dsn := startTimescale(t, ctx)
@@ -171,8 +174,8 @@ func rollupOverZone(t *testing.T, loc *time.Location, d0 time.Time, base uint32,
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !st.Held || st.Written != 8 || st.ReserveDays != 8 || st.Queued != 10 || st.Empty != 6 {
-		t.Fatalf("fill: %+v; want 10 days read, 6 empty, days 3-6 of both reserves written", st)
+	if !st.Held || st.Written != 10 || st.ReserveDays != 10 || st.Queued != 10 || st.Empty != 5 {
+		t.Fatalf("fill: %+v; want 10 days read, 5 empty, days 3-6 of X and XLM and days 4 and 7 of Y written", st)
 	}
 	covs, err := store.LendingRevenueUSDCoverages(ctx)
 	if err != nil {
@@ -189,8 +192,13 @@ func rollupOverZone(t *testing.T, loc *time.Location, d0 time.Time, base uint32,
 	for _, r := range got {
 		stored[r.Asset+" "+r.Day.Format(time.DateOnly)] = r
 	}
-	if len(stored) != 8 {
-		t.Fatalf("%d stored rows; want 8: %v", len(got), got)
+	if len(stored) != 10 {
+		t.Fatalf("%d stored rows; want 10: %v", len(got), got)
+	}
+	for _, d := range []int{4, 7} { // 23:00Z belongs to day 4, 00:00Z to day 7
+		if r, ok := stored[edge+" "+day(d).Format(time.DateOnly)]; !ok || r.HoursUnvalued != 1 {
+			t.Errorf("Y day %d: %+v (stored %v); want its one boundary hour", d, r, ok)
+		}
 	}
 	for _, d := range []int{3, 4, 5, 6} {
 		want := 1
