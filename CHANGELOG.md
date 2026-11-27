@@ -22,7 +22,7 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [v0.143.0] - 2026-11-27
 
-Tested against Stellar protocol 27. No migration (schema version stays 239). No `pkg/*` break (no change under `pkg/`). No ClickHouse DDL change. API additions only: one new endpoint and new optional fields on it.
+Tested against Stellar protocol 27. No migration (schema version stays 239). No `pkg/*` break (one test line under `pkg/client`). No ClickHouse DDL change. API additions only: one new endpoint and new optional fields on it.
 
 ### Added
 
