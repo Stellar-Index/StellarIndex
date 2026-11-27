@@ -306,14 +306,17 @@ func (u reserveUSDSeries) usdFlags(f Flags) Flags {
 	return markFillsWithheld(f, u.withheld)
 }
 
-// valueReserveHistory sets each point's USD values, a point standing for the bucket it falls in (the seed for the first).
+// valueReserveHistory sets the decimals and each point's USD values, a point standing for the bucket it falls in (the seed
+// for the first); one decimals read backs both, so a null decimals never sits beside a valued point.
 func (s *Server) valueReserveHistory(ctx context.Context, view *LendingReserveHistoryView, h clickhouse.LendingReserveHistory, q clickhouse.LendingHistoryQuery, f Flags) Flags {
 	view.PriceMaxAgeHours = int(lendingUSDPriceMaxAge(q) / time.Hour)
 	last, ok := lastReserveState(h.Points)
 	if !ok {
 		return f
 	}
-	u := s.reserveUSDSeriesFor(ctx, view.Asset, s.reserveDecimals(ctx, last), q)
+	sc := s.reserveDecimals(ctx, last)
+	view.Decimals = sc.wire()
+	u := s.reserveUSDSeriesFor(ctx, view.Asset, sc, q)
 	_, step := lendingHistoryGran(q)
 	for i, p := range h.Points {
 		at := p.CloseTime
