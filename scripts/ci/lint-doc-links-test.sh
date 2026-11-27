@@ -2,7 +2,7 @@
 # lint-doc-links-test.sh — prove the link gate can fail, and prove each of
 # its exclusions still holds. A gate nobody has seen red is not a gate.
 #
-# The fixture is deliberately UNTRACKED and the git index is never touched.
+# The fixture is deliberately UNTRACKED and the real git index is never touched.
 # An earlier cut used `git add -N` / `git rm --cached` because the gate read
 # tracked files only; that raced with any concurrent `git add` during the
 # ~15-minute backgrounded verify.sh run. The gate now reads untracked,
@@ -21,16 +21,45 @@
 # tree actually clean" bookends. Before this split every one of the 11
 # checks below ran a full 607-file scan, at ~21 s each — a self-test costing
 # ten times the lint it covers.
+#
+# Every fixture is written into a throwaway COPY of the tree (its own git
+# repo under mktemp -d), never the real one: a parallel lane walking the real
+# tree saw the fixture dir vanish mid-scan, and restoring .gitignore with
+# `git checkout` would discard a developer's uncommitted edit.
 set -uo pipefail
+
+# A git hook exports GIT_DIR/GIT_INDEX_FILE; without this the fixture's
+# `git init`/`git add` would act on the REAL repository.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
+  GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR
+
 cd "$(dirname "$0")/../.." || exit 1
+
+TMP="$(mktemp -d)"
+# shellcheck disable=SC2317,SC2329  # invoked indirectly by the EXIT trap
+cleanup() { rm -rf "$TMP"; }
+trap cleanup EXIT
+TREE="$TMP/tree"
+mkdir -p "$TREE"
+# Tracked + untracked non-ignored files: the same set the gate scans and
+# resolves targets against. A file deleted but not yet staged is skipped.
+git ls-files -z -co --exclude-standard \
+  | tar --null -T - -cf - 2>/dev/null | tar -xf - -C "$TREE" || true
+if [ ! -f "$TREE/scripts/ci/lint_doc_links.py" ] || [ ! -f "$TREE/.gitignore" ]; then
+  echo "lint-doc-links-test: could not copy the tree into $TREE" >&2
+  exit 1
+fi
+# tar keeps modes; the copy must be writable even where the source is not.
+if ! { chmod -R u+w "$TREE" && git -C "$TREE" init -q && git -C "$TREE" add -A; }; then
+  echo "lint-doc-links-test: could not build the fixture repo in $TREE" >&2
+  exit 1
+fi
+cd "$TREE" || exit 1
 
 GATE="scripts/ci/lint-doc-links.sh"
 FIX="docs/zz-lint-doc-links-fixture.md"
 ADR_FIX="docs/adr/zz-lint-doc-links-fixture.md"
 PASS=0; FAIL=0
-# shellcheck disable=SC2317,SC2329  # invoked indirectly by the EXIT trap
-cleanup() { rm -f "$FIX" "$ADR_FIX"; }
-trap cleanup EXIT
 
 check() { # <name> <expected ok|red> [full|adr] — scoped to $FIX unless
           # "full" is passed, in which case the gate runs its default
@@ -114,8 +143,8 @@ printf 'x\n' > docs/zz-ignored-fixture-dir/target.md
 printf '/docs/zz-ignored-fixture-dir/\n' >> .gitignore
 printf '# fixture\n\n[ignored target](zz-ignored-fixture-dir/target.md)\n' > "$FIX"
 check "a link to a GITIGNORED target is caught" red
-git checkout -- .gitignore 2>/dev/null || sed -i.bak '/zz-ignored-fixture-dir/d' .gitignore
-rm -rf docs/zz-ignored-fixture-dir .gitignore.bak
+git checkout -q -- .gitignore || { echo "lint-doc-links-test: could not restore fixture .gitignore" >&2; exit 1; }
+rm -rf docs/zz-ignored-fixture-dir
 
 # ADR code spans that name a Go identifier must resolve to one in the tree:
 # ADRs had named HandledTopics() and TopicSymbols(), which were never built.
