@@ -398,7 +398,7 @@ func (r *SupplyReader) TokenSupplyInLedgerRange(ctx context.Context, contractID 
 func (r *SupplyReader) FirstSupplyEvent(ctx context.Context, contractID string) (uint32, time.Time, error) {
 	var day time.Time
 	var days uint64
-	if err := r.conn.QueryRow(ctx, `SELECT min(day), count() FROM stellar.contract_events_daily
+	if err := r.conn.QueryRow(ctx, `SELECT toDateTime(min(day), 'UTC'), count() FROM stellar.contract_events_daily
 		WHERE contract_id = ? AND event_type = 'contract' AND topic_0_sym IN (?)`, contractID, SupplyFlowTopic0Syms).Scan(&day, &days); err != nil {
 		return 0, time.Time{}, fmt.Errorf("clickhouse: first supply event day for %s: %w", contractID, err)
 	}

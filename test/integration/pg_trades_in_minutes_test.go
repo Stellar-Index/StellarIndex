@@ -5,6 +5,7 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -93,6 +94,7 @@ func TestTradesInMinutes_MatchesPerMinuteRangeReads(t *testing.T) {
 type minutesExplainNode struct {
 	NodeType                string               `json:"Node Type"`
 	RelationName            string               `json:"Relation Name"`
+	IndexName               string               `json:"Index Name"`
 	ActualRows              float64              `json:"Actual Rows"`
 	ActualLoops             float64              `json:"Actual Loops"`
 	RowsRemovedByFilter     float64              `json:"Rows Removed by Filter"`
@@ -100,9 +102,11 @@ type minutesExplainNode struct {
 	Plans                   []minutesExplainNode `json:"Plans"`
 }
 
-// Over a populated day of four markets, TradesInMinutes reads only the listed minutes' rows of the market: each minute is one
-// index range probe. Asserted on the plan's row counts, not wall time: rows read from trades chunks (output plus filtered out)
-// never exceed the market's rows in the listed minutes, and no join filter discards rows.
+// Over a populated day where the market's assets are the busiest base and the busiest quote (as XLM and USDC are), TradesInMinutes
+// reads only the listed minutes' rows of the market whatever the table statistics: before any ANALYZE, after one, and with the
+// chunk compressed. Asserted on the plan's row counts, not wall time: rows read from trades chunks (output plus filtered out) never
+// exceed the market's rows in the listed minutes, and no join filter discards rows. Then the reader's rows equal a plain reference
+// query's, in order, across a compressed and an uncompressed chunk.
 func TestTradesInMinutes_PlanProbesEachMinute(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -114,6 +118,7 @@ func TestTradesInMinutes_PlanProbesEachMinute(t *testing.T) {
 		t.Fatalf("store open: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
+	db := store.DB()
 
 	const issuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	usdc, err := c.NewClassicAsset("USDC", issuer)
@@ -124,31 +129,47 @@ func TestTradesInMinutes_PlanProbesEachMinute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d0 := time.Date(2026, 6, 11, 0, 0, 0, 0, time.UTC)
-	// Two rows a second for a day, round-robin over the market's two stored directions and fourteen other markets: 15 rows a
-	// minute in the market, 172,800 in all, so a probe that filters on the pair instead of seeking it reads 8x the rows.
-	if _, err := store.DB().ExecContext(ctx, `
-		INSERT INTO trades (source, ledger, tx_hash, op_index, ts, base_asset, quote_asset, base_amount, quote_amount)
-		SELECT 'sdex', 80000000 + g, lpad(to_hex(g), 64, '0'), 0, $1::timestamptz + (g / 2) * INTERVAL '1 second',
-		       CASE g % 16 WHEN 0 THEN $2::text WHEN 1 THEN $3::text ELSE 'N' || (g % 16) || '-' || $4::text END,
-		       CASE g % 16 WHEN 1 THEN $2::text ELSE $3::text END,
-		       1000 + g, 100 + g
-		  FROM generate_series(0, 172799) g`,
-		d0, pair.Base.String(), pair.Quote.String(), issuer); err != nil {
-		t.Fatalf("day insert: %v", err)
-	}
-	if _, err := store.DB().ExecContext(ctx, `ANALYZE trades`); err != nil {
+	// Chunks inherit this, so the first pass plans with no statistics at all rather than with whatever autovacuum got to.
+	if _, err := db.ExecContext(ctx, `ALTER TABLE trades SET (autovacuum_enabled = false)`); err != nil {
 		t.Fatal(err)
 	}
-	for _, tc := range []struct{ n, step int }{{5, 240}, {400, 3}} {
-		minutes := make([]time.Time, tc.n)
-		for i := range minutes {
-			minutes[i] = d0.Add(time.Duration(i*tc.step) * time.Minute)
+	// Two rows a second, round-robin over 64 markets: the market both ways, 30 more with its base, 32 more with its quote. The
+	// market is 1/32 of a minute's rows while its base and its quote are each about half, so pricing the probe from the assets'
+	// own frequencies makes a time-only scan look as cheap as the pair seek and read 30x the rows.
+	insertDay := func(day time.Time, seconds, ledger0 int) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO trades (source, ledger, tx_hash, op_index, ts, base_asset, quote_asset, base_amount, quote_amount)
+			SELECT 'sdex', $5::bigint + g, lpad(to_hex($5::bigint + g), 64, '0'), 0, $1::timestamptz + (g / 2) * INTERVAL '1 second',
+			       CASE WHEN g % 64 = 1 THEN $3::text WHEN g % 64 < 32 THEN $2::text ELSE 'N' || (g % 64) || '-' || $4::text END,
+			       CASE WHEN g % 64 = 1 THEN $2::text WHEN g % 64 = 0 OR g % 64 >= 32 THEN $3::text
+			            ELSE 'Q' || (g % 64) || '-' || $4::text END,
+			       1000 + g, 100 + g
+			  FROM generate_series(0, $6::bigint - 1) g`,
+			day, pair.Base.String(), pair.Quote.String(), issuer, ledger0, 2*seconds); err != nil {
+			t.Fatalf("day insert: %v", err)
 		}
-		const limit = 10000
+	}
+	d0 := time.Date(2026, 6, 11, 0, 0, 0, 0, time.UTC)
+	insertDay(d0, 86400, 80000000)
+	chunkStats := func() int {
+		var n int
+		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM pg_stats
+			 WHERE schemaname = '_timescaledb_internal' AND tablename LIKE '%_hyper_%' AND attname = 'base_asset'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	probe := func(stage string, n, step int) {
+		t.Helper()
+		minutes := make([]time.Time, n)
+		for i := range minutes {
+			minutes[i] = d0.Add(time.Duration(i*step) * time.Minute)
+		}
 		var raw string
-		if err := store.DB().QueryRowContext(ctx, `EXPLAIN (ANALYZE, FORMAT JSON) `+timescale.TradesInMinutesQuery,
-			pair.Base.String(), pair.Quote.String(), minutes, minutes[0], minutes[tc.n-1].Add(time.Minute), limit, "upshift",
+		if err := db.QueryRowContext(ctx, `EXPLAIN (ANALYZE, FORMAT JSON) `+timescale.TradesInMinutesQuery,
+			pair.Base.String(), pair.Quote.String(), minutes, minutes[0], minutes[n-1].Add(time.Minute), 10000, "upshift",
 			"0.01").Scan(&raw); err != nil {
 			t.Fatalf("EXPLAIN: %v", err)
 		}
@@ -159,32 +180,149 @@ func TestTradesInMinutes_PlanProbesEachMinute(t *testing.T) {
 		if err := json.Unmarshal([]byte(raw), &doc); err != nil || len(doc) != 1 {
 			t.Fatalf("parse EXPLAIN json (%v): %s", err, raw)
 		}
-		var read, joinRemoved float64
-		var walk func(n minutesExplainNode)
-		walk = func(n minutesExplainNode) {
-			if strings.HasPrefix(n.RelationName, "_hyper_") { // the chunk scans; a ChunkAppend parent repeats their rows
-				read += (n.ActualRows + n.RowsRemovedByFilter) * n.ActualLoops // both are per-loop averages
+		var read, batches, joinRemoved float64
+		scans := map[string]int{}
+		var walk func(p minutesExplainNode)
+		walk = func(p minutesExplainNode) {
+			if strings.HasPrefix(p.IndexName, "compress_hyper_") && !strings.Contains(p.IndexName, "base_asset_quote_asset") {
+				t.Errorf("%s, %d minutes: compressed chunk read through %q, want the pair-segment index", stage, n, p.IndexName)
 			}
-			joinRemoved += n.RowsRemovedByJoinFilter
-			for _, ch := range n.Plans {
+			switch {
+			case strings.HasPrefix(p.RelationName, "compress_hyper_"):
+				// A compressed chunk decompresses whole batches, so it is bounded in batches read from the pair's segment.
+				batches += p.ActualRows * p.ActualLoops
+				scans[p.NodeType+" "+p.IndexName]++
+				if p.NodeType == "Seq Scan" {
+					t.Errorf("%s, %d minutes: compressed chunk read by a Seq Scan, want the pair-segment index", stage, n)
+				}
+			case strings.HasPrefix(p.RelationName, "_hyper_") && p.NodeType != "Custom Scan":
+				// The chunk scans; a ChunkAppend parent repeats their rows. Both counts are per-loop averages.
+				read += (p.ActualRows + p.RowsRemovedByFilter) * p.ActualLoops
+				scans[p.NodeType+" "+p.IndexName]++
+			}
+			joinRemoved += p.RowsRemovedByJoinFilter
+			for _, ch := range p.Plans {
 				walk(ch)
 			}
 		}
 		walk(doc[0].Plan)
 		var inMinutes float64
-		if err := store.DB().QueryRowContext(ctx, `
+		if err := db.QueryRowContext(ctx, `
 			SELECT count(*) FROM trades
 			 WHERE ((base_asset = $1 AND quote_asset = $2) OR (base_asset = $2 AND quote_asset = $1))
 			   AND date_trunc('minute', ts) = ANY($3::timestamptz[])`,
 			pair.Base.String(), pair.Quote.String(), minutes).Scan(&inMinutes); err != nil {
 			t.Fatal(err)
 		}
-		t.Logf("%d minutes: %.0f trades rows read, %.0f removed by join filter, %.0f in the listed minutes, %.1f ms",
-			tc.n, read, joinRemoved, inMinutes, doc[0].ExecutionTime)
-		// 1.25x absorbs EXPLAIN's per-loop rounding of Actual Rows; a scan of the whole span reads several times the rows.
-		if read > 1.25*inMinutes || joinRemoved > 0 {
-			t.Errorf("%d minutes: plan reads %.0f trades rows (join filter drops %.0f); want at most the %0.f in the listed minutes:\n%s",
-				tc.n, read, joinRemoved, inMinutes, raw)
+		t.Logf("%s, %d minutes: %.0f trades rows and %.0f compressed batches read, %.0f removed by join filter, %.0f in the listed "+
+			"minutes, %.1f ms, scans %v", stage, n, read, batches, joinRemoved, inMinutes, doc[0].ExecutionTime, scans)
+		// A minute's rows of one stored direction straddle at most two batches.
+		if batches > float64(2*2*n) {
+			t.Errorf("%s, %d minutes: plan reads %.0f compressed batches; want at most %d:\n%s", stage, n, batches, 4*n, raw)
 		}
+		// 1.25x absorbs EXPLAIN's per-loop rounding of Actual Rows; a time-only scan reads 30x the rows.
+		if inMinutes == 0 || read > 1.25*inMinutes || joinRemoved > 0 {
+			t.Errorf("%s, %d minutes: plan reads %.0f trades rows (join filter drops %.0f); want at most the %0.f in the listed minutes:\n%s",
+				stage, n, read, joinRemoved, inMinutes, raw)
+		}
+	}
+	cases := []struct{ n, step int }{{5, 240}, {400, 3}}
+
+	if got := chunkStats(); got != 0 {
+		t.Fatalf("fixture: the chunk already has %d statistics rows; the no-statistics pass would not be one", got)
+	}
+	for _, tc := range cases {
+		probe("no statistics", tc.n, tc.step)
+	}
+	if got := chunkStats(); got != 0 {
+		t.Fatalf("fixture: statistics appeared during the no-statistics pass (%d rows)", got)
+	}
+	if _, err := db.ExecContext(ctx, `ANALYZE trades`); err != nil {
+		t.Fatal(err)
+	}
+	if chunkStats() == 0 {
+		t.Fatal("fixture: ANALYZE left the chunk without statistics")
+	}
+	for _, tc := range cases {
+		probe("analyzed", tc.n, tc.step)
+	}
+
+	// A later chunk stays uncompressed; the day's chunk is compressed (whole-chunk compress_chunk, never a merge).
+	d1 := d0.AddDate(0, 0, 30)
+	insertDay(d1, 3600, 90000000)
+	if _, err := db.ExecContext(ctx, `SELECT compress_chunk(ch) FROM show_chunks('trades', older_than => $1::timestamptz) ch`,
+		d0.AddDate(0, 0, 14)); err != nil {
+		t.Fatalf("compress_chunk: %v", err)
+	}
+	var compressed int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM timescaledb_information.chunks
+		 WHERE hypertable_name = 'trades' AND is_compressed`).Scan(&compressed); err != nil || compressed != 1 {
+		t.Fatalf("fixture: %d compressed trades chunks (%v), want 1", compressed, err)
+	}
+	if _, err := db.ExecContext(ctx, `ANALYZE trades`); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range cases {
+		probe("compressed", tc.n, tc.step)
+	}
+
+	var minutes []time.Time
+	for i := 0; i < 200; i++ {
+		minutes = append(minutes, d0.Add(time.Duration(i*7)*time.Minute))
+	}
+	for i := 0; i < 30; i++ {
+		minutes = append(minutes, d1.Add(time.Duration(i*2)*time.Minute))
+	}
+	for _, limit := range []int{10000, 50} {
+		rows, err := db.QueryContext(ctx, `
+			SELECT source, ledger, tx_hash, op_index, ts,
+			       CASE WHEN base_asset = $1 THEN base_amount ELSE quote_amount END::text,
+			       CASE WHEN base_asset = $1 THEN quote_amount ELSE base_amount END::text
+			  FROM (SELECT * FROM trades
+			         WHERE ((base_asset = $1 AND quote_asset = $2) OR (base_asset = $2 AND quote_asset = $1))
+			           AND date_trunc('minute', ts) = ANY($3::timestamptz[])
+			         ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
+			         LIMIT $4) r
+			 ORDER BY ts, ledger, tx_hash, op_index, source`,
+			pair.Base.String(), pair.Quote.String(), minutes, limit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var want []string
+		for rows.Next() {
+			var src, tx, base, quote string
+			var ledger, op int64
+			var ts time.Time
+			if err := rows.Scan(&src, &ledger, &tx, &op, &ts, &base, &quote); err != nil {
+				t.Fatal(err)
+			}
+			want = append(want, fmt.Sprintf("%s:%d:%s:%d:%d|%s|%s", src, ledger, tx, op, ts.UTC().UnixNano(), base, quote))
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		_ = rows.Close()
+		got, err := store.TradesInMinutes(ctx, pair, minutes, limit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fromCompressed int
+		for _, g := range got {
+			if g.Timestamp.Before(d1) {
+				fromCompressed++
+			}
+		}
+		if len(want) < limit && (fromCompressed == 0 || fromCompressed == len(got)) {
+			t.Fatalf("limit %d: %d of %d rows from the compressed chunk, want rows from both chunks", limit, fromCompressed, len(got))
+		}
+		if len(got) != len(want) {
+			t.Fatalf("limit %d: %d rows, the reference query has %d", limit, len(got), len(want))
+		}
+		for i, g := range got {
+			if k := g.ID() + "|" + g.BaseAmount.String() + "|" + g.QuoteAmount.String(); k != want[i] {
+				t.Fatalf("limit %d row %d = %s, the reference query has %s", limit, i, k, want[i])
+			}
+		}
+		t.Logf("limit %d: %d rows equal the reference query's, in order", limit, len(got))
 	}
 }
