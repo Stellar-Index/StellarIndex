@@ -111,6 +111,7 @@ func (s *Server) NewLendingRevenueRollup(store LendingRevenueRollupStore, logger
 
 // Run cycles until ctx ends; a failed cycle is logged and the next one retries.
 func (r *LendingRevenueRollup) Run(ctx context.Context) {
+	obs.LendingRevenueRollupStartedUnix.Set(float64(r.now().Unix()))
 	t := time.NewTicker(lendingRevenueRollupCycle)
 	defer t.Stop()
 	for {

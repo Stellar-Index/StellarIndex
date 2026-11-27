@@ -279,3 +279,114 @@ tests:
       - eval_time: 70h
         alertname: stellarindex_lending_interest_proof_stale
         exp_alerts: []
+
+  # started_unix 600: the worker started at t=10m and has never succeeded, so the 30 minutes run from the start.
+  - interval: 1m
+    name: a lending revenue rollup that never succeeded since it started fires
+    input_series:
+      - series: 'stellarindex_lending_revenue_rollup_started_unix{job="stellarindex-api",instance="api-a:8080"}'
+        values: '600x60'
+      - series: 'stellarindex_lending_revenue_rollup_last_success_unix{job="stellarindex-api",instance="api-a:8080"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 44m
+        alertname: stellarindex_lending_revenue_rollup_stalled
+        exp_alerts: []
+      - eval_time: 47m
+        alertname: stellarindex_lending_revenue_rollup_stalled
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#lending-revenue-rollup-stalled
+              summary: "lending revenue rollup has not finished a cycle in over 30 minutes"
+              description: |
+                No API instance has finished a lending revenue rollup cycle holding
+                its lock in over 30 minutes since its last success or start.
+                lending_revenue_usd_daily stops advancing and the
+                /v1/lending/protocols revenue windows fall behind as lower bounds.
+
+  # Last success at t=30m, then none: fires once 30 minutes have passed plus the 5m hold.
+  - interval: 1m
+    name: a lending revenue rollup that stops succeeding fires after 30 minutes
+    input_series:
+      - series: 'stellarindex_lending_revenue_rollup_started_unix{job="stellarindex-api",instance="api-a:8080"}'
+        values: '1x120'
+      - series: 'stellarindex_lending_revenue_rollup_last_success_unix{job="stellarindex-api",instance="api-a:8080"}'
+        values: '0+60x30 1800x90'
+    alert_rule_test:
+      - eval_time: 64m
+        alertname: stellarindex_lending_revenue_rollup_stalled
+        exp_alerts: []
+      - eval_time: 68m
+        alertname: stellarindex_lending_revenue_rollup_stalled
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#lending-revenue-rollup-stalled
+              summary: "lending revenue rollup has not finished a cycle in over 30 minutes"
+              description: |
+                No API instance has finished a lending revenue rollup cycle holding
+                its lock in over 30 minutes since its last success or start.
+                lending_revenue_usd_daily stops advancing and the
+                /v1/lending/protocols revenue windows fall behind as lower bounds.
+
+  # api-a holds the lock and succeeds every minute; api-b never holds it and never succeeds. max() keeps it quiet.
+  - interval: 1m
+    name: a replica that never holds the lending revenue rollup lock does not fire
+    input_series:
+      - series: 'stellarindex_lending_revenue_rollup_started_unix{job="stellarindex-api",instance="api-a:8080"}'
+        values: '1x150'
+      - series: 'stellarindex_lending_revenue_rollup_last_success_unix{job="stellarindex-api",instance="api-a:8080"}'
+        values: '0+60x150'
+      - series: 'stellarindex_lending_revenue_rollup_started_unix{job="stellarindex-api",instance="api-b:8080"}'
+        values: '1x150'
+      - series: 'stellarindex_lending_revenue_rollup_last_success_unix{job="stellarindex-api",instance="api-b:8080"}'
+        values: '0x150'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_lending_revenue_rollup_stalled
+        exp_alerts: []
+
+  - interval: 1m
+    name: a host with the lending revenue rollup disabled stays quiet
+    input_series:
+      - series: 'stellarindex_lending_revenue_rollup_started_unix{job="stellarindex-api",instance="api-a:8080"}'
+        values: '0x150'
+      - series: 'stellarindex_lending_revenue_rollup_last_success_unix{job="stellarindex-api",instance="api-a:8080"}'
+        values: '0x150'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_lending_revenue_rollup_stalled
+        exp_alerts: []
+
+  - interval: 1m
+    name: a lending revenue sweep mismatch tickets
+    input_series:
+      - series: 'stellarindex_lending_revenue_rollup_sweep_mismatches_total{job="stellarindex-api",instance="api-a:8080"}'
+        values: '0x30 1x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_lending_revenue_rollup_sweep_mismatch
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: stellarindex_lending_revenue_rollup_sweep_mismatch
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#lending-revenue-rollup-sweep-mismatch
+              summary: "lending revenue rollup's sweep found stored USD that a fresh valuation does not reproduce"
+              description: |
+                The rollup's daily sweep found stored lending revenue USD days
+                in the last day that a fresh day walk valued differently
+                with nothing to explain it. Each was rewritten; the cause is a
+                valuer that is not deterministic, and served windows may have been
+                wrong until the rewrite.

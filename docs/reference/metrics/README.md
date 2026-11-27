@@ -1085,6 +1085,12 @@ Gauge, no labels.
 
 Unix seconds of the lending revenue USD rollup's last completed cycle that held its lock. Only the instance holding the lock sets it.
 
+### `stellarindex_lending_revenue_rollup_started_unix`
+
+Gauge, no labels.
+
+Unix seconds this process started the lending revenue USD rollup worker; 0 when the worker is disabled. With `last_success_unix` it lets `stellarindex_lending_revenue_rollup_stalled` cover a worker that has never succeeded since it started.
+
 ### `stellarindex_lending_revenue_rollup_rows_valued_total`
 
 Counter, no labels.

@@ -312,6 +312,21 @@ Revision 4 splits `residual_explained` into `interest_drawn` (≤ 0, interest-au
 
 3. `systemctl start lending-interest-prove-full.service`; it exits 0 with no INCOMPLETE hour once every revision 3 row is re-derived.
 
+## Lending revenue rollup stalled
+
+`stellarindex_lending_revenue_rollup_stalled` fires when the API's lending revenue rollup is enabled (`stellarindex_lending_revenue_rollup_started_unix` > 0 on some instance) and no instance has finished a cycle holding its lock (`stellarindex_lending_revenue_rollup_last_success_unix`, max across instances) for over 30 minutes since its last success or its start. Both gauges are max()ed, so a replica that never takes the lock cannot fire it.
+
+1. Read the API log for `lending revenue rollup cycle failed` (a lake or Postgres read failed, or the 8-minute cycle budget ran out) and for `lending revenue rollup: lock release`.
+2. Check who holds the lock: `SELECT pid, backend_start FROM pg_locks JOIN pg_stat_activity USING (pid) WHERE locktype = 'advisory'`. An instance that died holding it frees it when its session ends.
+3. A cycle that runs out of budget on every try is a lake read that has slowed; the trailing-day re-walk and the sweep still advance once it recovers. Until then the `/v1/lending/protocols` revenue windows name the lagging pools `days_not_valued`.
+
+## Lending revenue rollup sweep mismatch
+
+`stellarindex_lending_revenue_rollup_sweep_mismatch` fires when `stellarindex_lending_revenue_rollup_sweep_mismatches_total` rose within the last day: the daily sweep re-valued a stored day from the same derive at the same revisions, no verdict refused either valuation, and the USD differed. The row has been rewritten, so the table is right again, but the valuer gave two answers for one input.
+
+1. Find the days in the API log: `lending revenue rollup: sweep mismatch, rewriting` names the pool, asset and day.
+2. Compare `/v1/lending/pools/{pool}/revenue?interval=1d` over that day with the stored row. A price bucket that arrived late, or a source exclusion applied without a change record, explains a difference; a valuer change without a `lendingRevenueValuationRev` bump is a bug: bump it so every row is re-valued.
+
 ## stellarindex_catchup_lane_failed
 
 The catch-up lanes (`si-catchup-a`, `si-catchup-b`) run the steps in `/var/lib/stellarindex/catchup/<lane>.queue` in order. A step that exits 75 defers and retries; any other failure writes `<lane>.failed` and the lane sleeps until the file is gone. `catchup-lanes.timer` publishes the lane state every 5 min.
