@@ -405,6 +405,10 @@ type Orchestrator struct {
 	// Rebuilt every Tick; same lock-free invariant as prevVWAPs.
 	tickCompositeRefs map[string]compositeReference
 
+	// tickLiveTails holds this tick's live minute-sum tails per `<fetch pair>|<start>|<end>` ([Orchestrator.liveTail]). nil outside
+	// a Tick (no memo); rebuilt every Tick; same lock-free invariant as prevVWAPs.
+	tickLiveTails map[string][]timescale.TradeMinuteSum
+
 	// lastCompositeUnavailable is the last logged unavailable cause per `<pair>:<window>`, so the cause is logged at Info when it changes
 	// rather than every tick. Persists across ticks; same lock-free invariant as prevVWAPs.
 	lastCompositeUnavailable map[string]string
@@ -553,6 +557,8 @@ func (o *Orchestrator) Tick(ctx context.Context) error {
 	o.tickLegRefs = make(map[time.Duration]map[string]legRef, len(o.cfg.Windows))
 	o.tickCompositeRefs = make(map[string]compositeReference)
 	o.heldDirect = make(map[string]heldDirect)
+	o.tickLiveTails = make(map[string][]timescale.TradeMinuteSum)
+	defer func() { o.tickLiveTails = nil }()
 
 	// Every store and cache call below runs on tickCtx so none outlives the wedge guard
 	// ([Config.TickTimeout]).

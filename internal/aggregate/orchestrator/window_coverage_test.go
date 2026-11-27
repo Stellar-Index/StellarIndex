@@ -29,10 +29,15 @@ type sumsStore struct {
 	late      map[string]bool // Trade.IDs inserted after their minute was materialised
 	rawReads  []time.Time     // from of every TradesInRange call
 	liveReads [][2]time.Time  // [from, to) of every TradeSums1mLive call
+	liveErr   error           // returned by TradeSums1mLive
+	rereadErr error           // returned by every TradesInRange call after the first
 }
 
 func (s *sumsStore) TradesInRange(_ context.Context, p canonical.Pair, from, to time.Time, limit int) ([]canonical.Trade, error) {
 	s.rawReads = append(s.rawReads, from)
+	if s.rereadErr != nil && len(s.rawReads) > 1 {
+		return nil, s.rereadErr
+	}
 	var out []canonical.Trade
 	for _, t := range s.raw {
 		if t.Timestamp.Before(from) || !t.Timestamp.Before(to) {
@@ -79,6 +84,9 @@ func (s *sumsStore) TradeSums1mInRange(_ context.Context, p canonical.Pair, from
 
 func (s *sumsStore) TradeSums1mLive(_ context.Context, p canonical.Pair, from, to time.Time) ([]timescale.TradeMinuteSum, error) {
 	s.liveReads = append(s.liveReads, [2]time.Time{from, to})
+	if s.liveErr != nil {
+		return nil, s.liveErr
+	}
 	if to.Sub(from) > timescale.TradeSums1mLiveMaxSpan {
 		return nil, fmt.Errorf("live span %v over the cap", to.Sub(from))
 	}

@@ -30,7 +30,7 @@ func (o *Orchestrator) minuteSums(
 		return nil, fmt.Sprintf("minute sums materialised to %s, %.0fs behind the raw part: tail %s beyond the %s cap",
 			watermark.UTC().Format(time.RFC3339), m.Sub(watermark).Seconds(), tail, timescale.TradeSums1mLiveMaxSpan)
 	}
-	live, err := ss.TradeSums1mLive(ctx, fetch, start, m)
+	live, err := o.liveTail(ctx, ss, fetch, start, m)
 	if err != nil {
 		return nil, "unmaterialised-tail read failed: " + err.Error()
 	}
@@ -42,4 +42,19 @@ func (o *Orchestrator) minuteSums(
 		}
 	}
 	return append(kept, live...), ""
+}
+
+// liveTail reads [start, m) through [Orchestrator.tickLiveTails], so a pair's windows sharing a tail within one tick read it once.
+func (o *Orchestrator) liveTail(
+	ctx context.Context, ss TradeSumsStore, fetch canonical.Pair, start, m time.Time,
+) ([]timescale.TradeMinuteSum, error) {
+	key := fetch.String() + "|" + start.UTC().Format(time.RFC3339) + "|" + m.UTC().Format(time.RFC3339)
+	if live, hit := o.tickLiveTails[key]; hit {
+		return live, nil
+	}
+	live, err := ss.TradeSums1mLive(ctx, fetch, start, m)
+	if err == nil && o.tickLiveTails != nil {
+		o.tickLiveTails[key] = live
+	}
+	return live, err
 }

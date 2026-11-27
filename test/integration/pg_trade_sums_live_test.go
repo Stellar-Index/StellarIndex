@@ -58,12 +58,31 @@ func TestTradeSums1mLive_MatchesMaterialisedView(t *testing.T) {
 			}
 		}
 	}
+	// Unpriceable rows (a zero leg) inside priced minutes, and a minute holding only unpriceable rows: the view's FILTERs leave
+	// the first out of every sum and count, and its trade_count > 0 read drops the second; the live read must do the same.
+	for i, z := range []struct {
+		src         string
+		at          time.Duration
+		base, quote int64
+	}{
+		{"sdex", time.Minute + 30*time.Second, 5_000_000_000, 0},
+		{"soroswap", time.Minute + 31*time.Second, 0, 9_000_000},
+		{"sdex", 4*time.Minute + 10*time.Second, 0, 1_000},
+		{"sdex", 4*time.Minute + 20*time.Second, 1_000, 0},
+	} {
+		if _, err := store.DB().ExecContext(ctx, `
+			INSERT INTO trades (source, ledger, tx_hash, op_index, ts, base_asset, quote_asset, base_amount, quote_amount)
+			VALUES ($1, $2, lpad(to_hex($2::int), 64, '0'), 0, $3, $4, $5, $6, $7)`,
+			z.src, 70_000_000+i, m0.Add(z.at), pair.Base.String(), pair.Quote.String(), z.base, z.quote); err != nil {
+			t.Fatalf("unpriceable insert %d: %v", i, err)
+		}
+	}
 	if _, err := store.DB().ExecContext(ctx,
 		`CALL refresh_continuous_aggregate('trade_sums_1m', $1::timestamptz, $2::timestamptz)`,
-		m0, m0.Add(5*time.Minute)); err != nil {
+		m0, m0.Add(6*time.Minute)); err != nil {
 		t.Fatalf("refresh trade_sums_1m: %v", err)
 	}
-	to := m0.Add(4 * time.Minute)
+	to := m0.Add(5 * time.Minute)
 	view, watermark, err := store.TradeSums1mInRange(ctx, pair, m0, to)
 	if err != nil {
 		t.Fatal(err)
@@ -84,6 +103,9 @@ func TestTradeSums1mLive_MatchesMaterialisedView(t *testing.T) {
 	for _, r := range live {
 		if r.Source == "upshift" {
 			t.Errorf("non-VWAP source served live: %+v", r)
+		}
+		if r.Bucket.Equal(m0.Add(4 * time.Minute)) {
+			t.Errorf("an unpriceable-only minute served live: %+v", r)
 		}
 	}
 	if _, err := store.TradeSums1mLive(ctx, pair, m0, m0.Add(timescale.TradeSums1mLiveMaxSpan+time.Minute)); err == nil {
@@ -136,8 +158,8 @@ func TestTradeSums1mLive_MatchesMaterialisedView(t *testing.T) {
 	if len(chunks) != 1 {
 		t.Errorf("plan reads %d trades chunks %v, want only the window's", len(chunks), chunks)
 	}
-	if read > float64(nonce) {
-		t.Errorf("plan reads %.0f trades rows, want at most the market's %d in the window:\n%s", read, nonce, raw)
+	if inWindow := nonce + 4; read > float64(inWindow) { // + the four unpriceable rows
+		t.Errorf("plan reads %.0f trades rows, want at most the market's %d in the window:\n%s", read, inWindow, raw)
 	}
 }
 

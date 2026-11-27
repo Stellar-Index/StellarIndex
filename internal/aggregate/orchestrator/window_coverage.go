@@ -97,6 +97,10 @@ func (o *Orchestrator) fillFromMinuteSums(
 	}
 	rows := foldMinuteSums(sums)
 	cut, extra := o.resolveWideMinutes(ctx, fetch, rows)
+	if cut.After(coveredFrom) {
+		// An unresolved seam minute would end coverage after the plain capped read does.
+		return nil, nil, time.Time{}, "wide seam minute left unresolved (re-read budget, cap or error)"
+	}
 	if !cut.IsZero() {
 		reason = "wide minutes left unresolved (re-read budget, cap or error)"
 	}
