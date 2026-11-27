@@ -2736,14 +2736,17 @@ export interface paths {
          *     price (the newest hourly VWAP at or before it, at most
          *     `price_max_age_hours` old, never a later one), summed exactly and
          *     rounded once to cents per figure, so rounded points need not add up
-         *     to the rounded total. A `1d` bucket is valued from its hours. USD is
-         *     served only when `emission_token` is the SAC of the protocol's
-         *     verified token (BLND for Blend, BLNT for BLNT); Blend V1's token is
-         *     not read, so its USD is null (`emission_token_unread`). A figure
-         *     that could not be valued in full is a lower bound
-         *     (`unpriced_hours`); one with nothing valued is null with
-         *     `usd_reason`, never `0.00`. `backstop_claims` values `blnt_amount`
-         *     only: LP tokens and shares are not the emission token.
+         *     to the rounded total. A `1d` bucket is valued from its hours, read
+         *     in the same snapshot; no figure exceeds what its served tokens
+         *     support. USD is served only when `emission_token` is the SAC of the
+         *     protocol's verified token (BLND for Blend, BLNT for BLNT).
+         *     `emission_token` is the pool's CURRENT token, and every bucket,
+         *     past ones included, is valued at that token's price. Blend V1's
+         *     token is not read, so its USD is null (`emission_token_unread`). A
+         *     figure that could not be valued in full is a lower bound
+         *     (`unpriced_hours`, or amounts not decoded); one with nothing valued
+         *     is null with `usd_reason`, never `0.00`. `backstop_claims` values
+         *     `blnt_amount` only: LP tokens and shares are not the emission token.
          *
          *     `reserves` is the SCHEDULED emission per reserve token id
          *     (`token_id = reserve_index * 2` is the dToken, `side: borrow`; `+ 1`
@@ -7595,14 +7598,16 @@ export interface components {
             /** @description Some tokens are left out: an unpriced hour, or (stream and line totals) the stream's own lower bound. */
             lower_bound: boolean;
             /**
-             * @description Why nothing is valued. `emission_token_unread`: the pool's emission token is not read (always for Blend V1, whose storage layout is unverified). `emission_token_unverified`: the token is not the SAC of the protocol's verified token (BLND for Blend, BLNT for BLNT), matched by code and issuer, never code alone. `no_price_within_bound`: no hour carrying tokens had a price. Otherwise the price series' refusal: `unpriced`, `decimals_unknown`, `price_scale_mismatch`, `withheld` (a scam-flagged issuer, an operator withholding, or a thin market), `price_read_failed`.
+             * @description Why nothing is valued. `emission_token_unread`: the pool's emission token is not read (always for Blend V1, whose storage layout is unverified). `emission_token_unverified`: the token is not the SAC of the protocol's verified token (BLND for Blend, BLNT for BLNT), matched by code and issuer, never code alone. `no_price_within_bound`: no hour carrying tokens had a price. `amount_unread`: none of the bucket's amounts were decoded (some unread makes it a lower bound instead). `reads_disagree`: a `1d` bucket's hours carry more than it, or none of it, so none of it is valued rather than more than its tokens support. `hourly_read_failed`: the hourly read behind `1d` buckets failed; the tokens are served, the schedule is still valued. Otherwise the price series' refusal: `unpriced`, `decimals_unknown`, `price_scale_mismatch`, `withheld` (a scam-flagged issuer, an operator withholding, or a thin market), `price_read_failed`.
              * @enum {string|null}
              */
-            usd_reason: "emission_token_unread" | "emission_token_unverified" | "no_price_within_bound" | "unpriced" | "decimals_unknown" | "price_scale_mismatch" | "withheld" | "price_read_failed" | null;
+            usd_reason: "emission_token_unread" | "emission_token_unverified" | "no_price_within_bound" | "amount_unread" | "reads_disagree" | "hourly_read_failed" | "unpriced" | "decimals_unknown" | "price_scale_mismatch" | "withheld" | "price_read_failed" | null;
         };
         /** @description Emission tokens in USD, each hour at that hour's price, summed exactly and rounded once to cents; null with `usd_reason` when nothing could be valued. Zero tokens are `0.00` whatever the price. */
         LendingEmissionUSD: components["schemas"]["LendingEmissionUSDCoverage"] & {
             amount_usd: string | null;
+            /** @description Schedule lines only, present when true: the tokens valued are an approximate schedule's (BLNT's, rebuilt to dust; see the stream's `approximate`). Not a lower bound. */
+            approximate?: boolean;
         };
         /** @description A backstop allocation's two shares in USD, valued as `LendingEmissionUSD`; null together. */
         LendingEmissionAllocUSD: components["schemas"]["LendingEmissionUSDCoverage"] & {

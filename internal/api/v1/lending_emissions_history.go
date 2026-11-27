@@ -275,14 +275,24 @@ func (s *Server) handleLendingPoolEmissionsHistory(w http.ResponseWriter, r *htt
 		return
 	}
 	b := s.emissionsWriterBounds(ctx, win, isBLNT, isV1, &flags)
+	token := ""
+	if view.EmissionToken != nil {
+		token = *view.EmissionToken
+	}
+	_, usdReason := s.emissionTokenIdentity(protocol, token)
 	hq := timescale.EmissionHistoryQuery{
 		From: win.from, To: b.pool.end, BackstopTo: b.backstop.end, Daily: q.Daily,
-		Schedule: !isV1, BackstopAlloc: !isV1, BackstopClaim: isBLNT,
+		Schedule: !isV1, BackstopAlloc: !isV1, BackstopClaim: isBLNT, Hours: q.Daily && usdReason == "",
 	}
 	h, err := hr.LendingEmissionsHistory(ctx, pool, isBLNT, hq)
 	if errors.Is(err, errNoEmissionsHistoryReader) {
 		writeLendingHistoryNotReady(w, r)
 		return
+	}
+	hoursFailed := errors.Is(err, timescale.ErrEmissionHoursRead)
+	if hoursFailed {
+		s.logger.Warn("lending emissions history: hourly read failed; usd withheld", "pool", pool, "err", err)
+		flags.Degraded, err = true, nil
 	}
 	if err != nil {
 		s.writeLendingHistoryError(ctx, w, r, "LendingEmissionsHistory", pool, err)
@@ -292,7 +302,7 @@ func (s *Server) handleLendingPoolEmissionsHistory(w http.ResponseWriter, r *htt
 	b.apply(&view)
 	s.applyEmissionsVerdicts(ctx, &view, isBLNT, &flags)
 	finishEmissionsHistory(&view)
-	if err := s.emissionsHistoryUSD(ctx, hr, pool, isBLNT, hq, &view, h, b, &flags); err != nil {
+	if err := s.emissionsHistoryUSD(ctx, &view, h, b, usdReason, hoursFailed, &flags); err != nil {
 		s.writeLendingHistoryError(ctx, w, r, "LendingEmissionsHistory", pool, err)
 		return
 	}

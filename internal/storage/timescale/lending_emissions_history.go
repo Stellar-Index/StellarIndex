@@ -3,6 +3,7 @@ package timescale
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -66,15 +67,18 @@ type EmissionHistoryQuery struct {
 	From, To, BackstopTo                   time.Time
 	Daily                                  bool
 	Schedule, BackstopAlloc, BackstopClaim bool
+	// Hours, with Daily, also reads the non-schedule streams at hourly buckets, in the same snapshot as the days.
+	Hours bool
 }
 
 // LendingEmissionsHistory is a pool's emission events over a window. Schedule also holds, per token id, the last update at
-// or before From: the rate in force when the window opens.
+// or before From: the rate in force when the window opens. Hours is the hourly read Hours asked for.
 type LendingEmissionsHistory struct {
 	Schedule       []EmissionScheduleEvent
 	Claims         []EmissionClaimBucket
 	Alloc          []EmissionAllocBucket
 	BackstopClaims []EmissionBackstopClaimBucket
+	Hours          *LendingEmissionsHistory
 }
 
 // The row sources; every read is index-led (the plan checks in test/integration/pg_lending_emissions_history_test.go).
@@ -170,6 +174,33 @@ func poolEventsFrom(isBLNT bool) string {
 // LendingEmissionsHistory reads a pool's emission events over q: Blend's from blend_emissions and blend_backstop_events,
 // BLNT's from blnt_events. Every amount is summed as NUMERIC and scanned exact.
 func (s *Store) LendingEmissionsHistory(ctx context.Context, pool string, isBLNT bool, q EmissionHistoryQuery) (LendingEmissionsHistory, error) {
+	if !q.Daily || !q.Hours {
+		return readEmissionsHistory(ctx, s.db, pool, isBLNT, q)
+	}
+	// One snapshot, so the hours can never sum past the days they are valued against.
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
+	if err != nil {
+		return LendingEmissionsHistory{}, fmt.Errorf("timescale: LendingEmissionsHistory begin %s: %w", pool, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	out, err := readEmissionsHistory(ctx, tx, pool, isBLNT, q)
+	if err != nil {
+		return LendingEmissionsHistory{}, err
+	}
+	hq := q
+	hq.Daily, hq.Schedule = false, false
+	hours, err := readEmissionsHistory(ctx, tx, pool, isBLNT, hq)
+	if err != nil {
+		return out, fmt.Errorf("%w: %w", ErrEmissionHoursRead, err) // the days are whole; only Hours is missing
+	}
+	out.Hours = &hours
+	return out, nil
+}
+
+// ErrEmissionHoursRead marks a failure of the hour-bucket read alone; the history returned with it holds the whole days.
+var ErrEmissionHoursRead = errors.New("timescale: LendingEmissionsHistory hours")
+
+func readEmissionsHistory(ctx context.Context, db tradeQuerier, pool string, isBLNT bool, q EmissionHistoryQuery) (LendingEmissionsHistory, error) {
 	poolFrom, bstopFrom := poolEventsFrom(isBLNT), blendBackstopEventsFrom
 	if isBLNT {
 		bstopFrom = blntBackstopEventsFrom
@@ -185,27 +216,27 @@ func (s *Store) LendingEmissionsHistory(ctx context.Context, pool string, isBLNT
 	var out LendingEmissionsHistory
 	var err error
 	if q.Schedule {
-		if out.Schedule, err = queryEmissionRows(ctx, s.db, emissionScheduleSQL(poolFrom, scheduleTxOrder(isBLNT)), scanScheduleEvent, pool, from, to); err != nil {
+		if out.Schedule, err = queryEmissionRows(ctx, db, emissionScheduleSQL(poolFrom, scheduleTxOrder(isBLNT)), scanScheduleEvent, pool, from, to); err != nil {
 			return LendingEmissionsHistory{}, fmt.Errorf("timescale: LendingEmissionsHistory schedule %s: %w", pool, err)
 		}
 	}
-	if out.Claims, err = queryEmissionRows(ctx, s.db, emissionClaimsSQL(poolFrom), scanClaimBucket, pool, from, to, unit); err != nil {
+	if out.Claims, err = queryEmissionRows(ctx, db, emissionClaimsSQL(poolFrom), scanClaimBucket, pool, from, to, unit); err != nil {
 		return LendingEmissionsHistory{}, fmt.Errorf("timescale: LendingEmissionsHistory claims %s: %w", pool, err)
 	}
 	if q.BackstopAlloc {
-		if out.Alloc, err = queryEmissionRows(ctx, s.db, emissionAllocSQL(bstopFrom), scanAllocBucket, pool, from, bto, unit); err != nil {
+		if out.Alloc, err = queryEmissionRows(ctx, db, emissionAllocSQL(bstopFrom), scanAllocBucket, pool, from, bto, unit); err != nil {
 			return LendingEmissionsHistory{}, fmt.Errorf("timescale: LendingEmissionsHistory alloc %s: %w", pool, err)
 		}
 	}
 	if q.BackstopClaim && isBLNT {
-		if out.BackstopClaims, err = queryEmissionRows(ctx, s.db, blntBackstopClaimHistorySQL, scanBackstopClaimBucket, pool, from, bto, unit); err != nil {
+		if out.BackstopClaims, err = queryEmissionRows(ctx, db, blntBackstopClaimHistorySQL, scanBackstopClaimBucket, pool, from, bto, unit); err != nil {
 			return LendingEmissionsHistory{}, fmt.Errorf("timescale: LendingEmissionsHistory backstop claims %s: %w", pool, err)
 		}
 	}
 	return out, nil
 }
 
-func queryEmissionRows[T any](ctx context.Context, db *sql.DB, q string, scan func(*sql.Rows) (T, error), args ...any) ([]T, error) {
+func queryEmissionRows[T any](ctx context.Context, db tradeQuerier, q string, scan func(*sql.Rows) (T, error), args ...any) ([]T, error) {
 	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err

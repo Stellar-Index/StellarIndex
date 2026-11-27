@@ -2,7 +2,10 @@ package v1_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -19,19 +22,29 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
-// usdEmisLending serves daily (Daily reads) and hourly (every other read) emission history, recording each query.
+// usdEmisLending serves daily (Daily reads, with hourly as Hours when asked) and hourly (1h reads) emission history,
+// recording each query; failHours fails the hours as the store does, returning the whole days.
 type usdEmisLending struct {
 	stubBLNTLendingReader
 	daily, hourly timescale.LendingEmissionsHistory
+	failHours     bool
 	qs            []timescale.EmissionHistoryQuery
 }
 
 func (r *usdEmisLending) LendingEmissionsHistory(_ context.Context, _ string, _ bool, q timescale.EmissionHistoryQuery) (timescale.LendingEmissionsHistory, error) {
 	r.qs = append(r.qs, q)
-	if q.Daily {
-		return r.daily, nil
+	if !q.Daily {
+		return r.hourly, nil
 	}
-	return r.hourly, nil
+	out := r.daily
+	if q.Hours {
+		if r.failHours {
+			return out, fmt.Errorf("%w: connection reset", timescale.ErrEmissionHoursRead)
+		}
+		hours := r.hourly
+		out.Hours = &hours
+	}
+	return out, nil
 }
 
 func emisSAC(t *testing.T, assetID string) string {
@@ -75,7 +88,9 @@ func emisUSDServer(t *testing.T, lr *usdEmisLending, token string, prices map[ti
 	opts.LakeWatermark = fixedWatermark{at: now}
 	opts.Cursors = emisCursors{"blend": emisAtTip, "blend_backstop": emisAtTip, "blnt": emisAtTip}
 	opts.LendingWriters = allEmisWriters
-	opts.CompletenessReader = verifiedHistory("blend", "blend_backstop", "blnt")
+	if opts.CompletenessReader == nil {
+		opts.CompletenessReader = verifiedHistory("blend", "blend_backstop", "blnt")
+	}
 	srv := v1.New(opts)
 	srv.NetworkPassphrase = network.PublicNetworkPassphrase
 	return srv, hist
@@ -159,9 +174,8 @@ func TestLendingEmissionsHistoryUSD_DailyRoundsOnce(t *testing.T) {
 	srv, _ := emisUSDServer(t, lr, emisSAC(t, blndAssetID), prices, v1.Options{})
 	got, _ := getEmissionsHistory(t, srv, mkCStrkey(t, 1), "?interval=1d&from=2026-11-01T00:00:00Z&to=2026-11-02T00:00:00Z", http.StatusOK)
 
-	if len(lr.qs) != 2 || !lr.qs[0].Daily || lr.qs[1].Daily || lr.qs[1].Schedule || !lr.qs[1].From.Equal(lr.qs[0].From) ||
-		!lr.qs[1].To.Equal(lr.qs[0].To) || !lr.qs[1].BackstopTo.Equal(lr.qs[0].BackstopTo) {
-		t.Fatalf("reads = %+v, want the daily read then an hourly one over the same bounds without the schedule", lr.qs)
+	if len(lr.qs) != 1 || !lr.qs[0].Daily || !lr.qs[0].Hours {
+		t.Fatalf("reads = %+v, want one daily read asking for its hours in the same snapshot", lr.qs)
 	}
 	pc := got.PoolClaims
 	if pc.Totals.Amount != "120000" || !usdIs(pc.USD, "0.01", 3, 0, false) || !usdIs(pc.Points[0].USD, "0.01", 3, 0, false) {
@@ -217,8 +231,8 @@ func TestLendingEmissionsHistoryUSD_IdentityGate(t *testing.T) {
 		if !usdNull(got.PoolClaims.USD, tc.reason) || !usdNull(got.PoolClaims.Points[0].USD, tc.reason) {
 			t.Errorf("%s: usd = %+v, want null %s", tc.name, got.PoolClaims.USD, tc.reason)
 		}
-		if len(hist.reads) != 0 || len(lr.qs) != 1 {
-			t.Errorf("%s: %d price reads and %d history reads, want none and one", tc.name, len(hist.reads), len(lr.qs))
+		if len(hist.reads) != 0 || len(lr.qs) != 1 || lr.qs[0].Hours {
+			t.Errorf("%s: %d price reads and reads %+v, want none and one without hours", tc.name, len(hist.reads), lr.qs)
 		}
 	}
 }
@@ -228,15 +242,24 @@ func TestLendingEmissionsHistoryUSD_BLNT(t *testing.T) {
 	unknown := blend.PoolVersionUnknown
 	lr := &usdEmisLending{
 		stubBLNTLendingReader: stubBLNTLendingReader{stubLendingReader: stubLendingReader{version: &unknown}, blntAssets: []string{mkCStrkey(t, 3)}},
-		hourly: timescale.LendingEmissionsHistory{BackstopClaims: []timescale.EmissionBackstopClaimBucket{
-			{Start: emisHour(1), Tier: "FirstLoss", Claims: 1, Claimers: 1, BLNT: mustAmount(t, "50000000"), LP: mustAmount(t, "999999999999"), Shares: mustAmount(t, "7")},
-		}},
+		hourly: timescale.LendingEmissionsHistory{
+			BackstopClaims: []timescale.EmissionBackstopClaimBucket{
+				{Start: emisHour(1), Tier: "FirstLoss", Claims: 1, Claimers: 1, BLNT: mustAmount(t, "50000000"), LP: mustAmount(t, "999999999999"), Shares: mustAmount(t, "7")},
+			},
+			Schedule: []timescale.EmissionScheduleEvent{
+				{TokenID: 1, At: emisHour(1), EPS: mustAmount(t, "10000000000"), Expiration: mustAmount(t, "1793498400")}, // 02:00
+			},
+		},
 	}
 	srv, hist := emisUSDServer(t, lr, emisSAC(t, blntAssetID), map[time.Time]string{emisHour(1): "0.01"}, v1.Options{})
 	got, _ := getEmissionsHistory(t, srv, blnt.MainnetFixedPool, emisHistQuery, http.StatusOK)
 	tiers := got.BackstopClaims.Tiers
 	if len(tiers) != 1 || !usdIs(tiers[0].USD, "0.05", 1, 0, false) || !usdIs(tiers[0].Points[0].USD, "0.05", 1, 0, false) {
 		t.Errorf("tiers = %+v", tiers)
+	}
+	// BLNT's schedule is rebuilt to dust: its usd says so, and is not a lower bound for it.
+	if l := got.Reserves.Streams[0]; !l.USD.Approximate || l.USD.LowerBound || !l.Points[0].USD.Approximate || l.USD.AmountUSD == nil {
+		t.Errorf("schedule usd = %+v, want approximate, not a lower bound", l.USD)
 	}
 	for _, r := range hist.reads {
 		if !strings.HasPrefix(r.pair, blntAssetID+"/") {
@@ -268,23 +291,195 @@ func TestLendingEmissionsHistoryUSD_ThinWithheld(t *testing.T) {
 // TestLendingEmissionsHistoryUSD_ExcludedSourceDoesNotValueHour: an operator exclusion over an hour's BLND price leaves
 // that hour unvalued, counted, and the stream a lower bound.
 func TestLendingEmissionsHistoryUSD_ExcludedSourceDoesNotValueHour(t *testing.T) {
-	get := func(excl v1.PriceExclusionGate) v1.LendingEmissionUSD {
+	get := func(excl v1.PriceExclusionGate) (v1.LendingEmissionUSD, v1.Flags) {
 		t.Helper()
 		lr := &usdEmisLending{stubBLNTLendingReader: v2Lending(), hourly: timescale.LendingEmissionsHistory{
 			Claims: []timescale.EmissionClaimBucket{poolClaim(t, 1, "10000000"), poolClaim(t, 10, "10000000")},
 		}}
 		srv, _ := emisUSDServer(t, lr, emisSAC(t, blndAssetID), map[time.Time]string{emisHour(1): "0.1", emisHour(10): "0.3"}, v1.Options{Exclusions: excl})
-		got, _ := getEmissionsHistory(t, srv, mkCStrkey(t, 1), "?interval=1h&from=2026-11-01T00:00:00Z&to=2026-11-01T12:00:00Z", http.StatusOK)
-		return got.PoolClaims.USD
+		got, raw := getEmissionsHistory(t, srv, mkCStrkey(t, 1), "?interval=1h&from=2026-11-01T00:00:00Z&to=2026-11-01T12:00:00Z", http.StatusOK)
+		return got.PoolClaims.USD, emisFlags(t, raw)
 	}
-	if u := get(nil); !usdIs(u, "0.40", 2, 0, false) {
-		t.Fatalf("control: usd = %+v, want 0.40 complete", u)
+	if u, f := get(nil); !usdIs(u, "0.40", 2, 0, false) || f.FillsWithheldReason != "" {
+		t.Fatalf("control: usd = %+v flags %+v, want 0.40 complete, nothing withheld", u, f)
 	}
-	u := get(assetExclGate(exclTable{rows: []timescale.SourceExclusion{{
+	u, flags := get(assetExclGate(exclTable{rows: []timescale.SourceExclusion{{
 		ID: 1, Source: "soroswap", Base: blndAssetID, Quote: "fiat:USD", From: emisHour(10), Until: emisHour(11),
 	}}}))
 	if !usdIs(u, "0.10", 1, 1, true) {
 		t.Errorf("excluded: usd = %+v, want 0.10 with the excluded hour unpriced, a lower bound", u)
+	}
+	if flags.FillsWithheldReason != v1.PriceWithheldSourceExcluded {
+		t.Errorf("flags = %+v; the walk's withholding must reach the envelope", flags)
+	}
+}
+
+func emisFlags(t *testing.T, raw []byte) v1.Flags {
+	t.Helper()
+	var env struct{ Flags v1.Flags }
+	if err := json.Unmarshal(raw, &env); err != nil {
+		t.Fatal(err)
+	}
+	return env.Flags
+}
+
+const emisDayQuery = "?interval=1d&from=2026-11-01T00:00:00Z&to=2026-11-02T00:00:00Z"
+
+// TestLendingEmissionsHistoryUSD_HoursNeverExceedTheDay: a day whose hours carry more than it (or none of it) values
+// nothing, reads_disagree, rather than serving more USD than its tokens support; a day missing some hours stays a lower
+// bound over the hours it has.
+func TestLendingEmissionsHistoryUSD_HoursNeverExceedTheDay(t *testing.T) {
+	prices := map[time.Time]string{emisHour(0): "1", emisHour(1): "1", emisHour(2): "1"}
+	day := timescale.EmissionClaimBucket{Start: emisT0, Scope: "pool", Claims: 1, Claimers: 1, Amount: mustAmount(t, "10000000")}
+	for _, tc := range []struct {
+		name  string
+		hours []timescale.EmissionClaimBucket
+	}{
+		{"hours past the day", []timescale.EmissionClaimBucket{poolClaim(t, 0, "10000000"), poolClaim(t, 1, "10000000"), poolClaim(t, 2, "10000000")}},
+		{"no hours", nil},
+	} {
+		lr := &usdEmisLending{
+			stubBLNTLendingReader: v2Lending(),
+			daily:                 timescale.LendingEmissionsHistory{Claims: []timescale.EmissionClaimBucket{day}}, hourly: timescale.LendingEmissionsHistory{Claims: tc.hours},
+		}
+		srv, _ := emisUSDServer(t, lr, emisSAC(t, blndAssetID), prices, v1.Options{})
+		got, _ := getEmissionsHistory(t, srv, mkCStrkey(t, 1), emisDayQuery, http.StatusOK)
+		if pc := got.PoolClaims; !usdNull(pc.USD, "reads_disagree") || !usdNull(pc.Points[0].USD, "reads_disagree") {
+			t.Errorf("%s: usd = %+v point %+v, want null reads_disagree", tc.name, pc.USD, pc.Points[0].USD)
+		}
+	}
+}
+
+// TestLendingEmissionsHistoryUSD_UnreadAmounts: a bucket none of whose claim amounts were read is null (amount_unread),
+// never "0.00"; one missing some is valued over the read ones as a lower bound, and so is the stream.
+func TestLendingEmissionsHistoryUSD_UnreadAmounts(t *testing.T) {
+	none := poolClaim(t, 1, "0")
+	none.AmountUnread = 1
+	some := poolClaim(t, 2, "10000000")
+	some.Claims, some.AmountUnread = 2, 1
+	alloc := timescale.EmissionAllocBucket{Start: emisHour(2), Events: 1, BackstopShare: mustAmount(t, "0"), PoolShare: mustAmount(t, "0"), Unread: 1}
+	lr := &usdEmisLending{stubBLNTLendingReader: v2Lending(), hourly: timescale.LendingEmissionsHistory{
+		Claims: []timescale.EmissionClaimBucket{none, some}, Alloc: []timescale.EmissionAllocBucket{alloc},
+	}}
+	srv, _ := emisUSDServer(t, lr, emisSAC(t, blndAssetID), map[time.Time]string{emisHour(1): "1", emisHour(2): "1"}, v1.Options{})
+	got, _ := getEmissionsHistory(t, srv, mkCStrkey(t, 1), emisHistQuery, http.StatusOK)
+	pc := got.PoolClaims
+	if !usdNull(pc.Points[0].USD, "amount_unread") || !usdIs(pc.Points[1].USD, "1.00", 1, 0, true) || !usdIs(pc.USD, "1.00", 1, 0, true) {
+		t.Errorf("points %+v / %+v total %+v, want null amount_unread, then 1.00 and 1.00 lower bounds", pc.Points[0].USD, pc.Points[1].USD, pc.USD)
+	}
+	if a := got.BackstopAlloc.Points[0].USD; a.BackstopEmissionsUSD != nil || a.USDReason == nil || *a.USDReason != "amount_unread" {
+		t.Errorf("alloc point usd = %+v, want null amount_unread", a)
+	}
+}
+
+// TestLendingEmissionsHistoryUSD_ByReserveFromItsOwnHours: each single-reserve line is valued from its own reserve's
+// hours, at each hour's price, not from the pool's.
+func TestLendingEmissionsHistoryUSD_ByReserveFromItsOwnHours(t *testing.T) {
+	single := func(id uint32, start time.Time, amt string) timescale.EmissionClaimBucket {
+		return timescale.EmissionClaimBucket{Start: start, Scope: "single", TokenID: u32(id), Claims: 1, Claimers: 1, Amount: mustAmount(t, amt)}
+	}
+	lr := &usdEmisLending{
+		stubBLNTLendingReader: v2Lending(),
+		daily: timescale.LendingEmissionsHistory{Claims: []timescale.EmissionClaimBucket{
+			{Start: emisT0, Scope: "pool", Claims: 3, Claimers: 2, Amount: mustAmount(t, "40000000")},
+			single(1, emisT0, "30000000"), single(3, emisT0, "10000000"),
+		}},
+		hourly: timescale.LendingEmissionsHistory{Claims: []timescale.EmissionClaimBucket{
+			poolClaim(t, 0, "10000000"), single(1, emisHour(0), "10000000"),
+			poolClaim(t, 5, "30000000"), single(1, emisHour(5), "20000000"), single(3, emisHour(5), "10000000"),
+		}},
+	}
+	srv, _ := emisUSDServer(t, lr, emisSAC(t, blndAssetID), map[time.Time]string{emisHour(0): "1", emisHour(5): "3"}, v1.Options{})
+	got, _ := getEmissionsHistory(t, srv, mkCStrkey(t, 1), emisDayQuery, http.StatusOK)
+	want := map[uint32]string{1: "7.00", 3: "3.00"}
+	for _, l := range got.PoolClaims.ByReserve.Reserves {
+		if l.USD.AmountUSD == nil || *l.USD.AmountUSD != want[l.TokenID] || *l.Points[0].USD.AmountUSD != want[l.TokenID] {
+			t.Errorf("reserve %d usd = %+v, want %s", l.TokenID, l.USD, want[l.TokenID])
+		}
+	}
+	if u := got.PoolClaims.USD; !usdIs(u, "10.00", 2, 0, false) {
+		t.Errorf("pool usd = %+v, want 10.00", u)
+	}
+}
+
+// TestLendingEmissionsHistoryUSD_TotalsTakeTheStreamLowerBound: a stream bounded by an exclusion (here an unverified
+// projection) bounds its USD totals too, for the pool claims and the backstop allocation alike.
+func TestLendingEmissionsHistoryUSD_TotalsTakeTheStreamLowerBound(t *testing.T) {
+	lr := &usdEmisLending{stubBLNTLendingReader: v2Lending(), hourly: timescale.LendingEmissionsHistory{
+		Claims: []timescale.EmissionClaimBucket{poolClaim(t, 1, "10000000")},
+		Alloc:  []timescale.EmissionAllocBucket{{Start: emisHour(1), Events: 1, BackstopShare: mustAmount(t, "10000000"), PoolShare: mustAmount(t, "10000000")}},
+	}}
+	srv, _ := emisUSDServer(t, lr, emisSAC(t, blndAssetID), map[time.Time]string{emisHour(1): "1"}, v1.Options{CompletenessReader: verifiedHistory("other")})
+	got, _ := getEmissionsHistory(t, srv, mkCStrkey(t, 1), emisHistQuery, http.StatusOK)
+	if !got.PoolClaims.LowerBound || !usdIs(got.PoolClaims.USD, "1.00", 1, 0, true) {
+		t.Errorf("pool claims lb %v usd %+v, want 1.00 a lower bound", got.PoolClaims.LowerBound, got.PoolClaims.USD)
+	}
+	if a := got.BackstopAlloc.USD; !got.BackstopAlloc.LowerBound || a == nil || !a.LowerBound || *a.PoolEmissionsUSD != "1.00" {
+		t.Errorf("alloc lb %v usd %+v, want 1.00 a lower bound", got.BackstopAlloc.LowerBound, a)
+	}
+}
+
+// TestLendingEmissionsHistoryUSD_HourlyReadFails: when only the hours of a 1d read fail, the days are still served in
+// tokens; the rows' usd is null (hourly_read_failed), the schedule is still valued, and the response is not cacheable.
+func TestLendingEmissionsHistoryUSD_HourlyReadFails(t *testing.T) {
+	day := timescale.EmissionClaimBucket{Start: emisT0, Scope: "pool", Claims: 1, Claimers: 1, Amount: mustAmount(t, "10000000")}
+	lr := &usdEmisLending{stubBLNTLendingReader: v2Lending(), failHours: true, daily: timescale.LendingEmissionsHistory{
+		Claims: []timescale.EmissionClaimBucket{day},
+		Schedule: []timescale.EmissionScheduleEvent{
+			{TokenID: 1, At: emisHour(-1), EPS: mustAmount(t, "10000000000"), Expiration: mustAmount(t, "1793502000")}, // 03:00
+		},
+	}}
+	srv, _ := emisUSDServer(t, lr, emisSAC(t, blndAssetID), map[time.Time]string{emisHour(0): "1", emisHour(1): "1", emisHour(2): "1"}, v1.Options{})
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/lending/pools/"+mkCStrkey(t, 1)+"/emissions/history"+emisDayQuery, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var env struct {
+		Data v1.LendingEmissionsHistoryView
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	got := env.Data
+	if got.PoolClaims.Totals.Amount != "10000000" || !usdNull(got.PoolClaims.USD, "hourly_read_failed") {
+		t.Errorf("pool claims %+v usd %+v, want tokens served and usd null hourly_read_failed", got.PoolClaims.Totals, got.PoolClaims.USD)
+	}
+	if u := got.Reserves.Streams[0].USD; !usdIs(u, "1.08", 3, 0, false) {
+		t.Errorf("schedule usd = %+v, want 1.08 valued without the hourly read", u)
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store for a degraded response", cc)
+	}
+}
+
+// BenchmarkEmissionsHistoryUSD_MaxWindow serves the widest 1d window with 12 and 40 schedule lines priced every hour.
+func BenchmarkEmissionsHistoryUSD_MaxWindow(b *testing.B) {
+	t := &testing.T{}
+	to := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	from := to.Add(-1998 * 24 * time.Hour)
+	prices := map[time.Time]string{}
+	for h := from; h.Before(to); h = h.Add(time.Hour) {
+		prices[h] = fmt.Sprintf("0.%07d", 4000+h.Hour())
+	}
+	q := "?interval=1d&from=" + from.Format(time.RFC3339) + "&to=" + to.Format(time.RFC3339)
+	for _, n := range []int{12, 40} {
+		var ev []timescale.EmissionScheduleEvent
+		for i := range n {
+			ev = append(ev, timescale.EmissionScheduleEvent{TokenID: uint32(i), At: from.Add(-time.Hour), EPS: mustAmount(t, "10000000000"), Expiration: mustAmount(t, "18446744073709551615")}) //nolint:gosec // i < 40
+		}
+		lr := &usdEmisLending{stubBLNTLendingReader: v2Lending(), daily: timescale.LendingEmissionsHistory{Schedule: ev}}
+		srv, _ := emisUSDServer(t, lr, emisSAC(t, blndAssetID), prices, v1.Options{})
+		b.Run(fmt.Sprintf("lines=%d", n), func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				rec := httptest.NewRecorder()
+				srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/lending/pools/"+mkCStrkey(t, 1)+"/emissions/history"+q, nil))
+				if rec.Code != http.StatusOK {
+					b.Fatalf("status %d", rec.Code)
+				}
+			}
+		})
 	}
 }
 
@@ -308,8 +503,8 @@ func TestLendingEmissionsHistoryUSD_MaxRangeReads(t *testing.T) {
 	if !usdIs(got.PoolClaims.USD, "2.00", 2, 0, false) {
 		t.Errorf("usd = %+v", got.PoolClaims.USD)
 	}
-	if len(lr.qs) != 2 {
-		t.Errorf("history reads = %d, want 2", len(lr.qs))
+	if len(lr.qs) != 1 || !lr.qs[0].Hours {
+		t.Errorf("history reads = %+v, want one, with its hours", lr.qs)
 	}
 	for _, r := range hist.reads {
 		if r.from.Before(first.Add(-6*time.Hour)) || r.to.After(last.Add(time.Hour)) {
