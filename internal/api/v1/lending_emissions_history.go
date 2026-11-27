@@ -297,6 +297,9 @@ func (s *Server) emissionsHistory(ctx context.Context, hr lendingEmissionsHistor
 		token = *view.EmissionToken
 	}
 	_, usdReason := s.emissionTokenIdentity(protocol, token)
+	if st.decimalsUnread && usdReason == "" {
+		usdReason = exclusionPriceReadFailed // the scale is unread, not unknown: decimals_unknown would read as settled
+	}
 	hq := timescale.EmissionHistoryQuery{
 		From: win.from, To: b.pool.end, BackstopTo: b.backstop.end, Daily: q.Daily,
 		Schedule: !isV1, BackstopAlloc: !isV1, BackstopClaim: isBLNT, Hours: q.Daily && usdReason == "",
@@ -315,7 +318,10 @@ func (s *Server) emissionsHistory(ctx context.Context, hr lendingEmissionsHistor
 	s.applyEmissionsVerdicts(ctx, &view, isBLNT, &flags)
 	finishEmissionsHistory(&view)
 	walkFailed, err := s.emissionsHistoryUSD(ctx, &view, h, b, usdReason, hoursFailed, &flags)
-	cut = hoursFailed || walkFailed || b.poolReason == emisHistWriterUnread || b.backstopReason == emisHistWriterUnread
+	if st.decimalsUnread {
+		flags.Degraded = true
+	}
+	cut = hoursFailed || walkFailed || st.decimalsUnread || b.poolReason == emisHistWriterUnread || b.backstopReason == emisHistWriterUnread
 	for _, e := range view.Excluded {
 		cut = cut || e.Reason == emisHistTipUnknown || e.Reason == earningsReasonHistoryVerdictUnread
 	}
@@ -359,6 +365,8 @@ type emisStorage struct {
 	state    clickhouse.LendingEmissionsState
 	token    *string
 	decimals *int
+	// decimalsUnread: the decimals read failed, so decimals_unknown is this read's answer, not the token's.
+	decimalsUnread bool
 }
 
 // emissionsHistoryStorage reads the pool instance for the emission token and reserve list, which name each token id's
@@ -375,7 +383,11 @@ func (s *Server) emissionsHistoryStorage(ctx context.Context, pool string, isBLN
 	out := emisStorage{state: st}
 	if st.EmissionToken != "" {
 		out.token = strRef(st.EmissionToken)
-		if d, known, err := s.lakeTokenDecimals(ctx, st.EmissionToken); known && err == nil {
+		d, known, err := s.lakeTokenDecimals(ctx, st.EmissionToken)
+		switch {
+		case err != nil:
+			out.decimalsUnread = true
+		case known:
 			out.decimals = &d
 		}
 	}

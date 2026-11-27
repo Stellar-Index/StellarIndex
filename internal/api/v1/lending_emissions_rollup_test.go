@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"slices"
 	"strconv"
@@ -621,6 +622,40 @@ func TestLendingEmissionsRollup_OldRevisionCoverageIsReproved(t *testing.T) {
 	}
 	if st.Empty == 0 || st.Empty >= st.Queued {
 		t.Errorf("stats %+v; want the days past the last emission counted empty, not all of them", st)
+	}
+}
+
+// TestLendingEmissionsRollup_DecimalsReadErrorIsNotFinal: a failed decimals read is no answer about the token, so the day
+// is not stored and coverage stays before it, and the endpoint serves that read degraded; a token whose decimals are
+// genuinely unknown is a settled answer, stored and covered.
+func TestLendingEmissionsRollup_DecimalsReadErrorIsNotFinal(t *testing.T) {
+	yesterday := time.Now().UTC().Truncate(24 * time.Hour).Add(-24 * time.Hour)
+	for _, tc := range []struct {
+		name    string
+		dec     *lockstepDecStub
+		stored  bool
+		through time.Time
+	}{
+		{"read error", &lockstepDecStub{err: errors.New("lake read timed out")}, false, emisDay(-1)},
+		{"genuinely unknown", &lockstepDecStub{}, true, yesterday},
+	} {
+		lr, prices := blendV2Rollup(t, v1.Options{})
+		srv := emisRollupServer(t, lr, mkCStrkey(t, 9), prices, v1.Options{})
+		srv.TokenDecimals = tc.dec
+		pool := mkCStrkey(t, 1)
+		store := newMemEmisStore(map[string]time.Time{pool: emisAt(0, 1)})
+		st := rollOnce(t, srv, store)
+		if (len(store.rows) > 0) != tc.stored || !store.covs[pool].ThroughDay.Equal(tc.through) {
+			t.Errorf("%s: stats %+v, %d rows, coverage %+v; want stored=%v, coverage through %s", tc.name, st, len(store.rows),
+				store.covs[pool], tc.stored, tc.through.Format(time.DateOnly))
+		}
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/lending/pools/"+pool+"/emissions/history?interval=1d&from="+
+			emisDay(0).Format(time.RFC3339)+"&to="+emisDay(1).Format(time.RFC3339), nil))
+		// Degraded is never in the body: it is served as no-store, so no cache keeps the failed read's answer.
+		if degraded := strings.Contains(rec.Header().Get("Cache-Control"), "no-store"); rec.Code != http.StatusOK || degraded == tc.stored {
+			t.Errorf("%s: endpoint %d, Cache-Control %q; want degraded=%v", tc.name, rec.Code, rec.Header().Get("Cache-Control"), !tc.stored)
+		}
 	}
 }
 
