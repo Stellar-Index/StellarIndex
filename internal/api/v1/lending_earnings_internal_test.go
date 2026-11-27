@@ -2,8 +2,39 @@ package v1
 
 import (
 	"math/big"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
+
+// TestEarningsNoteBackstopClaimsPerProtocol pins the served note and the spec to what the fold does with a backstop claim:
+// a Blend V2 claim's LP tokens arrive by a same-tx deposit and sit in net_flow; a BLNT claim emits no deposit and sits in accrued.
+func TestEarningsNoteBackstopClaimsPerProtocol(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "openapi", "stellar-index.v1.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := strings.Join(strings.Fields(strings.ReplaceAll(string(raw), "`", "")), " ")
+	for name, text := range map[string]string{"note": lendingEarningsNote, "spec": spec} {
+		for _, want := range []string{
+			"Claimed backstop emissions count in net_flow when a deposit event carries them and in accrued when none does.",
+			"A Blend V2 backstop claim pays backstop LP tokens (not BLND) deposited by a deposit event in its own transaction, " +
+				"so a Blend V2 backstop's accrued excludes claimed emissions;",
+			"a BLNT backstop claim pays backstop LP tokens (not BLNT) with no deposit event, so a BLNT backstop's accrued includes them;",
+			"for a Blend V1 backstop claim both are unverified.",
+		} {
+			if !strings.Contains(text, want) {
+				t.Errorf("%s lacks %q", name, want)
+			}
+		}
+		for _, banned := range []string{"includes emissions claimed into it", "including emissions claimed into it"} {
+			if strings.Contains(text, banned) {
+				t.Errorf("%s still says %q", name, banned)
+			}
+		}
+	}
+}
 
 func bigOf(t *testing.T, s string) *big.Int {
 	t.Helper()

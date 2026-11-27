@@ -150,6 +150,7 @@ Wide-net walk on r1, all 11 Blend contracts within a 539-contract watch list:
 | 9 | `CCCCIQSDILITHMM7PBSLVDT5MISSY7R26MNZXCX4H7J5JQ5FPIYOGYFS` | pool | 1 | `a41fc53d…` | [56,658,268, 57,827,613] |
 | 10 | `CDMAVJPFXPADND3YRL4BSM3AKZWCTFMX27GLLXCML3PD62HEQS5FPVAI` | pool | 0 | `a41fc53d…` (per Phase 1 RPC) | deployed pre-50,457,424; no upgrades observed |
 | 11 | `CDSYOAVXFY7SM5S64IZPPPYB4GVGGLMQVFREPSQQEZVIWXX5R23G4QSU` | factory | 1 | `31328050…` | [56,615,428, 57,827,613] |
+| — | `CDZVHCO7LDUJZSME3PJPJXAKT7F6W5IXSOXTJ2QEK3Y2X2CDUREBUMUY` | pool | — | `a41fc53d…` (lake lineage) | deployed after this walk; present in lake lineage, same hash (emission census, 2026-11-27); not walked or audited here |
 
 "0" ranges: zero `update_current_contract_wasm` events in the window, so the
 contract was deployed *before* ledger 50,457,424 and never upgraded. Phase 1's

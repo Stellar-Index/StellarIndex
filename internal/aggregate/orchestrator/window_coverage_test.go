@@ -26,11 +26,18 @@ var _ TradeSumsStore = (*timescale.Store)(nil)
 type sumsStore struct {
 	raw       []canonical.Trade // stored direction in each trade's Pair
 	watermark time.Time
-	rawReads  []time.Time // from of every TradesInRange call
+	late      map[string]bool // Trade.IDs inserted after their minute was materialised
+	rawReads  []time.Time     // from of every TradesInRange call
+	liveReads [][2]time.Time  // [from, to) of every TradeSums1mLive call
+	liveErr   error           // returned by TradeSums1mLive
+	rereadErr error           // returned by every TradesInRange call after the first
 }
 
 func (s *sumsStore) TradesInRange(_ context.Context, p canonical.Pair, from, to time.Time, limit int) ([]canonical.Trade, error) {
 	s.rawReads = append(s.rawReads, from)
+	if s.rereadErr != nil && len(s.rawReads) > 1 {
+		return nil, s.rereadErr
+	}
 	var out []canonical.Trade
 	for _, t := range s.raw {
 		if t.Timestamp.Before(from) || !t.Timestamp.Before(to) {
@@ -59,13 +66,41 @@ func tradeIsBefore(a, b canonical.Trade) bool {
 	return a.OpIndex < b.OpIndex
 }
 
+// TradeSums1mInRange serves the view as materialised: minutes past the watermark absent, late trades missing from their minute,
+// and the watermark lowered to the earliest late trade's minute, as the store does for a pending invalidation.
 func (s *sumsStore) TradeSums1mInRange(_ context.Context, p canonical.Pair, from, to time.Time) ([]timescale.TradeMinuteSum, time.Time, error) {
+	wm := s.watermark
+	for _, t := range s.raw {
+		if s.late[t.ID()] && !t.Timestamp.Before(from) && t.Timestamp.Before(wm) {
+			wm = t.Timestamp.Truncate(time.Minute)
+		}
+	}
+	end := to
+	if s.watermark.Before(end) {
+		end = s.watermark
+	}
+	return minuteSumsOf(s.raw, s.late, p, from, end), wm, nil
+}
+
+func (s *sumsStore) TradeSums1mLive(_ context.Context, p canonical.Pair, from, to time.Time) ([]timescale.TradeMinuteSum, error) {
+	s.liveReads = append(s.liveReads, [2]time.Time{from, to})
+	if s.liveErr != nil {
+		return nil, s.liveErr
+	}
+	if to.Sub(from) > timescale.TradeSums1mLiveMaxSpan {
+		return nil, fmt.Errorf("live span %v over the cap", to.Sub(from))
+	}
+	return minuteSumsOf(s.raw, nil, p, from, to), nil
+}
+
+// minuteSumsOf is migration 0217's SELECT over trades, minus the skip set, for buckets in [from, to).
+func minuteSumsOf(raw []canonical.Trade, skip map[string]bool, p canonical.Pair, from, to time.Time) []timescale.TradeMinuteSum {
 	idx := map[string]*timescale.TradeMinuteSum{}
 	var keys []string
-	for _, t := range s.raw {
+	for _, t := range raw {
 		b := t.Timestamp.Truncate(time.Minute)
 		forward := t.Pair.Equal(p)
-		if (!forward && !t.Pair.Equal(p.Flip())) || b.Before(from) || !b.Before(to) || !b.Before(s.watermark) {
+		if (!forward && !t.Pair.Equal(p.Flip())) || b.Before(from) || !b.Before(to) || skip[t.ID()] {
 			continue
 		}
 		if t.BaseAmount.Sign() <= 0 || t.QuoteAmount.Sign() <= 0 {
@@ -101,7 +136,7 @@ func (s *sumsStore) TradeSums1mInRange(_ context.Context, p canonical.Pair, from
 		}
 		out = append(out, r)
 	}
-	return out, s.watermark, nil
+	return out
 }
 
 func keyForward(k string) bool { return k[len(k)-4:] == "true" }
@@ -320,8 +355,8 @@ func TestFillFromMinuteSums_BudgetExhaustedEndsCoverage(t *testing.T) {
 	}
 }
 
-// The sums are not used, and the leg stays truncated at its raw read, when the view is not materialised up to the raw part or the
-// window does not start on a minute.
+// The sums are not used, and the leg stays truncated at its raw read with the refusal named, when the unmaterialised tail between
+// the view's watermark and the raw part is longer than the live-read cap, or the window does not start on a minute.
 func TestFillFromMinuteSums_FallsBackToTruncated(t *testing.T) {
 	pair := mkPair(t, "crypto", "XLM", "fiat", "USD")
 	from := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
@@ -329,19 +364,28 @@ func TestFillFromMinuteSums_FallsBackToTruncated(t *testing.T) {
 	for name, tc := range map[string]struct {
 		from      time.Time
 		watermark time.Time
+		reason    string
 	}{
-		"watermark behind the raw part": {from: from, watermark: from.Add(2 * time.Minute)},
-		"window not minute-aligned":     {from: from.Add(30 * time.Second), watermark: to},
+		"tail beyond the live-read cap": {from: from, watermark: from.Add(2 * time.Minute), reason: "beyond the 15m0s cap"},
+		"window not minute-aligned":     {from: from.Add(30 * time.Second), watermark: to, reason: "not minute-aligned"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := &sumsStore{raw: busyWindow(t, pair, from), watermark: tc.watermark}
-			o := coverageOrch(t, s, 1000, 4)
+			o := coverageOrch(t, s, 100, 4) // raw part covers only the last ~6 minutes
+			var logs bytes.Buffer
+			o.logger = slog.New(slog.NewTextHandler(&logs, nil))
 			got, weights, coveredFrom, err := o.fetchTradesDetectTruncation(context.Background(), pair, pair, to.Sub(tc.from), tc.from, to)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if coveredFrom.IsZero() || len(got) != 1000 || weights != nil {
+			if coveredFrom.IsZero() || len(got) != 100 || weights != nil {
 				t.Errorf("coveredFrom=%v rows=%d weights=%d; want the capped raw read, truncated", coveredFrom, len(got), len(weights))
+			}
+			if len(s.liveReads) != 0 {
+				t.Errorf("live tail reads %v; want none past the cap", s.liveReads)
+			}
+			if !strings.Contains(logs.String(), tc.reason) {
+				t.Errorf("truncation log lacks reason %q:\n%s", tc.reason, logs.String())
 			}
 		})
 	}
