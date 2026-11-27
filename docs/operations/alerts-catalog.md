@@ -20,8 +20,8 @@ its first link must be the rule's `runbook_url` page
 
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
-  | `page` | 75 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 341 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `page` | 74 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
+  | `ticket` | 342 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -595,7 +595,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_zfs_pool_low_space` | `min(node_filesystem_avail_bytes{fstype="zfs"})` | < 1.3 TB for 15 min | ticket | [infra](runbooks/infra.md#stellarindex_zfs_pool_low_space) |
 | `stellarindex_zfs_pool_critical_space` | same | < 650 GB for 5 min | page | [infra](runbooks/infra.md#stellarindex_zfs_pool_critical_space) |
 | `stellarindex_zfs_pool_fill_85pct_within_30d` | `predict_linear` of 14 d daily avail troughs | < 15% free in 30 d, 1 h | ticket | [infra](runbooks/infra.md#stellarindex_zfs_pool_fill_85pct_within_30d) |
-| `stellarindex_zfs_pool_fill_90pct_within_7d` | same | < 10 % free in 7 d, 30 min | page | [infra](runbooks/infra.md#stellarindex_zfs_pool_fill_90pct_within_7d) |
+| `stellarindex_zfs_pool_fill_90pct_within_7d` | same | < 10 % free in 7 d, 30 min | ticket | [infra](runbooks/infra.md#stellarindex_zfs_pool_fill_90pct_within_7d) |
 | `stellarindex_nvme_smart_warn` | `increase(nvme_num_err_log_entries_total[1h])` | > 0 for > 5 min | ticket | [infra](runbooks/infra.md#stellarindex_nvme_smart_warn) |
 | `stellarindex_nvme_thermal_throttle` | `nvme_temperature_celsius` | > 70 °C for > 5 min | page | [infra](runbooks/infra.md#stellarindex_nvme_thermal_throttle) |
 | `stellarindex_nvme_health_series_missing` | `nvme_temperature_celsius` / `nvme_num_err_log_entries_total` seen in the last 14 d, now absent per (instance, device) | any, for 30 min | ticket | [infra](runbooks/infra.md#stellarindex_nvme_health_series_missing) |
