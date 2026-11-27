@@ -165,14 +165,12 @@ func (s *Server) handleLendingPoolRevenue(w http.ResponseWriter, r *http.Request
 		return
 	}
 	view := revenueView(pool, protocol, interval, q, rev)
+	scales := make([]reserveScale, len(view.Reserves))
 	for i := range view.Reserves {
-		st := clickhouse.BlendReserveState{Asset: view.Reserves[i].Asset}
-		if dec, known := s.reserveDecimals(ctx, st); known {
-			d := uint32(dec) //nolint:gosec // a token's decimals exponent is small
-			view.Reserves[i].Decimals = &d
-		}
+		scales[i] = s.reserveDecimals(ctx, clickhouse.BlendReserveState{Asset: view.Reserves[i].Asset})
+		view.Reserves[i].Decimals = scales[i].wire()
 	}
-	flags := s.valueRevenue(ctx, &view, rev, s.revenueFlags(ctx, rev))
+	flags := s.valueRevenue(ctx, &view, rev, scales, s.revenueFlags(ctx, rev))
 	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(time.Now().UTC()), Flags: flags})
 }
 

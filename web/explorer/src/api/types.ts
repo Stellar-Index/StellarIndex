@@ -7687,7 +7687,7 @@ export interface components {
             /** @description Some amount is left out: an unpriced hour, or (reserve and pool) a base-unit exclusion. */
             lower_bound: boolean;
             /**
-             * @description Why nothing is valued. `amounts_excluded`: nothing was summed in base units (see `excluded`). `no_price_within_bound` (bucket, reserve) and `price_missing` (pool): no hour carrying an amount had a price. Otherwise the price series' refusal: `unpriced` (no USD market), `decimals_unknown`, `price_scale_mismatch`, `withheld` (a scam-flagged issuer, or a thin market: display-only prices value nothing here, as on `/history`), `price_read_failed`.
+             * @description Why nothing is valued. `amounts_excluded`: nothing was summed in base units (see `excluded`). `no_price_within_bound` (bucket, reserve) and `price_missing` (pool): no hour carrying an amount had a price. Otherwise the price series' refusal: `unpriced` (no USD market), `decimals_unknown` (the token's decimals were read and none is declared), `price_scale_mismatch`, `withheld` (a scam-flagged issuer, or a thin market: display-only prices value nothing here, as on `/history`), `price_read_failed` (a price, issuer or decimals read failed: retry; the response is not cached).
              * @enum {string|null}
              */
             usd_reason: "amounts_excluded" | "no_price_within_bound" | "price_missing" | "unpriced" | "decimals_unknown" | "price_scale_mismatch" | "withheld" | "price_read_failed" | null;
@@ -19638,7 +19638,7 @@ export interface operations {
                                 /** @description True when the price behind `tokens_usd` is past its freshness window. */
                                 price_stale?: boolean;
                                 /**
-                                 * @description Why `tokens_usd` is null. `lp_share_unvalued`: the token is a Comet LP share (Blend's BLND:USDC backstop token, or a BLNT `BlntUsdc`/`BlntXlm` tier's), which has no valuation here. `token_unknown`: the tiers summed in this token name no plain-token asset kind (`Usdc` or `Xlm`), so it is withheld. `withheld`: a pricing gate (scam issuer, thin market) refused the token's price. `price_read_failed`: a read on the token's price chain failed, so the response is also degraded.
+                                 * @description Why `tokens_usd` is null. `lp_share_unvalued`: the token is a Comet LP share (Blend's BLND:USDC backstop token, or a BLNT `BlntUsdc`/`BlntXlm` tier's), which has no valuation here. `token_unknown`: the tiers summed in this token name no plain-token asset kind (`Usdc` or `Xlm`), so it is withheld. `withheld`: a pricing gate (scam issuer, thin market) refused the token's price. `price_read_failed`: a price, issuer or decimals read failed, so the response is also degraded.
                                  * @enum {string|null}
                                  */
                                 usd_reason?: "lp_share_unvalued" | "unpriced" | "withheld" | "decimals_unknown" | "price_scale_mismatch" | "balance_unavailable" | "token_unknown" | "negative_amount" | "price_read_failed" | null;
@@ -20297,7 +20297,7 @@ export interface operations {
                                 /** @description True when `price_usd` is the newest price but past its freshness window. */
                                 price_stale?: boolean;
                                 /**
-                                 * @description Why `tokens_usd` is null. `lp_share_unvalued`: the tier holds Comet LP shares (a Blend backstop's BLND:USDC, or a BLNT `BlntUsdc`/`BlntXlm` tier), which have no valuation here. `token_unknown`: the tier has a balance but its token is unread, or its `backstop_asset` is not a plain token (`Usdc` or `Xlm`) this route values, so it is withheld. `withheld`: a pricing gate (scam issuer, thin market) refused the tier token's price. `price_read_failed`: a read on the tier token's price chain failed, so the response is also degraded.
+                                 * @description Why `tokens_usd` is null. `lp_share_unvalued`: the tier holds Comet LP shares (a Blend backstop's BLND:USDC, or a BLNT `BlntUsdc`/`BlntXlm` tier), which have no valuation here. `token_unknown`: the tier has a balance but its token is unread, or its `backstop_asset` is not a plain token (`Usdc` or `Xlm`) this route values, so it is withheld. `withheld`: a pricing gate (scam issuer, thin market) refused the tier token's price. `price_read_failed`: a price, issuer or decimals read for the tier token failed, so the response is also degraded.
                                  * @enum {string|null}
                                  */
                                 usd_reason?: "lp_share_unvalued" | "unpriced" | "withheld" | "decimals_unknown" | "price_scale_mismatch" | "balance_unavailable" | "token_unknown" | "negative_amount" | "price_read_failed" | null;

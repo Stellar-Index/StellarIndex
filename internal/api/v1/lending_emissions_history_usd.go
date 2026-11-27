@@ -355,11 +355,11 @@ func (s *Server) emissionsHistoryUSD(ctx context.Context, v *LendingEmissionsHis
 	in := emisUSDInputs(v, h, hourly, reason != "")
 	u := reserveUSDSeries{reason: reason}
 	if first, last, ok := in.span(b.pool); ok && reason == "" {
-		dec, known := 0, v.EmissionTokenDecimals != nil
-		if known {
-			dec = *v.EmissionTokenDecimals
+		sc := reserveScale{known: v.EmissionTokenDecimals != nil}
+		if sc.known {
+			sc.dec = *v.EmissionTokenDecimals
 		}
-		u = s.reserveUSDWalk(ctx, *v.EmissionToken, dec, known, clickhouse.LendingHistoryQuery{From: first, To: last}, 0).series
+		u = s.reserveUSDWalk(ctx, *v.EmissionToken, sc, clickhouse.LendingHistoryQuery{From: first, To: last}, 0).series
 		*flags = u.usdFlags(*flags)
 	}
 	rowSeries := u

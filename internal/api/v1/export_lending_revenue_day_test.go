@@ -38,23 +38,15 @@ func (s *Server) RevenueDayForTest(ctx context.Context, asset string, day time.T
 // RevenueWindowForTest values rev as GET /revenue does (interval 1d) and returns each reserve's exact totals.
 func (s *Server) RevenueWindowForTest(ctx context.Context, pool string, q clickhouse.LendingHistoryQuery, rev clickhouse.LendingRevenue) []RevenueExactForTest {
 	view := revenueView(pool, "", "1d", q, rev)
-	for i := range view.Reserves {
-		if dec, known := s.reserveDecimals(ctx, clickhouse.BlendReserveState{Asset: view.Reserves[i].Asset}); known {
-			d := uint32(dec) //nolint:gosec // a token's decimals exponent is small
-			view.Reserves[i].Decimals = &d
-		}
-	}
 	series := make([]reserveUSDSeries, len(view.Reserves))
 	for i, rv := range view.Reserves {
+		sc := s.reserveDecimals(ctx, clickhouse.BlendReserveState{Asset: rv.Asset})
+		view.Reserves[i].Decimals = sc.wire()
 		first, last, has := revenueValuedSpan(rev.Reserves[i])
 		if rv.Totals == nil || !has {
 			continue
 		}
-		dec := 0
-		if rv.Decimals != nil {
-			dec = int(*rv.Decimals)
-		}
-		series[i] = s.reserveUSDSeriesFor(ctx, rv.Asset, dec, rv.Decimals != nil, clickhouse.LendingHistoryQuery{From: first, To: last})
+		series[i] = s.reserveUSDSeriesFor(ctx, rv.Asset, sc, clickhouse.LendingHistoryQuery{From: first, To: last})
 	}
 	_, reserves := valueRevenueView(&view, rev, series)
 	out := make([]RevenueExactForTest, len(reserves))

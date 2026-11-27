@@ -660,16 +660,17 @@ func (s *Server) writeLendingReservesTimeout(w http.ResponseWriter, r *http.Requ
 // contribution (nil when unpriced) for the pool TVL sum, and whether a served USD figure rests on a stale price.
 func (s *Server) buildReserveView(ctx context.Context, st clickhouse.BlendReserveState) (ReserveView, *big.Rat, bool) {
 	rv := reserveStateView(st)
-	dec, decKnown := s.reserveDecimals(ctx, st)
-	if decKnown {
-		d := uint32(dec)
-		rv.Decimals = &d
-	}
-	if !decKnown {
+	sc := s.reserveDecimals(ctx, st)
+	rv.Decimals = sc.wire()
+	if !sc.known {
 		// Without established decimals the USD figures, and the pool TVL,
 		// would be wrong by a power of ten; withhold the valuation instead.
+		if sc.unread {
+			rv.usdExclusion = exclusionPriceReadFailed
+		}
 		return rv, nil, false
 	}
+	dec := sc.dec
 	rp := s.reservePriceUSD(ctx, st.Asset)
 	if rp.price == "" {
 		rv.usdExclusion = rp.exclusion()
@@ -721,20 +722,34 @@ func reserveStateView(st clickhouse.BlendReserveState) ReserveView {
 	return rv
 }
 
+// reserveScale is a reserve token's decimals: known, undeclared (a read found none: a settled answer), or unread (the
+// read failed: retry, never serve or store it as undeclared).
+type reserveScale struct {
+	dec    int
+	known  bool
+	unread bool
+}
+
+// wire is the scale as a response's decimals field, nil unless known.
+func (sc reserveScale) wire() *uint32 {
+	if !sc.known {
+		return nil
+	}
+	d := uint32(sc.dec) //nolint:gosec // a token's decimals exponent is small
+	return &d
+}
+
 // reserveDecimals returns the reserve token's real decimal exponent: the pool's reserve config when captured, else 7 for a
-// known SAC, else the token contract's own decimals() from the lake. ok=false when none is available or the lake read failed.
-func (s *Server) reserveDecimals(ctx context.Context, st clickhouse.BlendReserveState) (int, bool) {
+// known SAC, else the token contract's own decimals() from the lake.
+func (s *Server) reserveDecimals(ctx context.Context, st clickhouse.BlendReserveState) reserveScale {
 	if st.DecimalsFound {
-		return int(st.Decimals), true
+		return reserveScale{dec: int(st.Decimals), known: true}
 	}
 	if _, ok := s.resolveSACAsset(st.Asset); ok {
-		return defaultTokenDecimals, true // decimals-7: known SAC, fixed by the protocol
+		return reserveScale{dec: defaultTokenDecimals, known: true} // decimals-7: known SAC, fixed by the protocol
 	}
 	d, known, err := s.lakeTokenDecimals(ctx, st.Asset)
-	if err != nil || !known {
-		return 0, false
-	}
-	return d, true
+	return reserveScale{dec: d, known: known && err == nil, unread: err != nil}
 }
 
 // pubnetPassphrase is the mainnet passphrase; the verified-currency catalogue is pubnet-only, so SAC contract ids are computed

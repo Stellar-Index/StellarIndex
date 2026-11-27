@@ -27,10 +27,14 @@ const (
 // tokenUSD values amount base units of token at its current price exactly as buildReserveView values a reserve: the reserve
 // decimals and price path, refusing a price normalised on a different scale. reason is set when usd is nil.
 func (s *Server) tokenUSD(ctx context.Context, token string, amount *big.Int) (usd *big.Rat, price string, stale bool, reason string) {
-	dec, ok := s.reserveDecimals(ctx, clickhouse.BlendReserveState{Asset: token})
-	if !ok {
+	sc := s.reserveDecimals(ctx, clickhouse.BlendReserveState{Asset: token})
+	switch {
+	case sc.unread:
+		return nil, "", false, backstopUSDPriceReadFailed
+	case !sc.known:
 		return nil, "", false, backstopUSDDecimals
 	}
+	dec := sc.dec
 	rp := s.reservePriceUSD(ctx, token)
 	if rp.price == "" {
 		switch {
