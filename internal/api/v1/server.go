@@ -594,6 +594,7 @@ type Options struct {
 	// Cursors, when non-nil, backs GET /v1/diagnostics/cursors, the operator diagnostic behind
 	// the explorer /diagnostics page. Nil returns 503.
 	Cursors CursorsReader
+	LendingBadDebtOptions
 
 	// CoverageReader, when non-nil, backs the shadow data-derived density on
 	// /v1/diagnostics/ingestion from source_coverage_snapshots. Nil leaves DensityPctV2 /

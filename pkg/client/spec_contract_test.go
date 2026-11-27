@@ -183,6 +183,7 @@ var uncoveredOperations = map[string]string{
 	"GET /lending/pools/{pool}/backstop/history":         "lending drill-down — explorer surface",
 	"GET /lending/pools/{pool}/history":                  "lending drill-down — explorer surface",
 	"GET /lending/pools/{pool}/revenue":                  "lending drill-down — explorer surface",
+	"GET /lending/pools/{pool}/bad-debt":                 "lending drill-down — explorer surface",
 	"GET /lending/pools/{pool}/emissions":                "lending drill-down — explorer surface",
 	"GET /lending/accounts/{account}/earnings":           "lending drill-down — explorer surface",
 	"GET /lending/rates":                                 "lending rate comparison — explorer surface",
