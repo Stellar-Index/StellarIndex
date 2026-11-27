@@ -253,6 +253,13 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	assertColumnType(t, db, ctx, "lending_revenue_usd_daily", "price_basis_hours", "jsonb")
 	assertColumnType(t, db, ctx, "lending_revenue_usd_coverage", "redo_from_day", "date")
 
+	// 0240 — lending_emissions_usd_daily: a plain table of exact, unscaled
+	// NUMERIC tokens and USD; lending_emissions_usd_coverage beside it.
+	assertColumnType(t, db, ctx, "lending_emissions_usd_daily", "amount", "numeric")
+	assertColumnType(t, db, ctx, "lending_emissions_usd_daily", "amount_usd", "numeric")
+	assertColumnType(t, db, ctx, "lending_emissions_usd_daily", "hours_valued", "integer")
+	assertColumnType(t, db, ctx, "lending_emissions_usd_coverage", "unavailable", "jsonb")
+
 	// 0210 — spectra_events: hypertable, compression, no retention, bigint
 	// generation; spectra_markets is a plain table.
 	assertHypertableExists(t, db, ctx, "spectra_events")

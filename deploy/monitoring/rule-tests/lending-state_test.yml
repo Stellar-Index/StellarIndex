@@ -336,6 +336,72 @@ tests:
                 lending_revenue_usd_daily stops advancing and the
                 /v1/lending/protocols revenue windows fall behind as lower bounds.
 
+  - interval: 1m
+    name: a lending emissions rollup that never succeeded since it started fires
+    input_series:
+      - series: 'stellarindex_lending_emissions_rollup_started_unix{job="stellarindex-api",instance="api-a:8080"}'
+        values: '600x60'
+      - series: 'stellarindex_lending_emissions_rollup_last_success_unix{job="stellarindex-api",instance="api-a:8080"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 44m
+        alertname: stellarindex_lending_emissions_rollup_stalled
+        exp_alerts: []
+      - eval_time: 47m
+        alertname: stellarindex_lending_emissions_rollup_stalled
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#lending-emissions-rollup-stalled
+              summary: "lending emissions rollup has not finished a cycle in over 30 minutes"
+              description: |
+                No API instance has finished a lending emissions rollup cycle
+                holding its lock in over 30 minutes since its last success or
+                start. lending_emissions_usd_daily stops advancing.
+
+  - interval: 1m
+    name: a lending emissions rollup that keeps succeeding, or is disabled, stays quiet
+    input_series:
+      - series: 'stellarindex_lending_emissions_rollup_started_unix{job="stellarindex-api",instance="api-a:8080"}'
+        values: '1x150'
+      - series: 'stellarindex_lending_emissions_rollup_last_success_unix{job="stellarindex-api",instance="api-a:8080"}'
+        values: '0+60x150'
+      - series: 'stellarindex_lending_emissions_rollup_started_unix{job="stellarindex-api",instance="api-b:8080"}'
+        values: '0x150'
+      - series: 'stellarindex_lending_emissions_rollup_last_success_unix{job="stellarindex-api",instance="api-b:8080"}'
+        values: '0x150'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_lending_emissions_rollup_stalled
+        exp_alerts: []
+
+  - interval: 1m
+    name: a lending emissions sweep mismatch tickets
+    input_series:
+      - series: 'stellarindex_lending_emissions_rollup_sweep_mismatches_total{job="stellarindex-api",instance="api-a:8080"}'
+        values: '0x30 1x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_lending_emissions_rollup_sweep_mismatch
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: stellarindex_lending_emissions_rollup_sweep_mismatch
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#lending-emissions-rollup-sweep-mismatch
+              summary: "lending emissions rollup's sweep found stored USD that a fresh valuation does not reproduce"
+              description: |
+                The emissions rollup's daily sweep found stored days in the last
+                day whose same tokens a fresh valuation priced differently with
+                nothing to explain it. Each was rewritten.
+
   # api-a holds the lock and succeeds every minute; api-b never holds it and never succeeds. max() keeps it quiet.
   - interval: 1m
     name: a replica that never holds the lending revenue rollup lock does not fire

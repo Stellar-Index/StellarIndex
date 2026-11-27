@@ -921,6 +921,15 @@ enabled              = true
 enabled              = false
 
 # ──────────────────────────────────────────────────────────────────
+# Lending emissions USD rollup (migration 0240): stores what
+# /emissions/history serves at 1d, per pool, UTC day and stream line,
+# into lending_emissions_usd_daily, in the API binary. One writer under
+# an advisory lock. Off by default.
+# ──────────────────────────────────────────────────────────────────
+[lending_emissions_rollup]
+enabled              = false
+
+# ──────────────────────────────────────────────────────────────────
 # HashDB — ADR-0016 drift detector. The indexer's live LCM read loop
 # appends sha256(LCM) per ledger; a periodic sweep re-reads a recent
 # window from the same bucket and compares, catching upstream

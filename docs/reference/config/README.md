@@ -314,6 +314,12 @@ the `env:` column.
 | --- | ---- | ------- | ------------ | ----------- |
 | `lending_revenue_rollup.enabled` | `bool` | `false` | — | Start the lending revenue USD rollup in the API binary: it values each pool reserve's interest per UTC day into lending_revenue_usd_daily, one writer under an advisory lock. Off by default. The archival-node ansible role renders it from the stellarindex_lending_revenue_rollup_enabled inventory variable, itself default false. To enable: apply migration 0239, deploy, set the variable; the self-fill takes about 5.5 h, and until it is done /v1/lending/protocols' revenue windows are lower bounds naming the days not yet valued. The stellarindex_lending_revenue_rollup_stalled and _sweep_mismatch alerts cover it. |
 
+### `[lending_emissions_rollup]`
+
+| Key | Type | Default | Env override | Description |
+| --- | ---- | ------- | ------------ | ----------- |
+| `lending_emissions_rollup.enabled` | `bool` | `false` | — | Start the lending emissions USD rollup in the API binary: it stores what /v1/lending/pools/{pool}/emissions/history serves at 1d, per pool, UTC day and stream line, into lending_emissions_usd_daily, one writer under an advisory lock. Off by default. The archival-node ansible role renders it from the stellarindex_lending_emissions_rollup_enabled inventory variable, itself default false. To enable: apply migration 0240, deploy, set the variable; the table fills itself from the emission event tables, no replay needed. The stellarindex_lending_emissions_rollup_stalled and _sweep_mismatch alerts cover it. |
+
 ### `[signup_reaper]`
 
 | Key | Type | Default | Env override | Description |

@@ -329,6 +329,21 @@ Limit: each restart resets `started_unix`, so an API that restarts more often th
 1. Find the days in the API log: `lending revenue rollup: sweep mismatch, rewriting` names the pool, asset and day.
 2. Compare `/v1/lending/pools/{pool}/revenue?interval=1d` over that day with the stored row. A price bucket that arrived late, or a source exclusion applied without a change record, explains a difference; a valuer change without a `lendingRevenueValuationRev` bump is a bug: bump it so every row is re-valued.
 
+## Lending emissions rollup stalled
+
+`stellarindex_lending_emissions_rollup_stalled` is the revenue rollup's stall rule over `stellarindex_lending_emissions_rollup_started_unix` and `_last_success_unix`: the worker is enabled somewhere and no instance has finished a cycle holding its lock for over 30 minutes since its last success or start.
+
+1. Read the API log for `lending emissions rollup cycle failed` (a Postgres or lake read failed, or the 8-minute cycle budget ran out) and `lending emissions rollup: lock release`.
+2. Check the advisory lock holder as for the revenue rollup above.
+3. Each pool-day is one `/emissions/history?interval=1d` read; a cycle that runs out of budget every time is that read slowing. The trailing days and the sweep still advance once it recovers. The revenue rollup's restart limit applies here too.
+
+## Lending emissions rollup sweep mismatch
+
+`stellarindex_lending_emissions_rollup_sweep_mismatch` fires when `stellarindex_lending_emissions_rollup_sweep_mismatches_total` rose within the last day: the sweep re-valued a stored day whose lines carry the same tokens at the same valuation revision, no verdict or identity refusal on either side, and the USD differed. The rows were rewritten.
+
+1. Find the days in the API log: `lending emissions rollup: sweep mismatch, rewriting` names the pool and day.
+2. Compare `/v1/lending/pools/{pool}/emissions/history?interval=1d` for that day with the stored rows. A BLND or BLNT price bucket that arrived after the 3-day trailing re-read explains it; a valuer change without a `lendingEmissionsValuationRev` bump is a bug: bump it so every row is re-valued.
+
 ## stellarindex_catchup_lane_failed
 
 The catch-up lanes (`si-catchup-a`, `si-catchup-b`) run the steps in `/var/lib/stellarindex/catchup/<lane>.queue` in order. A step that exits 75 defers and retries; any other failure writes `<lane>.failed` and the lane sleeps until the file is gone. `catchup-lanes.timer` publishes the lane state every 5 min.

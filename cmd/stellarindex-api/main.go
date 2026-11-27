@@ -1237,6 +1237,15 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			rollup.Run(rootCtx)
 		}()
 	}
+	if cfg.LendingEmissionsRollup.Enabled {
+		rollup := apiSrv.NewLendingEmissionsRollup(store, logger.With("component", "lending-emissions-rollup"))
+		bgWG.Add(1)
+		go func() {
+			defer bgWG.Done()
+			defer recoverBackgroundWorker(logger, "lending-emissions-rollup")
+			rollup.Run(rootCtx)
+		}()
+	}
 
 	httpSrv := &http.Server{
 		Addr:              cfg.API.ListenAddr,
