@@ -8,43 +8,55 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// tradesInMinutesQuery joins each stored direction to the minute list, so each arm reads trades_pair_ts_idx once per minute; the outer
-// [$4, $5) span only lets the planner exclude chunks.
-const tradesInMinutesQuery = `
-        WITH m(b) AS (SELECT unnest($3::timestamptz[]))
-        (SELECT source, ledger, tx_hash, op_index, ts,
-                base_asset, quote_asset,
-                base_amount, quote_amount,
-                COALESCE(maker, '')      AS maker,
-                COALESCE(taker, '')      AS taker,
-                COALESCE(routed_via, '') AS routed_via,
-                COALESCE(usd_volume >= $8::numeric AND base_amount > 0 AND quote_amount > 0, false) AS clears_floor
-           FROM trades JOIN m ON ts >= m.b AND ts < m.b + INTERVAL '1 minute'
-          WHERE base_asset  = $1
-            AND quote_asset = $2
-            AND ts         >= $4
-            AND ts          < $5
-            AND NOT (source = ANY(string_to_array($7, ',')))
+// TradesInMinutesQuery is the SQL of [Store.TradesInMinutes]; exported for the plan-shape integration test. Each direction is driven
+// from the minute list: one trades_pair_ts_idx range probe per minute, its own ORDER BY … LIMIT keeping the planner from flattening
+// the lateral into a join over the whole span (each minute's newest $6 hold the overall newest $6). The constant [$4, $5) bounds let
+// Timescale exclude chunks.
+const TradesInMinutesQuery = `
+        WITH m(b) AS (SELECT DISTINCT unnest($3::timestamptz[]))
+        (SELECT t.* FROM m CROSS JOIN LATERAL (
+            SELECT source, ledger, tx_hash, op_index, ts,
+                   base_asset, quote_asset,
+                   base_amount, quote_amount,
+                   COALESCE(maker, '')      AS maker,
+                   COALESCE(taker, '')      AS taker,
+                   COALESCE(routed_via, '') AS routed_via,
+                   COALESCE(usd_volume >= $8::numeric AND base_amount > 0 AND quote_amount > 0, false) AS clears_floor
+              FROM trades
+             WHERE base_asset  = $1::text
+               AND quote_asset = $2::text
+               AND ts         >= m.b
+               AND ts          < m.b + INTERVAL '1 minute'
+               AND ts         >= $4::timestamptz
+               AND ts          < $5::timestamptz
+               AND NOT (source = ANY(string_to_array($7::text, ',')))
+             ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
+             LIMIT $6::bigint) AS t
           ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
-          LIMIT $6)
+          LIMIT $6::bigint)
         UNION ALL
-        (SELECT source, ledger, tx_hash, op_index, ts,
-                base_asset, quote_asset,
-                base_amount, quote_amount,
-                COALESCE(maker, '')      AS maker,
-                COALESCE(taker, '')      AS taker,
-                COALESCE(routed_via, '') AS routed_via,
-                COALESCE(usd_volume >= $8::numeric AND base_amount > 0 AND quote_amount > 0, false) AS clears_floor
-           FROM trades JOIN m ON ts >= m.b AND ts < m.b + INTERVAL '1 minute'
-          WHERE base_asset  = $2
-            AND quote_asset = $1
-            AND ts         >= $4
-            AND ts          < $5
-            AND NOT (source = ANY(string_to_array($7, ',')))
+        (SELECT t.* FROM m CROSS JOIN LATERAL (
+            SELECT source, ledger, tx_hash, op_index, ts,
+                   base_asset, quote_asset,
+                   base_amount, quote_amount,
+                   COALESCE(maker, '')      AS maker,
+                   COALESCE(taker, '')      AS taker,
+                   COALESCE(routed_via, '') AS routed_via,
+                   COALESCE(usd_volume >= $8::numeric AND base_amount > 0 AND quote_amount > 0, false) AS clears_floor
+              FROM trades
+             WHERE base_asset  = $2::text
+               AND quote_asset = $1::text
+               AND ts         >= m.b
+               AND ts          < m.b + INTERVAL '1 minute'
+               AND ts         >= $4::timestamptz
+               AND ts          < $5::timestamptz
+               AND NOT (source = ANY(string_to_array($7::text, ',')))
+             ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
+             LIMIT $6::bigint) AS t
           ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
-          LIMIT $6)
+          LIMIT $6::bigint)
         ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
-        LIMIT $6
+        LIMIT $6::bigint
     `
 
 // TradesInMinutes is [Store.TradesInRange] over the given whole minutes only, in one query: the newest `limit` rows whose ts falls
@@ -74,7 +86,7 @@ func (s *Store) TradesInMinutes(ctx context.Context, p canonical.Pair, minutes [
 			hi = m.UTC()
 		}
 	}
-	rows, err := s.db.QueryContext(ctx, tradesInMinutesQuery,
+	rows, err := s.db.QueryContext(ctx, TradesInMinutesQuery,
 		p.Base.String(), p.Quote.String(), ms, lo, hi.Add(time.Minute), limit, nonVWAPSourcesArg(), bridgeLegMinUSDVolume)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: TradesInMinutes: %w", err)

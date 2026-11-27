@@ -133,7 +133,7 @@ func (o *Orchestrator) fillFromMinuteSums(
 		trades = append(trades, t)
 	}
 	for i := range extra {
-		if !extra[i].Timestamp.Before(cut) {
+		if !extra[i].Timestamp.Before(cut) { // safety net: resolveWideMinutes returns only minutes at or after cut
 			trades = append(trades, extra[i])
 		}
 	}
@@ -242,6 +242,9 @@ func (o *Orchestrator) markWideMinutes(rows []*minuteRow) ([]time.Time, map[time
 func readWideMinutes(
 	ctx context.Context, ss TradeSumsStore, fetch canonical.Pair, buckets []time.Time, counts map[time.Time]int64, limit int,
 ) (int, []canonical.Trade, error) {
+	if limit <= 0 {
+		return 0, nil, nil
+	}
 	n, sum := 1, counts[buckets[0]]
 	for n < len(buckets) && sum+counts[buckets[n]] < int64(limit) {
 		sum += counts[buckets[n]]

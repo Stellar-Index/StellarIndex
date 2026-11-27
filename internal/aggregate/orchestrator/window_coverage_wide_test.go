@@ -192,6 +192,17 @@ func TestFillFromMinuteSums_LateInsertBetweenTicks(t *testing.T) {
 	}
 }
 
+// A non-positive row cap resolves nothing and reads nothing, rather than indexing an empty read.
+func TestReadWideMinutes_NonPositiveLimitResolvesNothing(t *testing.T) {
+	pair := mkPair(t, "crypto", "XLM", "fiat", "USD")
+	m := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	s := &sumsStore{}
+	k, rows, err := readWideMinutes(context.Background(), s, pair, []time.Time{m}, map[time.Time]int64{m: 3}, 0)
+	if k != 0 || rows != nil || err != nil || len(s.rawReads) != 0 {
+		t.Errorf("k=%d rows=%d err=%v reads=%d; want nothing resolved and no read", k, len(rows), err, len(s.rawReads))
+	}
+}
+
 // Only a fill ending at an unresolved wide minute counts as one; unusable minute sums do not.
 func TestFillFromMinuteSums_WideUnresolvedCounterIsDistinct(t *testing.T) {
 	pair := mkPair(t, "crypto", "ETH", "fiat", "USD")
