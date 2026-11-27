@@ -83,13 +83,22 @@ tail_from() {  # tail_from <first-index> <last-index>, 64k partitions from 49984
   done
 }
 case "$2" in
+  stub/galexie-live/tmp/) # stray lowercase directory holding a low-numbered object
+    echo "[2026-09-05 10:00:00 UTC] 1.2KiB STANDARD FFFFFFFF--2.xdr.zst"
+    exit 0 ;;
   stub/galexie-live/FFFFFFFF--0-63999/) # oldest live partition: newest object first
+    [ -n "${LIVE_OLDEST_LS_FAIL:-}" ] && { echo "mc: <ERROR> Access Denied." >&2; exit 1; }
     echo "[2026-09-05 10:00:00 UTC] 1.2KiB STANDARD FFFFFFFE--9.xdr.zst"
-    [ -n "${LIVE_FIRST:-}" ] && echo "[2026-09-05 10:00:00 UTC] 1.2KiB STANDARD FFFFFFFF--${LIVE_FIRST}.xdr.zst"
+    if [ -n "${LIVE_BAD_OLDEST:-}" ]; then
+      echo "[2026-09-05 10:00:00 UTC] 1.2KiB STANDARD notes.txt"
+    else
+      [ -n "${LIVE_FIRST:-}" ] && echo "[2026-09-05 10:00:00 UTC] 1.2KiB STANDARD FFFFFFFF--${LIVE_FIRST}.xdr.zst"
+    fi
     exit 0 ;;
   stub/galexie-live/)
     [ "${LIVE_MODE:-ok}" = dead ] && { echo "mc: <ERROR> Access Denied." >&2; exit 1; }
     [ -n "${LIVE_FIRST:-}" ] && echo "[2026-09-05 10:00:00 UTC]     0B FFFFFFFF--0-63999/"
+    [ -n "${LIVE_STRAY:-}" ] && echo "[2026-09-05 10:00:00 UTC]     0B tmp/"
     exit 0 ;;
 esac
 case "${MODE:-full}" in
@@ -241,13 +250,21 @@ expect galexie_archive_unexpected_gaps 0 "empty by design: no gap"
 expect galexie_archive_expected_empty 1 "empty by design: flagged"
 expect galexie_archive_scan_ok 1 "empty by design: successful read"
 expect galexie_archive_partition_count 0 "empty by design: zero partitions"
-LIVE_FIRST=64 run empty
-expect galexie_archive_unexpected_gaps 0 "empty, live first at the bound: healthy"
+LIVE_FIRST=0 run empty
+expect galexie_archive_unexpected_gaps 0 "empty, live first file starts at 0 (--0-63): healthy"
 
 # The same empty archive still fires in every other state.
-LIVE_FIRST=65 run empty
-expect galexie_archive_unexpected_gaps 1 "empty archive, live starts above the bound still fires"
-expect galexie_archive_expected_empty 0 "empty archive, live above bound: not flagged"
+LIVE_FIRST=3 run empty
+expect galexie_archive_unexpected_gaps 1 "empty archive, live starts at 3 (ledger 2 missing) still fires"
+expect galexie_archive_expected_empty 0 "empty archive, live starts at 3: not flagged"
+LIVE_FIRST=64 run empty
+expect galexie_archive_unexpected_gaps 1 "empty archive, live starts at 64 (ledgers 2-63 missing) still fires"
+LIVE_BAD_OLDEST=1 LIVE_FIRST=2 run empty
+expect galexie_archive_unexpected_gaps 1 "empty archive, oldest live object name unparseable still fires"
+LIVE_OLDEST_LS_FAIL=1 LIVE_FIRST=2 run empty
+expect galexie_archive_unexpected_gaps 1 "empty archive, oldest live partition listing fails: still fires"
+LIVE_STRAY=1 LIVE_FIRST=150000 run empty
+expect galexie_archive_unexpected_gaps 1 "empty archive, stray live directory is not used for the start"
 LIVE_FIRST=4000000 run empty
 expect galexie_archive_unexpected_gaps 1 "empty archive, live starts high (range unfilled) still fires"
 LIVE_MODE=dead LIVE_FIRST=2 run empty

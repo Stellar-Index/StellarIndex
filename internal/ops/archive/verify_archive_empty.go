@@ -8,14 +8,31 @@ import (
 	"github.com/stellar/go-stellar-sdk/support/datastore"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/ledgerstream"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
 // emptyArchiveMaxLiveFirst is the highest first-live ledger for which an empty archive is
-// correct: the archive's expected range [1, first-live − 1] is then below one file, so
-// there is nothing to write or verify. Mirrors EMPTY_ARCHIVE_MAX_LIVE_FIRST in
-// galexie-archive-tip-lag.sh and galexie-archive-contiguity.sh.
-const emptyArchiveMaxLiveFirst = 64
+// correct: the archive's expected range is [1, first-live - 1], empty only when live holds
+// ledger 2. Galexie names the first file after its start boundary (`--0-63` for 64-ledger
+// files, `--2` for 1-ledger files) and FindOldestLedgerSequence searches from 2, so a
+// healthy fresh chain reads 2; any higher value leaves ledgers 2.. in neither bucket.
+// Mirrors EMPTY_ARCHIVE_MAX_LIVE_FIRST in galexie-archive-tip-lag.sh and
+// galexie-archive-contiguity.sh.
+const emptyArchiveMaxLiveFirst = 2
+
+// storeOpener opens the datastore a probe reads; injectable so tests need no S3.
+type storeOpener func(ctx context.Context, cfg datastore.DataStoreConfig) (datastore.DataStore, error)
+
+// openProbeStore opens a datastore whose reads cannot hang: a stuck store errors, which the
+// probe reads as "not empty by design" and the walk then runs as before.
+func openProbeStore(ctx context.Context, cfg datastore.DataStoreConfig) (datastore.DataStore, error) {
+	ds, err := datastore.NewDataStore(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return ledgerstream.WithStoreReadDeadline(ds), nil
+}
 
 // archiveEmptyByDesign reports whether the archive bucket is empty because its expected
 // range is empty (a test net reset and re-ingested from ledger 2). It is true only when the
@@ -44,21 +61,21 @@ func archiveEmptyByDesign(ctx context.Context, archive, live datastore.DataStore
 
 // archiveBucketEmptyByDesign opens the archive and live buckets named by cfg and applies
 // archiveEmptyByDesign. It only applies to the configured archive bucket: with no live
-// bucket, or when the walk is aimed elsewhere, it answers false.
-func archiveBucketEmptyByDesign(ctx context.Context, cfg config.Config, bucket string) bool {
+// bucket, or when the walk is aimed elsewhere, it answers false. Any error answers false.
+func archiveBucketEmptyByDesign(ctx context.Context, cfg config.Config, bucket string, open storeOpener) bool {
 	archiveName, liveName := cfg.Storage.S3BucketArchive, cfg.Storage.S3BucketLive
 	if archiveName == "" || liveName == "" || bucket != archiveName {
 		return false
 	}
 	archiveCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, archiveName, 1).DataStore
 	liveCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, liveName, 1).DataStore
-	archive, err := datastore.NewDataStore(ctx, archiveCfg)
+	archive, err := open(ctx, archiveCfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "verify-archive: empty-archive probe: open archive: %v\n", err)
 		return false
 	}
 	defer func() { _ = archive.Close() }()
-	live, err := datastore.NewDataStore(ctx, liveCfg)
+	live, err := open(ctx, liveCfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "verify-archive: empty-archive probe: open live: %v\n", err)
 		return false
@@ -70,4 +87,20 @@ func archiveBucketEmptyByDesign(ctx context.Context, cfg config.Config, bucket s
 		return false
 	}
 	return empty
+}
+
+// shouldWalkArchive decides whether the Tier A / B ledger walk runs. It is skipped only when
+// a walk tier was asked for AND the probe says the archive is empty by design. Tier B
+// (checkpoint) is skipped with it: it anchors the walked ledgers' hashes, so with nothing to
+// walk it has nothing to check.
+func shouldWalkArchive(ctx context.Context, doChain, doCheckpoint bool, cfg config.Config, bucket string, probe func(context.Context, config.Config, string) bool) bool {
+	if !doChain && !doCheckpoint {
+		return false
+	}
+	if probe(ctx, cfg, bucket) {
+		fmt.Fprintf(os.Stderr, "verify-archive: archive bucket %s is empty by design (no objects; live starts at ledger <= %d) — nothing to walk\n",
+			bucket, emptyArchiveMaxLiveFirst)
+		return false
+	}
+	return true
 }

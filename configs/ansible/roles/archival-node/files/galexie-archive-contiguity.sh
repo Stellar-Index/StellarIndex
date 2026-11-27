@@ -42,18 +42,22 @@ BUCKET="${BUCKET:-local/galexie-archive}"
 EXPECTED_TRIM="${EXPECTED_TRIM-64000-49983999}"
 
 # A test net reset and re-ingested from ledger 2 has nothing to archive: the expected range
-# [1, first-live - 1] is below one file and nothing writes the bucket. Accepted only when
-# the archive listing succeeded with no row at all (no partition, no manifest) AND the
-# oldest live object starts at or below this bound. Same rule as galexie-archive-tip-lag.sh.
+# [1, first-live - 1] is empty and nothing writes the bucket. Accepted only when the archive
+# listing succeeded with no row at all (no partition, no manifest) AND the oldest live
+# object starts at or below this bound: galexie names its first file `--0-63` (start 0) or
+# `--2`, so a higher start leaves ledgers 2.. in neither bucket. Same rule as
+# galexie-archive-tip-lag.sh; the two scripts are installed standalone (no shared lib), so
+# the helper is duplicated.
 LIVE_BUCKET="${LIVE_BUCKET:-local/galexie-live}"
-EMPTY_ARCHIVE_MAX_LIVE_FIRST=64
+EMPTY_ARCHIVE_MAX_LIVE_FIRST=2
 
 # oldest_live_ledger — first ledger of the oldest live object (names sort newest-first, so
 # the last row is the oldest). Returns 1 with no output when it cannot be measured.
 oldest_live_ledger() {
   local parts_raw part objs_raw name
   parts_raw=$(mc ls "$LIVE_BUCKET/") || return 1
-  part=$(awk '/\/$/{p=$NF} END{print p}' <<<"$parts_raw" | sed 's:/$::')
+  # Only real partition dirs count; a stray directory sorting last must not supply the start.
+  part=$(awk '$NF ~ /^[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]--[0-9]+-[0-9]+\/$/{p=$NF} END{print p}' <<<"$parts_raw" | sed 's:/$::')
   [ -n "$part" ] || return 1
   objs_raw=$(mc ls "$LIVE_BUCKET/$part/") || return 1
   name=$(awk 'NF{n=$NF} END{print n}' <<<"$objs_raw")
@@ -66,7 +70,7 @@ oldest_live_ledger() {
 
 archive_empty_by_design() {
   local first
-  first=$(oldest_live_ledger 2>/dev/null) || return 1
+  first=$(oldest_live_ledger) || return 1
   [ "$first" -le "$EMPTY_ARCHIVE_MAX_LIVE_FIRST" ]
 }
 

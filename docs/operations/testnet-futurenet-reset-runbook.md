@@ -151,14 +151,19 @@ An archive empty for that reason is healthy, and the checks say so instead of fa
 
 - Condition (all three checks): the archive listing succeeded and returned no object
   at all (no ledger file, no `.config.json`), and the oldest live object starts at or
-  below ledger 64.
+  below ledger 2 (galexie names its first file `--0-63`, or `--2` for 1-ledger files).
+  A live bucket whose first file is `--64-127` (galexie started late) leaves ledgers 2-63 in
+  neither bucket, so it fails.
 - `galexie-archive-tip-lag`: `probe_success 1`, `galexie_archive_tip_lag_expected_empty 1`,
   the live tip published, the archive tip and lag absent.
 - `galexie-archive-contiguity`: `galexie_archive_expected_empty 1`, `unexpected_gaps 0`,
   `partition_count 0`.
 - `verify-archive-tier-a`: logs "archive bucket ... is empty by design" and exits 0 without walking.
+  The checkpoint tier (`-tier checkpoint`, tier B) skips the same way: it anchors the hashes of
+  the ledgers the walk reads, so with no archive ledgers there is nothing for it to check
+  (tier B is not installed on test nets anyway).
 - Still failing, as before: archive bucket unreadable, archive holding any object
-  (a lone manifest included), a live bucket starting above ledger 64 (the archive range is then
+  (a lone manifest included), a live bucket starting above ledger 2 (the archive range is then
   non-empty and unfilled), or a live start that cannot be measured.
 
 Once an operator fills the archive, the normal checks apply.

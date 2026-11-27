@@ -234,12 +234,10 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 	}
 
 	// An archive that is empty because its expected range is empty has no ledgers to walk and no manifest to load; see archiveEmptyByDesign for the exact condition.
-	walkable := doChain || doCheckpoint
-	if walkable && archiveBucketEmptyByDesign(context.Background(), cfg, bucket) {
-		fmt.Fprintf(os.Stderr, "verify-archive: archive bucket %s is empty by design (no objects; live starts at or below ledger %d) — nothing to walk\n",
-			bucket, emptyArchiveMaxLiveFirst)
-		walkable = false
-	}
+	walkable := shouldWalkArchive(context.Background(), doChain, doCheckpoint, cfg, bucket,
+		func(ctx context.Context, cfg config.Config, bucket string) bool {
+			return archiveBucketEmptyByDesign(ctx, cfg, bucket, openProbeStore)
+		})
 
 	// Tier A + B (LCM walk via ledgerstream). Skipped when tier=peers.
 	if walkable {

@@ -25,6 +25,12 @@ func withReadDeadline(store datastore.DataStore, timeout time.Duration) datastor
 	return &deadlineStore{DataStore: store, timeout: timeout}
 }
 
+// WithStoreReadDeadline wraps store with the walk's per-read deadline, for callers outside the walk (probes) that must
+// not hang on a stuck store.
+func WithStoreReadDeadline(store datastore.DataStore) datastore.DataStore {
+	return withReadDeadline(store, storeReadTimeout)
+}
+
 // GetFile holds the deadline open until the returned body is closed, so it covers the body read as well as the headers.
 func (d *deadlineStore) GetFile(ctx context.Context, path string) (io.ReadCloser, int64, error) {
 	ctx, cancel := context.WithTimeout(ctx, d.timeout)

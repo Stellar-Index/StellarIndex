@@ -94,7 +94,7 @@ ssh root@95.217.126.13 'cd /root/libvirt && ./setup-host-proxy.sh'
 
 Triage `systemctl list-units --state=failed` first. Gated on `stellar_network == 'pubnet'` (so omitted here): `galexie-archive-fill`, `verify-archive-tier-b` (`verify_archive_tier_b_enabled`), `galexie-archive-trim` (`galexie_archive_trim_enabled`), `pgbackrest-backup` (`pgbackrest_backup_enabled`). `config-assertions` gates ZFS and mainnet compression checks on `have_zfs()` / `is_pubnet()`.
 
-- `verify-archive-tier-a`, `galexie-archive-tip-lag`, `galexie-archive-contiguity`: an empty `galexie-archive` is healthy when live starts at or below ledger 64 (nothing to archive); the checks report that explicitly and pass. With any other empty archive they fail, as intended. `systemctl start <unit>` clears an earlier failed state. Detail: [reset runbook](./testnet-futurenet-reset-runbook.md#the-archive-bucket-after-a-reset).
+- `verify-archive-tier-a`, `galexie-archive-tip-lag`, `galexie-archive-contiguity`: an empty `galexie-archive` is healthy when live holds ledger 2 (nothing to archive); the checks report that explicitly and pass. With any other empty archive they fail, as intended. `systemctl start <unit>` clears an earlier failed state. Detail: [reset runbook](./testnet-futurenet-reset-runbook.md#the-archive-bucket-after-a-reset).
 - `archive-completeness`: scan exceeds `TimeoutStartUSec=30min`. Open.
 - `stellar-core` (`run_stellar_core: false`) and `stellarindex-aggregator`: residue, `reset-failed`.
 - A `disabled` unit in `failed` state is residue.

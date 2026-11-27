@@ -79,12 +79,16 @@ newest_ledger() {
 }
 
 # A test net reset and re-ingested from ledger 2 has a live bucket and nothing to
-# archive: the archive's expected range is [1, first-live - 1], below one file. Nothing
-# writes the bucket there, so an EMPTY archive is then correct. It is accepted only when
-# the archive listing succeeded and returned no row at all (no ledger object, no
-# manifest) AND the oldest live object starts at or below this bound; an unreadable
-# bucket, a bucket holding anything, or a live bucket that starts higher still fails.
-EMPTY_ARCHIVE_MAX_LIVE_FIRST=64
+# archive: the archive's expected range is [1, first-live - 1], empty when live holds
+# ledger 2. Nothing writes the bucket there, so an EMPTY archive is then correct. It is
+# accepted only when the archive listing succeeded and returned no row at all (no ledger
+# object, no manifest) AND the oldest live object starts at or below this bound. Galexie
+# names the first file after its start boundary: `--0-63` (start 0) for 64-ledger files or
+# `--2` for 1-ledger files, both <= 2. Any higher start leaves ledgers 2.. in neither
+# bucket, so an unreadable bucket, a bucket holding anything, or a live bucket starting
+# higher still fails.
+EMPTY_ARCHIVE_MAX_LIVE_FIRST=2
+LIVE_BUCKET="${LIVE_BUCKET:-local/galexie-live}"
 
 # bucket_lists_nothing <bucket> — success only when `mc ls` itself succeeded and printed
 # no non-blank row. A failed listing is never "empty".
@@ -99,7 +103,9 @@ bucket_lists_nothing() {
 oldest_ledger() {
   local bucket="$1" parts_raw part objs_raw name
   parts_raw=$(mc ls "$bucket/") || return 1
-  part=$(awk '/\/$/{p=$NF} END{print p}' <<<"$parts_raw" | sed 's:/$::')
+  # Only real partition dirs (<8 hex>--<start>-<end>/) count: a stray directory sorting
+  # after them (lowercase sorts last) must not supply the "oldest" object.
+  part=$(awk '$NF ~ /^[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]--[0-9]+-[0-9]+\/$/{p=$NF} END{print p}' <<<"$parts_raw" | sed 's:/$::')
   [ -n "$part" ] || return 1
   objs_raw=$(mc ls "$bucket/$part/") || return 1
   name=$(awk 'NF{n=$NF} END{print n}' <<<"$objs_raw")
@@ -114,7 +120,7 @@ oldest_ledger() {
 archive_empty_by_design() {
   local first
   bucket_lists_nothing local/galexie-archive || return 1
-  first=$(oldest_ledger local/galexie-live) || return 1
+  first=$(oldest_ledger "$LIVE_BUCKET") || return 1
   [ "$first" -le "$EMPTY_ARCHIVE_MAX_LIVE_FIRST" ]
 }
 
@@ -169,7 +175,7 @@ TMP="$(mktemp "$OUT.tmp.XXXXXX")"
 trap 'rm -f "$TMP"' EXIT
 
 live="" archive="" expected_empty=0 live_ok=0 archive_ok=0
-if live=$(newest_ledger local/galexie-live); then live_ok=1; fi
+if live=$(newest_ledger "$LIVE_BUCKET"); then live_ok=1; fi
 if [ "$live_ok" -eq 1 ] && archive=$(newest_ledger local/galexie-archive); then archive_ok=1; fi
 if [ "$live_ok" -eq 1 ] && [ "$archive_ok" -eq 0 ] && archive_empty_by_design; then
   expected_empty=1
@@ -178,7 +184,7 @@ if [ "$archive_ok" -eq 0 ] && [ "$expected_empty" -eq 0 ]; then
   echo "galexie-archive-tip-lag: could not read a tip (live='${live}' archive='${archive}'); publishing probe_success 0" >&2
   stamp=$(last_success_stamp)
   {
-    printf '# HELP galexie_archive_tip_lag_probe_success 1 when both bucket tips were read and parsed on the last run, 0 when either was not (lag and tips are then omitted, never reported as 0).\n'
+    printf '# HELP galexie_archive_tip_lag_probe_success 1 when the tips needed were measured on the last run (the archive tip is not needed when the archive is empty by design, see galexie_archive_tip_lag_expected_empty), 0 when a required read failed (lag and tips are then omitted, never reported as 0).\n'
     printf '# TYPE galexie_archive_tip_lag_probe_success gauge\n'
     printf 'galexie_archive_tip_lag_probe_success 0\n'
     if [ -n "$stamp" ]; then
@@ -197,7 +203,7 @@ if [ "$expected_empty" -eq 1 ]; then
   # Healthy with nothing to compare: the archive tip and the lag are absent, never 0, so
   # no threshold reads them as "archive at the live tip".
   cat > "$TMP" <<EOF
-# HELP galexie_archive_tip_lag_probe_success 1 when both bucket tips were read and parsed on the last run, 0 when either was not (lag and tips are then omitted, never reported as 0).
+# HELP galexie_archive_tip_lag_probe_success 1 when the tips needed were measured on the last run (the archive tip is not needed when the archive is empty by design, see galexie_archive_tip_lag_expected_empty), 0 when a required read failed (lag and tips are then omitted, never reported as 0).
 # TYPE galexie_archive_tip_lag_probe_success gauge
 galexie_archive_tip_lag_probe_success 1
 # HELP galexie_archive_tip_lag_expected_empty 1 when galexie-archive is empty because its expected range [1, first live ledger - 1] is empty (reset test net); the archive tip and lag are then omitted.
@@ -222,7 +228,7 @@ else
 fi
 
 cat > "$TMP" <<EOF
-# HELP galexie_archive_tip_lag_probe_success 1 when both bucket tips were read and parsed on the last run, 0 when either was not (lag and tips are then omitted, never reported as 0).
+# HELP galexie_archive_tip_lag_probe_success 1 when the tips needed were measured on the last run (the archive tip is not needed when the archive is empty by design, see galexie_archive_tip_lag_expected_empty), 0 when a required read failed (lag and tips are then omitted, never reported as 0).
 # TYPE galexie_archive_tip_lag_probe_success gauge
 galexie_archive_tip_lag_probe_success 1
 # HELP galexie_archive_tip_ledger Newest ledger sequence present in galexie-archive (R1 durable full-mirror).
