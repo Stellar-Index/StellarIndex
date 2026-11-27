@@ -1,8 +1,7 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
-import { ExternalLink } from 'lucide-react';
-
+import { ExternalRef } from '@/components/ExternalRef';
 import { NoteBadge } from '@/components/NoteBadge';
 import { Panel } from '@/components/reveal';
 import { Badge, Container, PageHeader } from '@/components/ui';
@@ -22,6 +21,8 @@ interface LendingProtocolPageSpec {
   title: string;
   description: string;
   about: ReactNode;
+  /** Off-site references, rendered only in the page footer. */
+  refs: readonly string[];
 }
 
 const blendAbout = (
@@ -76,19 +77,8 @@ const blendAbout = (
         </li>
       </ul>
     </details>
-    <a
-      href="https://github.com/blend-capital/blend-contracts"
-      className="text-ink-muted inline-flex items-center gap-1 text-xs hover:underline"
-      target="_blank"
-      rel="noreferrer"
-    >
-      Contracts source
-      <ExternalLink className="h-3 w-3" aria-hidden="true" />
-    </a>
   </>
 );
-
-const blntWebsite = protocolMeta('blnt')?.links?.website;
 
 const blntAbout = (
   <div className="flex flex-wrap items-center gap-2">
@@ -103,17 +93,6 @@ const blntAbout = (
     >
       Protocol page
     </Link>
-    {blntWebsite && (
-      <a
-        href={blntWebsite}
-        className="text-ink-muted inline-flex items-center gap-1 text-xs hover:underline"
-        target="_blank"
-        rel="noreferrer"
-      >
-        Website
-        <ExternalLink className="h-3 w-3" aria-hidden="true" />
-      </a>
-    )}
   </div>
 );
 
@@ -128,6 +107,7 @@ export const LENDING_PROTOCOL_PAGES: readonly LendingProtocolPageSpec[] = [
     description:
       'Blend lending on Stellar: total supplied and borrowed, interest and revenue by window, the BLND token, and every Blend pool.',
     about: blendAbout,
+    refs: ['https://github.com/blend-capital/blend-contracts'],
   },
   {
     id: 'blnt',
@@ -138,6 +118,9 @@ export const LENDING_PROTOCOL_PAGES: readonly LendingProtocolPageSpec[] = [
     description:
       'BLNT V3 lending on Stellar: total supplied and borrowed, interest and revenue by window, the BLNT token, and every BLNT pool.',
     about: blntAbout,
+    refs: [protocolMeta('blnt')?.links?.website].filter(
+      (h): h is string => !!h,
+    ),
   },
 ];
 
@@ -190,6 +173,16 @@ export function LendingProtocolPage({
         Pools are listed once they have an indexed auction or a position; a pool
         with neither is not listed yet.
       </NoteBadge>
+      {p.refs.length > 0 && (
+        <div
+          data-testid="references"
+          className="border-line flex flex-wrap gap-x-4 gap-y-1 border-t pt-4 text-xs"
+        >
+          {p.refs.map((href) => (
+            <ExternalRef key={href} href={href} />
+          ))}
+        </div>
+      )}
     </Container>
   );
 }

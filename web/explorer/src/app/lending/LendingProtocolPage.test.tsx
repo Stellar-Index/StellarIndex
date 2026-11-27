@@ -90,6 +90,28 @@ describe('lending protocol pages', () => {
     expect(screen.queryByText('Reflector-priced')).toBeNull();
   });
 
+  it.each([
+    [
+      'Blend',
+      () => <BlendLendingPage />,
+      'https://github.com/blend-capital/blend-contracts',
+    ],
+    ['BLNT V3', () => <BlntLendingPage />, 'https://blnt.trade'],
+  ] as const)(
+    'keeps the %s off-site links in the references footer only',
+    async (_name, ui, href) => {
+      renderPage(ui());
+      const refs = await screen.findByTestId('references');
+      const offSite = screen
+        .getAllByRole('link')
+        .filter((a) => /^https?:/.test(a.getAttribute('href') ?? ''));
+      expect(offSite.map((a) => a.getAttribute('href'))).toEqual([href]);
+      expect(refs).toContainElement(offSite[0]);
+      expect(offSite[0]).toHaveAttribute('target', '_blank');
+      expect(offSite[0]).toHaveAttribute('rel', 'noreferrer');
+    },
+  );
+
   it('sets a canonical, title and description per page', () => {
     expect(blendMeta.alternates?.canonical).toBe('/lending/blend');
     expect(blntMeta.alternates?.canonical).toBe('/lending/blnt');
