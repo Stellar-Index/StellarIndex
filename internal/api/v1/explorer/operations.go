@@ -44,13 +44,13 @@ type opsDirCache struct {
 type opsDirEntry struct {
 	view     OperationsView
 	cachedAt time.Time
-	// refreshFailed: the last refresh failed or was skipped; only a put clears it.
+	// refreshFailed: the last refresh that ran failed or panicked; only a put clears it, a refusal leaves it.
 	refreshFailed bool
 }
 
-// endRefresh ends the flight, recording a failure on the entry first.
+// endRefresh ends the flight, recording a failure (not a refusal) on the entry first.
 func (c *opsDirCache) endRefresh(fl *keyFlight, err error) {
-	if err != nil {
+	if err != nil && !refreshRefused(err) {
 		c.mu.Lock()
 		c.entry.refreshFailed = c.has
 		c.mu.Unlock()
@@ -108,7 +108,7 @@ func (c *opTypeStatsCache) get() (stats []OpTypeStatV, fresh bool, fr servedFres
 	if time.Since(c.at) < opTypeStatsTTL {
 		return c.stats, true, servedFreshness{}
 	}
-	return c.stats, false, swrFreshness(c.at, opTypeStatsTTL, opTypeStatsRefreshTimeout, c.refreshFailed, &c.flight, "stats")
+	return c.stats, false, swrFreshness(c.at, opTypeStatsTTL, opTypeStatsRefreshTimeout, c.refreshFailed, &c.flight, "stats", false) // ungated: never refused
 }
 
 func (c *opTypeStatsCache) put(stats []OpTypeStatV) {
@@ -648,9 +648,9 @@ func (h *Handler) writeOperationsPageError(ctx context.Context, w http.ResponseW
 func (h *Handler) opsDirCached(ctx context.Context) (view OperationsView, asOf time.Time, fr servedFreshness, err error) {
 	if e, hit, fresh := h.opsDir.get(); hit {
 		if !fresh {
-			h.refreshOpsDirectory()  //nolint:contextcheck // intentional detach — see refreshOpsDirectory
-			e, _, _ = h.opsDir.get() // a refresh skipped just now is already a known failure
-			fr = swrFreshness(e.cachedAt, opsDirTTL, opsDirRefreshTimeout, e.refreshFailed, &h.opsDir.flight, opsDirFlightKey)
+			fl := h.refreshOpsDirectory() //nolint:contextcheck // intentional detach — see refreshOpsDirectory
+			e, _, _ = h.opsDir.get()
+			fr = swrFreshness(e.cachedAt, opsDirTTL, opsDirRefreshTimeout, e.refreshFailed, &h.opsDir.flight, opsDirFlightKey, fl.refused())
 		}
 		return e.view, e.cachedAt, fr, nil
 	}

@@ -1065,9 +1065,12 @@ groups:
           summary: "{{ $value | humanizePercentage }} of {{ $labels.route }} responses are degraded"
           description: |
             More than 10% of {{ $labels.route }} responses have carried
-            flags.degraded for 30m: a backend read behind the route is
-            failing and the body is a carried-forward or partial answer.
-            The API log names the failing read.
+            flags.degraded for 30m: the body is a carried-forward or
+            partial answer. Read the cause from
+            stellarindex_api_degraded_responses_total by reason (also
+            degraded_reason on the request log line). refresh_refused
+            means the refresh gate was saturated, not that a read failed:
+            read stellarindex_explorer_refresh_gate_saturated_total by class.
 
       # The failed-auth throttle caps each client IP and API-key prefix at
       # failed_auth_rate_limit_per_min (20/min), so guessing spread over many

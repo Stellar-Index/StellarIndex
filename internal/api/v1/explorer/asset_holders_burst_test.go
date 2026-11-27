@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
@@ -65,9 +66,9 @@ func TestAssetHoldersCached_ColdBurstDrainsNotSheds(t *testing.T) {
 	}
 }
 
-// TestAssetHoldersCached_StaleSkipsAndMarksWhenSaturated: a stale entry never waits for a slot; with the class full it is served at
-// once and its refresh-failed memory is set.
-func TestAssetHoldersCached_StaleSkipsAndMarksWhenSaturated(t *testing.T) {
+// TestAssetHoldersCached_StaleSkipsWhenSaturated: a stale entry never waits for a slot; with the class full it is served at once,
+// labelled refused for that serve, and its refresh-failed memory is left alone (a skip is not a failure).
+func TestAssetHoldersCached_StaleSkipsWhenSaturated(t *testing.T) {
 	h, _ := newSWRHandler()
 	gate := h.detachedGate()
 	for range 2 {
@@ -76,10 +77,14 @@ func TestAssetHoldersCached_StaleSkipsAndMarksWhenSaturated(t *testing.T) {
 		}
 	}
 	h.assetHolders.put("A-I", assetHoldersEntry{cachedAt: time.Now().Add(-2 * assetHoldersTTL)})
-	if _, _, _, _, err := h.assetHoldersCached(context.Background(), "A-I", 10); err != nil {
+	_, _, _, fr, err := h.assetHoldersCached(context.Background(), "A-I", 10)
+	if err != nil {
 		t.Fatalf("stale read errored instead of serving: %v", err)
 	}
-	if e, _, _ := h.assetHolders.get("A-I"); !e.refreshFailed {
-		t.Fatal("a skipped stale refresh must mark the entry refreshFailed")
+	if fr.reason != obs.DegradedRefreshRefused {
+		t.Errorf("skipped serve reason = %q, want %q", fr.reason, obs.DegradedRefreshRefused)
+	}
+	if e, _, _ := h.assetHolders.get("A-I"); e.refreshFailed {
+		t.Fatal("a skipped stale refresh marked the entry refreshFailed")
 	}
 }
