@@ -212,11 +212,20 @@ export function sortPools(rows: readonly LendingPool[]): LendingPool[] {
   );
 }
 
-export function LendingPoolsTable() {
+/** The pools list; `protocol` narrows it, and its auctions chart, to one protocol. */
+export function LendingPoolsTable({
+  protocol,
+}: {
+  protocol?: 'blend' | 'blnt';
+} = {}) {
   const q = useLendingPools();
   const [showInactive, setShowInactive] = useState(false);
 
-  const all = q.data?.rows ?? [];
+  const all = (q.data?.rows ?? []).filter(
+    (p) =>
+      !protocol ||
+      (LENDING_POOL_META[p.pool ?? '']?.protocol ?? p.protocol) === protocol,
+  );
   const rows = sortPools(all);
   const inactive = rows.filter(isInactivePool);
   const listed = showInactive ? rows : rows.filter((p) => !isInactivePool(p));

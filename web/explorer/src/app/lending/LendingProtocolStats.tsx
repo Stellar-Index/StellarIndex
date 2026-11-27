@@ -40,8 +40,11 @@ const poolName = (p: string) =>
  */
 export function LendingProtocolStats({
   protocol,
+  compact = false,
 }: {
   protocol: 'blend' | 'blnt';
+  /** Supplied, borrowed and available only, without the token figures. */
+  compact?: boolean;
 }) {
   const q = useLendingProtocols();
   const [open, setOpen] = useState(false);
@@ -118,51 +121,7 @@ export function LendingProtocolStats({
             sub="Supplied minus borrowed"
           />
         </StatCell>
-        <StatCell>
-          <Stat
-            label={t?.code ? `${t.code} price` : 'Token price'}
-            value={
-              <UsdFigure
-                value={t?.price_usd}
-                reason={
-                  t ? 'no reliable market price yet' : 'token not verified'
-                }
-                showReason
-              />
-            }
-            sub={t?.code ? <span title={t.asset_id}>{t.code}</span> : undefined}
-          />
-        </StatCell>
-        <StatCell>
-          <Stat
-            label="Market cap"
-            value={
-              <UsdFigure
-                value={t?.market_cap_usd}
-                reason={
-                  t?.price_usd == null
-                    ? 'no reliable market price yet'
-                    : (capWithheldNote(t.market_cap_withheld_reason) ??
-                      'not served yet')
-                }
-                showReason
-              />
-            }
-          />
-        </StatCell>
-        <StatCell>
-          <Stat
-            label="Circulating supply"
-            value={
-              <span title={t?.circulating_supply ?? undefined}>
-                {t?.circulating_supply != null
-                  ? formatCompactTokenUnits(t.circulating_supply, t.decimals)
-                  : '—'}
-              </span>
-            }
-            sub={t?.code}
-          />
-        </StatCell>
+        {!compact && <TokenCells t={t} />}
       </StatGrid>
       {lb && (
         <details
@@ -176,6 +135,56 @@ export function LendingProtocolStats({
         </details>
       )}
     </div>
+  );
+}
+
+function TokenCells({ t }: { t: LendingProtocolRow['token'] }) {
+  return (
+    <>
+      <StatCell>
+        <Stat
+          label={t?.code ? `${t.code} price` : 'Token price'}
+          value={
+            <UsdFigure
+              value={t?.price_usd}
+              reason={t ? 'no reliable market price yet' : 'token not verified'}
+              showReason
+            />
+          }
+          sub={t?.code ? <span title={t.asset_id}>{t.code}</span> : undefined}
+        />
+      </StatCell>
+      <StatCell>
+        <Stat
+          label="Market cap"
+          value={
+            <UsdFigure
+              value={t?.market_cap_usd}
+              reason={
+                t?.price_usd == null
+                  ? 'no reliable market price yet'
+                  : (capWithheldNote(t.market_cap_withheld_reason) ??
+                    'not served yet')
+              }
+              showReason
+            />
+          }
+        />
+      </StatCell>
+      <StatCell>
+        <Stat
+          label="Circulating supply"
+          value={
+            <span title={t?.circulating_supply ?? undefined}>
+              {t?.circulating_supply != null
+                ? formatCompactTokenUnits(t.circulating_supply, t.decimals)
+                : '—'}
+            </span>
+          }
+          sub={t?.code}
+        />
+      </StatCell>
+    </>
   );
 }
 
