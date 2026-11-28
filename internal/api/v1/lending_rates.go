@@ -12,6 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
 // lendingRatesMaxRows caps the rate table; the indexed markets are tens of pools of a few reserves each.
@@ -28,6 +29,12 @@ type LendingRatesView struct {
 	Truncated bool `json:"truncated"`
 	// ConfigDecimals is the fixed-point scale of collateral_factor and liability_factor.
 	ConfigDecimals int `json:"config_decimals"`
+	// YieldWindow is the one window every row's realised yield is read over (the window parameter).
+	YieldWindow string `json:"yield_window"`
+	// APYConvention names how every realised_apy compounds: "realised", (r1/r0)^(1/years) - 1.
+	APYConvention string `json:"apy_convention"`
+	// YieldHistoryThrough is the close time of the last ledger the reserve-state history is derived through; null when unread.
+	YieldHistoryThrough *WireTime `json:"yield_history_through"`
 }
 
 // LendingOmittedPool names a pool left out of a rates response and why.
@@ -66,8 +73,9 @@ type LendingRate struct {
 	Enabled          *bool     `json:"enabled"`
 	LastUpdate       *WireTime `json:"last_update"`
 	// Obtainable is false when any Exclusions apply: the APR is not a yield a new position can earn or pay.
-	Obtainable bool     `json:"obtainable"`
-	Exclusions []string `json:"exclusions"`
+	Obtainable bool             `json:"obtainable"`
+	Exclusions []string         `json:"exclusions"`
+	Yield      LendingRateYield `json:"yield"`
 }
 
 // Exclusion reasons on a LendingRate.
@@ -91,6 +99,8 @@ type lendingRatesQuery struct {
 	protocol   string
 	assetForms map[string]struct{} // every alias spelling of the asset filter; nil when unfiltered
 	sort       lendingRatesSort
+	windowName string
+	window     time.Duration
 }
 
 // ratePool is one pool from the lending pool list.
@@ -118,7 +128,10 @@ func (s *Server) handleLendingRates(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	view := LendingRatesView{Rates: []LendingRate{}, OmittedPools: []LendingOmittedPool{}, ConfigDecimals: lendingConfigDecimals}
+	view := LendingRatesView{
+		Rates: []LendingRate{}, OmittedPools: []LendingOmittedPool{}, ConfigDecimals: lendingConfigDecimals,
+		YieldWindow: q.windowName, APYConvention: apyConventionRealised,
+	}
 	if s.Lending == nil {
 		writeJSON(w, view, Flags{})
 		return
@@ -136,7 +149,8 @@ func (s *Server) handleLendingRates(w http.ResponseWriter, r *http.Request) {
 	forEachBounded(s.logger, len(pools), readFanoutConcurrency, func(i int) {
 		reads[i] = s.readRatePool(ctx, pools[i]) // distinct indices — no mutex needed
 	})
-	for _, pr := range reads {
+	rows := make([][]LendingRate, len(reads))
+	for i, pr := range reads {
 		if pr.omitted != "" {
 			view.OmittedPools = append(view.OmittedPools, LendingOmittedPool{Protocol: pr.protocol, Pool: pr.pool, Reason: pr.omitted})
 			flags.Degraded, view.Partial = true, true
@@ -145,7 +159,16 @@ func (s *Server) handleLendingRates(w http.ResponseWriter, r *http.Request) {
 		vintage.note(pr.at)
 		flags.Stale = flags.Stale || pr.res.flags.Stale || pr.cacheStale
 		flags.Degraded = flags.Degraded || pr.res.flags.Degraded
-		view.Rates = append(view.Rates, s.lendingRateRows(pr, q)...)
+		rows[i] = s.lendingRateRows(pr, q)
+	}
+	ins, req, yflags := s.readRateYields(ctx, reads, rows, q, time.Now().UTC())
+	view.YieldHistoryThrough = req.through
+	flags.Stale, flags.Degraded = flags.Stale || yflags.Stale, flags.Degraded || yflags.Degraded
+	for i := range rows {
+		for j := range rows[i] {
+			rows[i][j].Yield = rowYield(ins[i], req, reads[i], rows[i][j])
+		}
+		view.Rates = append(view.Rates, rows[i]...)
 	}
 	sortLendingRates(view.Rates, q.sort)
 	if len(view.Rates) > lendingRatesMaxRows {
@@ -169,6 +192,10 @@ func parseLendingRatesQuery(w http.ResponseWriter, r *http.Request) (lendingRate
 	default:
 		writeProblem(w, r, "https://api.stellarindex.io/errors/invalid-parameter",
 			"Invalid parameter", http.StatusBadRequest, "sort must be supply_apr, borrow_apr or supplied_usd")
+		return q, false
+	}
+	var ok bool
+	if q.windowName, q.window, ok = parseYieldWindow(w, r); !ok {
 		return q, false
 	}
 	if raw := v.Get("asset"); raw != "" {
@@ -257,6 +284,26 @@ func (s *Server) lendingRateRows(pr ratePoolRead, q lendingRatesQuery) []Lending
 		out = append(out, row)
 	}
 	return out
+}
+
+// rowYield is a rate row's yield from its pool's inputs and the reserve view the row was built from.
+func rowYield(in rateYieldInputs, req rateYieldRequest, pr ratePoolRead, row LendingRate) LendingRateYield {
+	for _, rv := range pr.res.view.Reserves {
+		if rv.Asset == row.Asset {
+			return rateYield(in, req, row, rv, reserveData(pr.res.states, rv.Asset))
+		}
+	}
+	return rateYield(in, req, row, ReserveView{Asset: row.Asset}, nil)
+}
+
+// reserveData is the raw current state behind a reserve view; nil when the read held none for asset.
+func reserveData(states []clickhouse.BlendReserveState, asset string) *blend.ReserveData {
+	for i := range states {
+		if states[i].Asset == asset {
+			return &states[i].Data
+		}
+	}
+	return nil
 }
 
 func ratePoolVersion(protocol string, v blend.PoolVersion) *string {

@@ -44,14 +44,20 @@ type LendingEmissionsView struct {
 	EPSDecimals int `json:"eps_decimals"`
 	// StorageAvailable is false when the emission streams cannot be read; StorageUnavailableReason says why and the
 	// reserves and backstop lists are empty.
-	StorageAvailable         bool                          `json:"storage_available"`
-	StorageUnavailableReason *string                       `json:"storage_unavailable_reason,omitempty"`
-	Reserves                 []LendingReserveEmissionView  `json:"reserves"`
-	Backstop                 []LendingBackstopEmissionView `json:"backstop"`
-	Claims                   LendingEmissionClaimsView     `json:"claims"`
-	AsOfLedger               uint32                        `json:"as_of_ledger,omitempty"`
+	StorageAvailable         bool    `json:"storage_available"`
+	StorageUnavailableReason *string `json:"storage_unavailable_reason,omitempty"`
+	// StreamsIncompleteReason is set when reserves may miss a stream that exists: the pool's reserve list is unread
+	// (reserve_list_unread, so no reserve stream is read) or a stream entry failed to decode (emission_stream_undecodable).
+	StreamsIncompleteReason *string                       `json:"streams_incomplete_reason"`
+	Reserves                []LendingReserveEmissionView  `json:"reserves"`
+	Backstop                []LendingBackstopEmissionView `json:"backstop"`
+	Claims                  LendingEmissionClaimsView     `json:"claims"`
+	AsOfLedger              uint32                        `json:"as_of_ledger,omitempty"`
 	// AsOfTime is when live and the 30-day claim window are judged.
 	AsOfTime WireTime `json:"as_of_time"`
+
+	reserveList []string // the pool's ResList; nil when unread
+	undecodable []uint32 // reserve token ids whose stream entry failed to decode
 }
 
 // LendingEmissionStreamView is one emission stream's storage entry.
@@ -206,6 +212,13 @@ func (s *Server) fillEmissionStreams(ctx context.Context, view *LendingEmissions
 		case known:
 			view.EmissionTokenDecimals = &d
 		}
+	}
+	view.reserveList, view.undecodable = st.ReserveList, st.UndecodableTokenIDs
+	switch {
+	case st.ReserveList == nil:
+		view.StreamsIncompleteReason = strRef(emissionResListUnread)
+	case len(st.UndecodableTokenIDs) > 0:
+		view.StreamsIncompleteReason = strRef(emissionStreamBad)
 	}
 	for _, re := range st.Reserves {
 		view.Reserves = append(view.Reserves, LendingReserveEmissionView{

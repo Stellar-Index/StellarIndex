@@ -49,18 +49,28 @@ func (s *Server) emissionTokenPrice(ctx context.Context, protocol, token string,
 	}
 	var flags Flags
 	tok, _ := s.readProtocolToken(ctx, ticker, &flags)
-	if tok == nil {
-		return kpiTokenPrice{reason: emissionUSDTokenUnverified}
+	p := protocolTokenPrice(tok, lakeDecimals)
+	if p.reason == "" {
+		p.stale = s.kpiPriceStale(ctx, tok, flags.Stale)
 	}
+	return p
+}
+
+// protocolTokenPrice is the price the protocol token read values an emission stream at, or why it values none.
+func protocolTokenPrice(tok *LendingProtocolToken, lakeDecimals *int) kpiTokenPrice {
 	switch {
-	case tok.PriceUSD == nil, tok.ThinMarket: // a thin price is display-only and values no stream
+	case tok == nil:
+		return kpiTokenPrice{reason: emissionUSDTokenUnverified}
+	case tok.PriceUSD == nil:
 		return kpiTokenPrice{reason: kpiUSDUnpriced}
+	case tok.ThinMarket: // a thin price is display-only and values no stream
+		return kpiTokenPrice{reason: kpiUSDUnpriced, thin: true}
 	case tok.Decimals <= 0:
 		return kpiTokenPrice{reason: kpiUSDDecimalsUnknown}
 	case lakeDecimals != nil && *lakeDecimals != tok.Decimals:
 		return kpiTokenPrice{reason: emissionUSDScaleMismatch}
 	}
-	return kpiTokenPrice{price: *tok.PriceUSD, decimals: tok.Decimals, stale: s.kpiPriceStale(ctx, tok, flags.Stale)}
+	return kpiTokenPrice{price: *tok.PriceUSD, decimals: tok.Decimals}
 }
 
 // emissionTokenIdentity is the protocol token's ticker when token is the SAC of its verified-catalogue asset, else why not.
@@ -157,15 +167,37 @@ func emissionRate(eps *big.Int, live bool, p kpiTokenPrice) LendingEmissionRateV
 
 // emissionAPR is the stream's annual USD emissions over its side's current USD size, both exact until the final 4 dp.
 func emissionAPR(eps *big.Int, live bool, side string, rv ReserveView, found bool, p kpiTokenPrice) (*string, *string) {
+	v, reason := emissionAPRRat(eps, live, side, rv, found, p)
+	if reason != "" {
+		return nil, strRef(reason)
+	}
+	return strRef(ratString(v, netAPRDecimals)), nil
+}
+
+// emissionAPRRat is emissionAPR unrounded, or the reason it has no value.
+func emissionAPRRat(eps *big.Int, live bool, side string, rv ReserveView, found bool, p kpiTokenPrice) (*big.Rat, string) {
 	if !live || eps.Sign() == 0 {
-		return strRef(ratString(new(big.Rat), netAPRDecimals)), nil
+		return new(big.Rat), ""
 	}
 	if p.reason != "" {
-		return nil, strRef(p.reason)
+		return nil, p.reason
 	}
 	if !found {
-		return nil, strRef(emissionAPRReserveUnread)
+		return nil, emissionAPRReserveUnread
 	}
+	size, reason := emissionSideUSD(side, rv)
+	if reason != "" {
+		return nil, reason
+	}
+	annual, err := usdValueRat(new(big.Int).Mul(eps, big.NewInt(secondsPerYear)), p.price, p.decimals+clickhouse.EmissionEPSDecimals)
+	if err != nil {
+		return nil, kpiUSDUnpriced
+	}
+	return annual.Quo(annual, size), ""
+}
+
+// emissionSideUSD is the current USD size of a stream's side (supplied or borrowed), or why it carries no APR.
+func emissionSideUSD(side string, rv ReserveView) (*big.Rat, string) {
 	amount := rv.Supplied
 	if side == clickhouse.EmissionSideBorrow {
 		amount = rv.Borrowed
@@ -173,19 +205,34 @@ func emissionAPR(eps *big.Int, live bool, side string, rv ReserveView, found boo
 	size, reason := legUSD(&amount, rv)
 	switch {
 	case reason == earningsUSDWithheld:
-		return nil, strRef(emissionAPRReserveUnread)
+		return nil, emissionAPRReserveUnread
 	case reason != "":
-		return nil, strRef(emissionAPRSideUnpriced)
+		return nil, emissionAPRSideUnpriced
 	case size.Sign() <= 0:
-		return nil, strRef(emissionAPRSideEmpty)
+		return nil, emissionAPRSideEmpty
 	case size.Cmp(emissionAPRMinSideUSD) < 0:
-		return nil, strRef(emissionAPRSideDust)
+		return nil, emissionAPRSideDust
 	}
-	annual, err := usdValueRat(new(big.Int).Mul(eps, big.NewInt(secondsPerYear)), p.price, p.decimals+clickhouse.EmissionEPSDecimals)
-	if err != nil {
-		return nil, strRef(kpiUSDUnpriced)
+	return size, ""
+}
+
+// emissionTokensPer1000USDYear is the emission tokens a year a stream pays per 1000 USD of its side, at the token's own
+// decimals: eps x SECONDS_PER_YEAR x 1000 / 10^(eps_decimals+d) / side USD. Free of the emission token's price; null when
+// its decimals or the side's USD size are unknown.
+func emissionTokensPer1000USDYear(eps *big.Int, live bool, side string, rv ReserveView, decimals *int) *string {
+	if !live || eps.Sign() == 0 {
+		return strRef("0")
 	}
-	return strRef(ratString(annual.Quo(annual, size), netAPRDecimals)), nil
+	if decimals == nil || *decimals < 0 {
+		return nil
+	}
+	size, reason := emissionSideUSD(side, rv)
+	if reason != "" {
+		return nil
+	}
+	scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(clickhouse.EmissionEPSDecimals+*decimals)), nil)
+	v := new(big.Rat).SetFrac(new(big.Int).Mul(eps, big.NewInt(secondsPerYear*1000)), scale)
+	return strRef(ratString(v.Quo(v, size), *decimals))
 }
 
 // exactDecimal renders r, whose denominator divides 10^maxScale, with no trailing fractional zeros.

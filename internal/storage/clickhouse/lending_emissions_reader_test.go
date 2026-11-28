@@ -1,6 +1,7 @@
 package clickhouse
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -154,6 +155,9 @@ func TestAssembleEmissions(t *testing.T) {
 		r[1].TokenID != 3 || r[1].Asset != backstop || r[1].Side != EmissionSideSupply || r[1].Data.EPS != 3 ||
 		r[2].TokenID != 9 || r[2].Asset != "" {
 		t.Fatalf("reserves = %+v", r)
+	}
+	if !slices.Equal(head.UndecodableTokenIDs, []uint32{1}) { // unknown, never read as no stream
+		t.Fatalf("undecodable = %v, want [1]", head.UndecodableTokenIDs)
 	}
 	if len(head.Backstop) != 1 || head.Backstop[0].Tier != "SecondLoss" || head.Backstop[0].Data.EPS != 7 {
 		t.Fatalf("backstop = %+v", head.Backstop)

@@ -1914,6 +1914,30 @@ export interface paths {
          *     SAC, the classic or native asset it wraps (`asset_id`), never
          *     the code alone. At most 2,000 rows are served; `truncated` is
          *     true when that cap cut the list.
+         *
+         *     Each row's `yield` is what the reserve actually paid over one
+         *     `window` shared by the whole response: the realised APR is
+         *     `(r1/r0 − 1) / years` from `b_rate` (supply) or `d_rate` (borrow)
+         *     of the two stored reserve states in force at the window's start
+         *     and end, exact before the final 4 dp rounding, and the span is
+         *     the two states' own `last_time` (`realised_from`, `realised_to`),
+         *     not the wall-clock window. It works on Blend V1, whose rates are
+         *     1e9-scaled. A missing state, a sub-hour span or a rate that
+         *     cannot be told from rounding (`insufficient_resolution`) leaves
+         *     it null with a reason, never zero. `realised_apy` is display
+         *     only (`apy_convention: realised`). `emissions_apr` is the side's
+         *     current stream as `/v1/lending/pools/{pool}/emissions` values
+         *     it; a thin-market emission token prices nothing
+         *     (`emission_price_thin_market`) and only the price-free
+         *     `emissions_tokens_per_1000usd_year` is served. `net_yield` is
+         *     realised + emissions (supply) or emissions − realised (borrow):
+         *     null without a realised rate, and `net_lower_bound` with
+         *     `net_excluded` naming the emissions when they are missing.
+         *     `rankable` is false, with `rankable_reasons`, when the yield is
+         *     unknown or a supplier may not be able to collect it
+         *     (`net_caveats`: pool not active or status unknown, utilisation
+         *     full or unknown, backstop holding the reserve's debt or not
+         *     known to). See docs/protocols/blend.md, "Yields".
          */
         get: operations["getLendingRates"];
         put?: never;
@@ -7424,6 +7448,44 @@ export interface components {
             /** @enum {string} */
             kind: "b_token" | "d_token" | "underlying" | "backstop_token" | "unknown";
             reason: string;
+        };
+        /** @description One side of a reserve's yield on `/v1/lending/rates`. Every rate is a fraction (0.05 = 5%) as a decimal string at 4 dp; every null rate carries its reason. */
+        LendingSideYield: {
+            /** @description (r1/r0 − 1) / years from b_rate (supply) or d_rate (borrow) between `realised_from` and `realised_to`, exact before rounding. Negative after a V2 default. */
+            realised_apr: string | null;
+            /**
+             * @description A base must have accrued within the base slack before the window opened: an hour or a 24th of the window, whichever is longer (24h: 1h, 7d: 7h, 30d: 30h). Without one, the first state inside the window is the base. `base_state_before_window`: the reserve's state at the window's start is older than the slack and no second state lies inside the window; it is never used, as it would average periods before the window. `no_base_state_in_window`: the reserve has no state before the window at all and only one inside it.
+             * @enum {string|null}
+             */
+            realised_apr_reason: "rate_history_reader_unavailable" | "rate_history_not_derived" | "rate_history_read_failed" | "rate_history_timed_out" | "no_base_state_in_window" | "base_state_before_window" | "state_undecodable" | "reserve_state_removed" | "no_accrual_in_window" | "states_under_one_hour_apart" | "base_rate_not_positive" | "insufficient_resolution" | "rate_invalid" | null;
+            /** @description (r1/r0)^(1/years) − 1: display only, never summed (`apy_convention`). */
+            realised_apy: string | null;
+            /** @description The side's current emission stream in USD a year over the side's current USD size, as `/v1/lending/pools/{pool}/emissions` serves it; `0.0000` only when the pool's stream list was read whole and holds no stream for this side. */
+            emissions_apr: string | null;
+            /** @description Why `emissions_apr` is null: the `/emissions` reasons, plus `emission_price_thin_market` (a display-only price values nothing), `reserve_list_unread` and `emission_stream_undecodable` (a stream may exist), `emission_stream_unmapped`, `emissions_read_failed`, `emissions_timed_out`, and `blend_v1_emission_storage_unverified` on Blend V1. */
+            emissions_apr_reason: string | null;
+            /** @description Emission tokens a year per 1,000 USD of the side, at the token's decimals: free of the emission token's price. Null when its decimals or the side's USD size are unknown. */
+            emissions_tokens_per_1000usd_year: string | null;
+            /** @description realised_apr + emissions_apr (supply) or emissions_apr − realised_apr (borrow); higher is better. Null without a realised rate. */
+            net_yield: string | null;
+            /**
+             * @description The net adds the realised base over the span to the emission rate in force now, not the window's average; a rate changed inside the window is not detected (`emission_rate_is_current_not_window_average`).
+             * @enum {string}
+             */
+            net_basis: "realised_base_current_emissions";
+            /** @description True when `net_yield` leaves out the emissions `net_excluded` names. */
+            net_lower_bound: boolean;
+            net_excluded: {
+                /** @enum {string} */
+                kind: "base" | "emissions";
+                reason: string;
+            }[];
+            /** @description Why a supplier may not be able to collect what the rate says they are owed, and `emission_rate_is_current_not_window_average` on every net that adds an emission stream (informational: it does not block ranking). */
+            net_caveats: ("pool_status_unknown" | "pool_not_active" | "utilization_unknown" | "utilization_full" | "backstop_liabilities_unknown" | "backstop_holds_liabilities" | "emission_rate_is_current_not_window_average")[];
+            /** @description True only with a `net_yield`, no collectability caveat, an obtainable row, a current history, a span of at least half the window and a fully read stream list; the gate for any "earns most" ordering. A lower bound from a priced-out emission token ranks, since it never overstates. */
+            rankable: boolean;
+            /** @description The caveats, `value_unknown`, the row's `exclusions`, and `rate_history_behind`, `realised_span_under_half_window`, `emission_stream_unknown`. */
+            rankable_reasons: string[];
         };
         /** @description One reserve's bad-debt parts and the d-token identity moved = covered + socialised + repaid + outstanding. */
         LendingBadDebtReserve: {
@@ -19626,6 +19688,8 @@ export interface operations {
                 protocol?: "blend" | "blnt";
                 /** @description `supply_apr` (default, highest first), `borrow_apr` (lowest first) or `supplied_usd` (largest first). Rows without the key sort last; ties by pool then asset. */
                 sort?: "supply_apr" | "borrow_apr" | "supplied_usd";
+                /** @description The one window every row's realised yield is read over. */
+                window?: "24h" | "7d" | "30d";
             };
             header?: never;
             path?: never;
@@ -19669,13 +19733,53 @@ export interface operations {
                      *             "enabled": true,
                      *             "last_update": "2026-07-03T22:37:51Z",
                      *             "obtainable": true,
-                     *             "exclusions": []
+                     *             "exclusions": [],
+                     *             "yield": {
+                     *               "realised_from": "2026-06-26T22:31:07Z",
+                     *               "realised_to": "2026-07-02T22:31:07Z",
+                     *               "realised_span_seconds": 518400,
+                     *               "supply": {
+                     *                 "realised_apr": "0.0608",
+                     *                 "realised_apr_reason": null,
+                     *                 "realised_apy": "0.0627",
+                     *                 "emissions_apr": "0.1577",
+                     *                 "emissions_apr_reason": null,
+                     *                 "emissions_tokens_per_1000usd_year": "3153.6000000",
+                     *                 "net_yield": "0.2185",
+                     *                 "net_basis": "realised_base_current_emissions",
+                     *                 "net_lower_bound": false,
+                     *                 "net_excluded": [],
+                     *                 "net_caveats": [
+                     *                   "emission_rate_is_current_not_window_average"
+                     *                 ],
+                     *                 "rankable": true,
+                     *                 "rankable_reasons": []
+                     *               },
+                     *               "borrow": {
+                     *                 "realised_apr": "0.1217",
+                     *                 "realised_apr_reason": null,
+                     *                 "realised_apy": "0.1292",
+                     *                 "emissions_apr": "0.0000",
+                     *                 "emissions_apr_reason": null,
+                     *                 "emissions_tokens_per_1000usd_year": "0",
+                     *                 "net_yield": "-0.1217",
+                     *                 "net_basis": "realised_base_current_emissions",
+                     *                 "net_lower_bound": false,
+                     *                 "net_excluded": [],
+                     *                 "net_caveats": [],
+                     *                 "rankable": true,
+                     *                 "rankable_reasons": []
+                     *               }
+                     *             }
                      *           }
                      *         ],
                      *         "omitted_pools": [],
                      *         "partial": false,
                      *         "truncated": false,
-                     *         "config_decimals": 7
+                     *         "config_decimals": 7,
+                     *         "yield_window": "7d",
+                     *         "apy_convention": "realised",
+                     *         "yield_history_through": "2026-07-03T22:31:07Z"
                      *       },
                      *       "as_of": "2026-07-03T22:38:00.032774886Z",
                      *       "flags": {
@@ -19744,6 +19848,23 @@ export interface operations {
                                 /** @description False when `exclusions` is non-empty. */
                                 obtainable?: boolean;
                                 exclusions?: ("pool_not_active" | "pool_status_unknown" | "reserve_disabled" | "reserve_config_unknown" | "rate_unavailable")[];
+                                /** @description The reserve's realised and net yield over `yield_window`. */
+                                yield?: {
+                                    /**
+                                     * Format: date-time
+                                     * @description `last_time` of the reserve state in force at the window's start: when the realised span begins. Null when no realised rate exists.
+                                     */
+                                    realised_from?: string | null;
+                                    /**
+                                     * Format: date-time
+                                     * @description `last_time` of the state in force at the window's end (the newest hour the lake history has derived).
+                                     */
+                                    realised_to?: string | null;
+                                    /** @description realised_to − realised_from in seconds: the span the realised rates are read over. Under half the window, nothing ranks. */
+                                    realised_span_seconds?: number | null;
+                                    supply?: components["schemas"]["LendingSideYield"];
+                                    borrow?: components["schemas"]["LendingSideYield"];
+                                };
                             }[];
                             omitted_pools?: {
                                 /** @enum {string} */
@@ -19757,6 +19878,21 @@ export interface operations {
                             truncated?: boolean;
                             /** @description Fixed-point scale of `collateral_factor` and `liability_factor`. Always 7. */
                             config_decimals?: number;
+                            /**
+                             * @description The `window` every row's realised yield is read over.
+                             * @enum {string}
+                             */
+                            yield_window?: "24h" | "7d" | "30d";
+                            /**
+                             * @description How every `realised_apy` compounds: `(r1/r0)^(1/years) − 1` over the realised span.
+                             * @enum {string}
+                             */
+                            apy_convention?: "realised";
+                            /**
+                             * Format: date-time
+                             * @description Close time of the last ledger the reserve-state history is derived through. More than 2 hours behind the request: the response is stale and nothing ranks (`rate_history_behind`). Null when the history is unread.
+                             */
+                            yield_history_through?: string | null;
                         };
                     };
                 };
@@ -21621,6 +21757,11 @@ export interface operations {
                             storage_available: boolean;
                             /** @enum {string} */
                             storage_unavailable_reason?: "blend_v1_emission_storage_unverified" | "pool_instance_unavailable" | "emission_storage_reader_unavailable";
+                            /**
+                             * @description Set when `reserves` may miss a stream that exists: the pool's reserve list is unread, so no reserve stream is read, or a stream entry failed to decode. A reserve absent from `reserves` is then unknown, not unemitting.
+                             * @enum {string|null}
+                             */
+                            streams_incomplete_reason?: "reserve_list_unread" | "emission_stream_undecodable" | null;
                             reserves: {
                                 token_id: number;
                                 /** @description Reserve underlying token; null when token_id is past the pool's reserve list. */
