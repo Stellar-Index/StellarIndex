@@ -102,12 +102,15 @@ type poolTopAccounts struct {
 	asOf            uint32 // the lake watermark read just before the positions
 	stale, degraded bool
 	unreconciled    bool // a reserve still mismatched after the re-read
+	version         blend.PoolVersion
+	instance        *clickhouse.PoolInstance // nil when the instance is unread
+	health          *poolHealthRead          // set only by the /health fill
 }
 
 // poolTopAccountsTTL serves an unreconciled fill only briefly, so a mismatch from a write between the reads is not every
 // caller's answer for the full TTL.
 func poolTopAccountsTTL(b poolTopAccounts) time.Duration {
-	if b.unreconciled {
+	if b.unreconciled || b.health.transient() || (b.health != nil && b.health.backstopUnknown) {
 		return topAccountsUnreconciledTTL
 	}
 	return lendingReservesTTL
@@ -213,7 +216,7 @@ func (s *Server) readPoolTopAccounts(ctx context.Context, pr lendingPoolPosition
 	}
 	return poolTopAccounts{
 		protocol: protocol, positions: pos, states: states, views: views, asOf: wm,
-		stale: lakeStale || res.flags.Stale, degraded: res.flags.Degraded,
+		stale: lakeStale || res.flags.Stale, degraded: res.flags.Degraded, version: res.version, instance: res.instance,
 	}, nil
 }
 

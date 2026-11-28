@@ -1246,6 +1246,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			rollup.Run(rootCtx)
 		}()
 	}
+	apiSrv.SetLendingHealthEnabled(cfg.LendingHealth.Enabled)
 
 	httpSrv := &http.Server{
 		Addr:              cfg.API.ListenAddr,

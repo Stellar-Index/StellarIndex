@@ -279,6 +279,23 @@ earns less, can already be liquidatable on-chain. Supply-side accrual raises `b_
 reserves it valued; until accrual is exact, callers must publish accounts within that margin of the boundary
 separately and never as plainly liquidatable or healthy.
 
+`/v1/lending/pools/{pool}/health` does so with `blend.AccrualCeiling`: each V2 reserve's `d_rate` raised by the
+stored borrow rate (`BorrowRate` at the stored utilization and `ir_mod`) over `now − last_time`, plus a unit per
+rounding step, and `b_rate` raised by at most that interest over `b_supply`. Health is classified at stored rates and
+at the ceiling, pairing collateral up with debt as stored and the reverse; an account whose class differs is
+`indeterminate` (`accrual_pending`). V1 has no verified `ir_mod` port, so a V1 account with pending accrual is
+`accrual_unbounded`. The bracket assumes the interval is accrued at the stored `ir_mod`; PR7's behavioural check
+against mainnet auctions is what confirms it.
+
+The route values a reserve only on its applied `ResConfig` ledger entry (persistent, `v2:pool/storage.rs:337-360`),
+read with its ledger. `queue_set_reserve` writes a temporary `ResInit`; `set_reserve` applies it after the unlock
+time, and `require_valid_reserve_metadata_changes` refuses a change of `decimals` (and an `l_factor` set to 0), so
+the queued config never values a position and an existing reserve's `decimals` is fixed. `enabled` gates only supply
+and borrow (`v2:pool/reserve.rs:146-156`) and the pool status does not gate a user-liquidation auction, so neither changes the
+class. Bad debt is the contract's rule (`v2:pool/bad_debt.rs` `check_and_handle_user_bad_debt`): liabilities and an
+empty collateral map. Held collateral that values to zero in the oracle base is not bad debt and is published as
+`indeterminate` (`collateral_value_zero`).
+
 ### Oracle price
 
 - **Staleness.** `Pool::load_price` refuses a price whose `timestamp + 86400` is before the ledger's close time:

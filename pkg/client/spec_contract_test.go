@@ -106,6 +106,8 @@ var coveredOperations = []coveredOperation{
 // with neither an SDK method nor an entry here fails TestSDKCoversSpec.
 var uncoveredOperations = map[string]string{
 	"GET /stablecoins": "new surface; SDK method deferred until a customer asks",
+	// types.go is at its line budget; the route is also off by default.
+	"GET /lending/pools/{pool}/health": "flag-gated new surface; SDK method deferred",
 
 	// SSE streams — the SDK has no streaming client yet. When one
 	// lands, these five move to coveredOperations together.

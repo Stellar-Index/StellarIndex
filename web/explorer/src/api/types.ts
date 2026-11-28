@@ -2909,6 +2909,88 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/lending/pools/{pool}/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Lending pool — account health on the pool's own oracle.
+         * @description Every account's health in one pool, computed on read on the price
+         *     the pool contract itself liquidates on: its own oracle-aggregator,
+         *     reproduced by the same reader that audits it (`basis.kind:
+         *     pool_oracle`). Off unless the deployment sets `[lending_health]
+         *     enabled`; until then 404 `lending-health-not-enabled`.
+         *
+         *     One ledger. The oracle is reproduced at `basis.ledger` first; the
+         *     pool's instance, Positions, ResData, ResConfig and Auction entries
+         *     are read after it, and an account whose position, held reserve
+         *     (rates or config) or auction entry changed after that ledger, or
+         *     whose auction was removed after it, is `unpriced` with reason
+         *     `state_newer`, never valued on a mix of ledgers; an instance
+         *     changed after it makes every account `state_newer`. Reserve config
+         *     is only the applied ResConfig ledger entry: a reserve without a
+         *     readable one, or whose `index` is not its ResList slot, is
+         *     `config_unread`. Every present Auction entry counts as live,
+         *     whatever its TTL: expiry is not judged, so an expired auction can
+         *     keep an account `in_auction` (never `liquidatable`).
+         *
+         *     Values. `collateral_base` and `liabilities_base` are the contract's
+         *     effective amounts in the oracle's base, as integers at the oracle's
+         *     decimals (c_factor applied and rounded down; l_factor applied and
+         *     rounded up). `hf` is their ratio rounded down to 4 dp, on stored
+         *     rates. A reserve whose price is a verdict (`basis.reserves[].verdict`)
+         *     values nothing: an account holding it as collateral or debt has
+         *     `hf: null`, class `unpriced` and its verdict as `reason`, and is
+         *     counted in `summary.unpriced`. A price reproduced from a Reflector
+         *     round the operator excluded is `source_excluded`. BLNT pools are not
+         *     valued (`health_formula_unverified`).
+         *
+         *     Classes. `liquidatable` only when the version's health gate admits a
+         *     user-liquidation auction, the account has raw collateral, no
+         *     user-liquidation auction is live for it, it is neither the pool nor
+         *     its backstop, and every price it needs is at most 24 h old.
+         *     Otherwise: `in_auction`, `bad_debt` (debt and no collateral
+         *     position, as the contract's bad-debt check), `liquidation_exempt`
+         *     (the pool or its backstop), `healthy`, or `indeterminate` with a
+         *     reason: `accrual_pending` when the class differs between stored
+         *     rates and the rates the stored borrow rate accrues to by the ledger
+         *     (the contract accrues before it checks; `accrual` says how long the
+         *     stored rates trail), `accrual_unbounded` on a V1 pool,
+         *     `collateral_value_zero` when collateral is held but values to zero,
+         *     `auctions_unread` when the live auctions could not be read,
+         *     `pool_instance_unread` when the pool instance (and so its backstop)
+         *     could not be read, `backstop_unread` when the instance has no
+         *     readable Backstop; either answer is also `Cache-Control: no-store`.
+         *
+         *     Totals and `bands` (HF bands by exact rational comparison; the
+         *     backstop is not in any band) cover priced accounts with debt.
+         *     `summary.lower_bound` is true, with `summary.excluded` naming each
+         *     reason, whenever an account is unpriced, indeterminate for an
+         *     unread input, interest is unaccrued (`accrual_pending`: the totals
+         *     are on stored rates, so debt is understated), or the positions read
+         *     was truncated, unreadable or did not reconcile. A truncated read
+         *     serves `accounts: []`. `accounts` lists accounts with debt (and
+         *     `state_newer` ones) worst first (exact comparison, ties by
+         *     address), unpriced ones last; page with `pagination.next`. The view
+         *     is computed once per refresh at `basis.ledger`, read fresh from the
+         *     lake when the view is built. The cursor carries that ledger and a
+         *     sort key: across a refresh it still pages by key, but pages can then
+         *     come from different ledgers, and `view_changed` is true on the first
+         *     page served from the newer one. A response behind a failed read on
+         *     our side is `Cache-Control: no-store`.
+         */
+        get: operations["getLendingPoolHealth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/mev": {
         parameters: {
             query?: never;
@@ -22142,6 +22224,261 @@ export interface operations {
                              * @description Highest ledger the lake had captured when the cached positions were read; they are at least this new.
                              */
                             as_of_ledger: number;
+                            note: string;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getLendingPoolHealth: {
+        parameters: {
+            query?: {
+                /** @description Accounts per page. */
+                limit?: number;
+                /** @description Opaque `pagination.next` of the previous page. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Pool contract C-strkey. */
+                pool: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The pool's account health at one ledger. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                     *         "protocol": "blend",
+                     *         "version": "v2",
+                     *         "basis": {
+                     *           "kind": "pool_oracle",
+                     *           "oracle": "CCVTVW2CVA7JLH4ROQGP3CU4T3EXVCK66AZGSM4MUQPXAI4QHCZPOATS",
+                     *           "adapter_wasm_hash": "41df04894bf2d8291492326f7a6ab9c90a90cc9828e31990ce8aeeab42680bfd",
+                     *           "adapter_version": "oracle-aggregator v2.0.0",
+                     *           "ledger": 66000000,
+                     *           "close_time": "2026-11-28T12:00:00Z",
+                     *           "reserves": [
+                     *             {
+                     *               "asset": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+                     *               "price": "2650000",
+                     *               "decimals": 7,
+                     *               "timestamp": "2026-11-28T11:55:00Z",
+                     *               "quote": "fiat:USD",
+                     *               "verdict": null
+                     *             },
+                     *             {
+                     *               "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *               "price": null,
+                     *               "decimals": null,
+                     *               "timestamp": null,
+                     *               "quote": null,
+                     *               "verdict": "oracle_feed_incomplete"
+                     *             }
+                     *           ]
+                     *         },
+                     *         "accrual": {
+                     *           "reproduced": false,
+                     *           "pending_seconds_max": 3600
+                     *         },
+                     *         "summary": {
+                     *           "accounts_total": 3,
+                     *           "accounts_with_debt": 3,
+                     *           "no_debt": 0,
+                     *           "healthy": 1,
+                     *           "liquidatable": 1,
+                     *           "bad_debt": 0,
+                     *           "in_auction": 0,
+                     *           "indeterminate": 0,
+                     *           "liquidation_exempt": 0,
+                     *           "unpriced": {
+                     *             "oracle_feed_incomplete": 1
+                     *           },
+                     *           "collateral_base": "24000",
+                     *           "liabilities_base": "15000",
+                     *           "lower_bound": true,
+                     *           "excluded": [
+                     *             {
+                     *               "reason": "oracle_feed_incomplete",
+                     *               "accounts": 1
+                     *             }
+                     *           ]
+                     *         },
+                     *         "bands": [
+                     *           {
+                     *             "from": "0",
+                     *             "to": "1.00",
+                     *             "accounts": 1,
+                     *             "liabilities_base": "12000"
+                     *           },
+                     *           {
+                     *             "from": "1.00",
+                     *             "to": "1.05",
+                     *             "accounts": 0,
+                     *             "liabilities_base": "0"
+                     *           },
+                     *           {
+                     *             "from": "1.05",
+                     *             "to": "1.10",
+                     *             "accounts": 0,
+                     *             "liabilities_base": "0"
+                     *           },
+                     *           {
+                     *             "from": "1.10",
+                     *             "to": "1.25",
+                     *             "accounts": 0,
+                     *             "liabilities_base": "0"
+                     *           },
+                     *           {
+                     *             "from": "1.25",
+                     *             "to": "1.50",
+                     *             "accounts": 0,
+                     *             "liabilities_base": "0"
+                     *           },
+                     *           {
+                     *             "from": "1.50",
+                     *             "to": "2.00",
+                     *             "accounts": 0,
+                     *             "liabilities_base": "0"
+                     *           },
+                     *           {
+                     *             "from": "2.00",
+                     *             "to": null,
+                     *             "accounts": 1,
+                     *             "liabilities_base": "3000"
+                     *           }
+                     *         ],
+                     *         "accounts": [
+                     *           {
+                     *             "account": "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7",
+                     *             "hf": "0.8333",
+                     *             "class": "liquidatable",
+                     *             "reason": null,
+                     *             "collateral_base": "10000",
+                     *             "liabilities_base": "12000",
+                     *             "in_auction": false,
+                     *             "pool_or_backstop": false,
+                     *             "last_modified_ledger": 65999000
+                     *           }
+                     *         ],
+                     *         "note": "Health is computed on the pool's own oracle (basis.kind pool_oracle), reproduced at basis.ledger."
+                     *       },
+                     *       "as_of": "2026-11-28T12:00:05Z",
+                     *       "pagination": {
+                     *         "next": "h.10000.12000.GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7"
+                     *       },
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: {
+                            pool: string;
+                            /** @enum {string} */
+                            protocol: "blend" | "blnt";
+                            /**
+                             * @description Blend pool version; null for BLNT.
+                             * @enum {string|null}
+                             */
+                            version: "v1" | "v2" | null;
+                            basis: {
+                                /** @enum {string} */
+                                kind: "pool_oracle";
+                                oracle: string | null;
+                                adapter_wasm_hash: string | null;
+                                adapter_version: string | null;
+                                /**
+                                 * Format: int64
+                                 * @description The evaluation ledger every entry is judged against; 0 when no oracle read ran.
+                                 */
+                                ledger: number;
+                                /** Format: date-time */
+                                close_time: string | null;
+                                reserves: {
+                                    asset: string;
+                                    /** @description Raw lastprice integer at `decimals`; null when `verdict` is set. */
+                                    price: string | null;
+                                    decimals: number | null;
+                                    /** Format: date-time */
+                                    timestamp: string | null;
+                                    /** @description The adapter's base, verbatim (fiat USD or the USDC SAC); never normalised. */
+                                    quote: string | null;
+                                    /** @description Why the oracle's price was not reproduced (oracle_* verdicts). */
+                                    verdict: string | null;
+                                }[];
+                            };
+                            accrual: {
+                                /** @description False whenever a reserve's stored rates trail the ledger: hf and the bases are on stored rates. */
+                                reproduced: boolean;
+                                /** Format: int64 */
+                                pending_seconds_max: number;
+                            };
+                            summary: {
+                                /** @description Every Positions entry read: no_debt + accounts_with_debt + unpriced.state_newer. */
+                                accounts_total: number;
+                                /** @description Accounts with debt at the ledger: the six classes plus unpriced, less unpriced.state_newer. */
+                                accounts_with_debt: number;
+                                /** @description Accounts with no debt at the ledger; state_newer accounts are in neither this nor accounts_with_debt. */
+                                no_debt: number;
+                                healthy: number;
+                                liquidatable: number;
+                                bad_debt: number;
+                                in_auction: number;
+                                indeterminate: number;
+                                liquidation_exempt: number;
+                                /** @description Accounts with no health factor, by reason: accounts with debt, except state_newer, which counts every account whose state at the ledger is unknown, with or without debt. */
+                                unpriced: {
+                                    [key: string]: number;
+                                };
+                                /** @description Effective collateral of priced accounts with debt, oracle base integer. */
+                                collateral_base: string;
+                                /** @description Effective liabilities of priced accounts with debt, oracle base integer. */
+                                liabilities_base: string;
+                                lower_bound: boolean;
+                                excluded: {
+                                    reason: string;
+                                    /** @description Accounts it covers; 0 for a pool-wide reason. */
+                                    accounts: number;
+                                }[];
+                            };
+                            bands: {
+                                from: string;
+                                to: string | null;
+                                accounts: number;
+                                liabilities_base: string;
+                            }[];
+                            accounts: {
+                                account: string;
+                                hf: string | null;
+                                /** @enum {string} */
+                                class: "healthy" | "liquidatable" | "bad_debt" | "in_auction" | "indeterminate" | "liquidation_exempt" | "unpriced";
+                                reason: string | null;
+                                collateral_base: string | null;
+                                liabilities_base: string | null;
+                                in_auction: boolean;
+                                pool_or_backstop: boolean;
+                                /** Format: int64 */
+                                last_modified_ledger: number;
+                            }[];
+                            /** @description True when the request's cursor was minted on a view at another ledger than `basis.ledger`: this page continues by sort key on the newer view. */
+                            view_changed?: boolean;
                             note: string;
                         };
                     };

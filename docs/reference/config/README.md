@@ -320,6 +320,12 @@ the `env:` column.
 | --- | ---- | ------- | ------------ | ----------- |
 | `lending_emissions_rollup.enabled` | `bool` | `false` | — | Start the lending emissions USD rollup in the API binary: it stores what /v1/lending/pools/{pool}/emissions/history serves at 1d, per pool, UTC day and stream line, into lending_emissions_usd_daily, one writer under an advisory lock. Off by default. The archival-node ansible role renders it from the stellarindex_lending_emissions_rollup_enabled inventory variable, itself default false. To enable: apply migration 0240, deploy, set the variable; the table fills itself from the emission event tables, no replay needed. The stellarindex_lending_emissions_rollup_stalled and _sweep_mismatch alerts cover it. |
 
+### `[lending_health]`
+
+| Key | Type | Default | Env override | Description |
+| --- | ---- | ------- | ------------ | ----------- |
+| `lending_health.enabled` | `bool` | `false` | — | Serve GET /v1/lending/pools/{pool}/health: each account's health factor on the pool's own oracle, computed on read at one lake ledger. Off by default; when off the route answers 404 lending-health-not-enabled. The archival-node ansible role renders it from the stellarindex_lending_health_enabled inventory variable, itself default false. No migration or replay: enable by setting the variable and deploying. |
+
 ### `[signup_reaper]`
 
 | Key | Type | Default | Env override | Description |

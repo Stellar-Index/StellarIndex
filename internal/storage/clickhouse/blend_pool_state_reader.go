@@ -24,6 +24,10 @@ type BlendReserveState struct {
 	Data          blend.ReserveData
 	Metrics       blend.ReserveMetrics
 	Config        *blend.ReserveConfig // nil when the reserve's config is not known
+	Ledger        uint32               // the ResData entry's last-modified ledger; 0 when not read from the current table
+	// LakeConfig is the applied ResConfig ledger entry, strictly decoded; nil when absent, undecodable or archived.
+	LakeConfig   *blend.ReserveConfig
+	ConfigLedger uint32 // LakeConfig's last-modified ledger
 }
 
 // BlendPoolState is a lending pool's current state: its instance config, read even when the pool has no reserve state, and its reserves.
@@ -39,6 +43,7 @@ type PoolInstance struct {
 	Config   blend.PoolConfig
 	Admin    string
 	Backstop string
+	Ledger   uint32 // the instance entry's last-modified ledger
 }
 
 // blendReserveStateQuery is a batched PK-prefix probe of ledger_entries_current's (entry_type, key_xdr) key; do not fold the latest entry
@@ -106,10 +111,11 @@ func (r *ExplorerReader) poolReserves(ctx context.Context, pool string, assets [
 	}
 	defer func() { _ = rows.Close() }()
 
-	dataByAsset, inst, matched, undecoded, err := scanReserveParts(rows, refByKey, model.decode)
+	parts, err := scanReserveParts(rows, refByKey, model.decode)
 	if err != nil {
 		return BlendPoolState{}, err
 	}
+	dataByAsset, inst, undecoded := parts.data, parts.inst, parts.undecoded
 	decoded := make([]string, 0, len(dataByAsset))
 	for a := range dataByAsset {
 		decoded = append(decoded, a)
@@ -117,7 +123,7 @@ func (r *ExplorerReader) poolReserves(ctx context.Context, pool string, assets [
 	// Drop archived entries before anything is reported: the projection keeps a lapsed
 	// entry's last value. Verdicts come from the shared SWR cache, so no per-request scan;
 	// only a cold cache waits, on the caller's deadline (handler maps it to a 503).
-	instArchived, archivedUndecoded, err := dropArchivedBlendReserves(ctx, r.ttlVerdicts, dataByAsset, refByKey, matched, undecoded)
+	instArchived, archivedUndecoded, err := dropArchivedBlendReserves(ctx, r.ttlVerdicts, parts, refByKey)
 	if err != nil {
 		return BlendPoolState{}, fmt.Errorf("clickhouse: blend reserves ttl liveness: %w", err)
 	}
@@ -140,9 +146,15 @@ func (r *ExplorerReader) poolReserves(ctx context.Context, pool string, assets [
 			unavailable[a] = ReserveArchived
 		}
 	}
-	return BlendPoolState{
-		Instance: inst, Reserves: assembleReserveStates(pool, assets, dataByAsset, configs, inst, model.metrics), Unavailable: unavailable,
-	}, nil
+	states := assembleReserveStates(pool, assets, dataByAsset, configs, inst, model.metrics)
+	for i := range states {
+		a := states[i].Asset
+		states[i].Ledger = parts.ledgers[a]
+		if c, ok := parts.configs[a]; ok {
+			states[i].LakeConfig, states[i].ConfigLedger = &c.cfg, c.ledger
+		}
+	}
+	return BlendPoolState{Instance: inst, Reserves: states, Unavailable: unavailable}, nil
 }
 
 var errUndecodableEntry = errors.New("contract data entry did not decode")
@@ -208,11 +220,11 @@ type keyRef struct {
 	kind  string // "ResData" | "ResConfig" | "Instance"
 }
 
-// blendReserveKeys builds the keys to fetch (instance entry plus ResData per asset)
-// and a key -> (asset, kind) index. ResConfig is not fetched.
+// blendReserveKeys builds the keys to fetch (instance entry plus ResData and ResConfig per asset)
+// and a key -> (asset, kind) index.
 func blendReserveKeys(poolID xdr.ContractId, assets []string) ([]string, map[string]keyRef, error) {
 	refByKey := make(map[string]keyRef)
-	keys := make([]string, 0, len(assets)+2)
+	keys := make([]string, 0, 2*len(assets)+2)
 	instanceKeys, err := instanceKeyXDR(xdr.Hash(poolID))
 	if err != nil {
 		return nil, nil, fmt.Errorf("clickhouse: lending pool instance key: %w", err)
@@ -226,12 +238,14 @@ func blendReserveKeys(poolID xdr.ContractId, assets []string) ([]string, map[str
 		if err != nil {
 			continue
 		}
-		k, err := poolDataKeyXDR(poolID, "ResData", assetID)
-		if err != nil {
-			continue
+		for _, kind := range []string{"ResData", "ResConfig"} {
+			k, err := poolDataKeyXDR(poolID, kind, assetID)
+			if err != nil {
+				continue
+			}
+			refByKey[k] = keyRef{asset: asset, kind: kind}
+			keys = append(keys, k)
 		}
-		refByKey[k] = keyRef{asset: asset, kind: "ResData"}
-		keys = append(keys, k)
 	}
 	return keys, refByKey, nil
 }
@@ -242,49 +256,95 @@ type reserveRows interface {
 	Err() error
 }
 
-// scanReserveParts decodes rows into per-asset ResData and the pool instance, and reports the keys that produced a row (matched). The
-// TTL filter is scoped to matched: judging keys the lake never returned could over-drop reserves we would have served. undecoded lists
-// the keys of ResData rows that were returned but did not decode; the caller TTL-checks them before counting a decode failure.
-func scanReserveParts(rows reserveRows, refByKey map[string]keyRef, decode func(xdr.ScVal) (blend.ReserveData, error),
-) (dataByAsset map[string]*blend.ReserveData, inst *PoolInstance, matched, undecoded []string, err error) {
-	dataByAsset = make(map[string]*blend.ReserveData)
+// reserveParts is one reserve scan, before the TTL filter. matched lists the keys that produced a decoded row: the TTL filter is
+// scoped to them, as judging keys the lake never returned could over-drop reserves we would have served. undecoded lists the keys of
+// ResData rows that were returned but did not decode; the caller TTL-checks them before counting a decode failure.
+type reserveParts struct {
+	data               map[string]*blend.ReserveData
+	ledgers            map[string]uint32 // ResData last-modified ledger by asset
+	configs            map[string]lakeReserveConfig
+	inst               *PoolInstance
+	matched, undecoded []string
+}
+
+type lakeReserveConfig struct {
+	cfg    blend.ReserveConfig
+	ledger uint32
+}
+
+// scanReserveParts decodes rows into per-asset ResData and ResConfig and the pool instance. An undecodable ResConfig is left out,
+// never defaulted.
+func scanReserveParts(rows reserveRows, refByKey map[string]keyRef, decode func(xdr.ScVal) (blend.ReserveData, error)) (reserveParts, error) {
+	p := reserveParts{data: map[string]*blend.ReserveData{}, ledgers: map[string]uint32{}, configs: map[string]lakeReserveConfig{}}
 	for rows.Next() {
 		var keyXDR, b64 string
 		if err := rows.Scan(&keyXDR, &b64); err != nil {
-			return nil, nil, nil, nil, fmt.Errorf("clickhouse: scan blend reserve: %w", err)
+			return reserveParts{}, fmt.Errorf("clickhouse: scan blend reserve: %w", err)
 		}
-		ref, ok := refByKey[keyXDR]
-		if !ok {
-			continue
-		}
-		val, valOK := contractDataValue(b64)
-		switch ref.kind {
-		case "Instance":
-			if !valOK {
-				continue
-			}
-			if pi, ok := poolInstanceFromStorage(val); ok {
-				inst = &pi
-			}
-			matched = append(matched, keyXDR)
-		case "ResData":
-			var rd blend.ReserveData
-			decErr := errUndecodableEntry
-			if valOK {
-				rd, decErr = decode(val)
-			}
-			if decErr != nil {
-				undecoded = append(undecoded, keyXDR)
-				continue
-			}
-			dataByAsset[ref.asset] = &rd
-			matched = append(matched, keyXDR)
+		if ref, ok := refByKey[keyXDR]; ok {
+			p.add(ref, keyXDR, b64, decode)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("clickhouse: blend reserves rows: %w", err)
+		return reserveParts{}, fmt.Errorf("clickhouse: blend reserves rows: %w", err)
 	}
-	return dataByAsset, inst, matched, undecoded, nil
+	return p, nil
+}
+
+func (p *reserveParts) add(ref keyRef, keyXDR, b64 string, decode func(xdr.ScVal) (blend.ReserveData, error)) {
+	val, modified, valOK := contractDataEntry(b64)
+	switch ref.kind {
+	case "Instance":
+		if !valOK {
+			return
+		}
+		if pi, ok := poolInstanceFromStorage(val); ok {
+			pi.Ledger = modified
+			p.inst = &pi
+		}
+		p.matched = append(p.matched, keyXDR)
+	case "ResConfig":
+		if !valOK {
+			return
+		}
+		if cfg, err := decodeLakeReserveConfig(val); err == nil {
+			p.configs[ref.asset] = lakeReserveConfig{cfg: cfg, ledger: modified}
+			p.matched = append(p.matched, keyXDR)
+		}
+	case "ResData":
+		var rd blend.ReserveData
+		decErr := errUndecodableEntry
+		if valOK {
+			rd, decErr = decode(val)
+		}
+		if decErr != nil {
+			p.undecoded = append(p.undecoded, keyXDR)
+			return
+		}
+		p.data[ref.asset], p.ledgers[ref.asset] = &rd, modified
+		p.matched = append(p.matched, keyXDR)
+	}
+}
+
+// reserveConfigFields is every field of Blend's ReserveConfig (V1 lacks the last two).
+var reserveConfigFields = []string{
+	"index", "decimals", "c_factor", "l_factor", "util", "max_util", "r_base", "r_one", "r_two", "r_three", "reactivity",
+	"supply_cap", "enabled",
+}
+
+// decodeLakeReserveConfig decodes a ResConfig entry and rejects one carrying a field Blend's ReserveConfig does not define, so a
+// layout change is an unread config rather than a misread one.
+func decodeLakeReserveConfig(v xdr.ScVal) (blend.ReserveConfig, error) {
+	m, err := scval.AsMap(v)
+	if err != nil {
+		return blend.ReserveConfig{}, err
+	}
+	for _, e := range m {
+		if e.Key.Type != xdr.ScValTypeScvSymbol || e.Key.Sym == nil || !slices.Contains(reserveConfigFields, string(*e.Key.Sym)) {
+			return blend.ReserveConfig{}, fmt.Errorf("clickhouse: reserve config field %v not in ReserveConfig", e.Key)
+		}
+	}
+	return blend.DecodeReserveConfig(v)
 }
 
 // dropArchivedBlendReserves removes reserve state whose entry is TTL-archived: ledger_entries_current keeps the last value after Soroban
@@ -294,10 +354,10 @@ func scanReserveParts(rows reserveRows, refByKey map[string]keyRef, decode func(
 func dropArchivedBlendReserves(
 	ctx context.Context,
 	verdicts *ttlLivenessCache,
-	dataByAsset map[string]*blend.ReserveData,
+	parts reserveParts,
 	refByKey map[string]keyRef,
-	matched, undecoded []string,
 ) (instArchived bool, archivedUndecoded map[string]bool, err error) {
+	dataByAsset, matched, undecoded := parts.data, parts.matched, parts.undecoded
 	if len(matched)+len(undecoded) == 0 {
 		return false, nil, nil
 	}
@@ -318,12 +378,15 @@ func dropArchivedBlendReserves(
 		switch refByKey[k].kind {
 		case "Instance":
 			clear(dataByAsset)
+			clear(parts.configs)
 			for _, u := range undecoded {
 				archivedUndecoded[refByKey[u].asset] = true
 			}
 			return true, archivedUndecoded, nil
 		case "ResData":
 			delete(dataByAsset, refByKey[k].asset)
+		case "ResConfig":
+			delete(parts.configs, refByKey[k].asset)
 		}
 	}
 	return false, archivedUndecoded, nil

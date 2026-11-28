@@ -7,6 +7,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
+// LendingHealthExcludedSourceProof is /health's source-exclusion proof, for the census in package v1_test.
+var LendingHealthExcludedSourceProof = TestLendingHealth_ExcludedSourceWithholdsOraclePrice
+
 // TipStreamDivergenceBudget is the production divergence sub-budget.
 const TipStreamDivergenceBudget = tipStreamDivergenceBudget
 

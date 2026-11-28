@@ -563,6 +563,11 @@ enabled = {{ 'true' if stellarindex_lending_revenue_rollup_enabled | default(fal
 [lending_emissions_rollup]
 enabled = {{ 'true' if stellarindex_lending_emissions_rollup_enabled | default(false) | bool else 'false' }}
 
+# Lending pool health route in stellarindex-api; 404 until the inventory sets
+# stellarindex_lending_health_enabled: true.
+[lending_health]
+enabled = {{ 'true' if stellarindex_lending_health_enabled | default(false) | bool else 'false' }}
+
 # Phase 2 freeze threshold (ADR-0019).
 [anomaly.phase2]
 # ADR-0019's 5.0. Firing is safe because the freeze lifecycle
