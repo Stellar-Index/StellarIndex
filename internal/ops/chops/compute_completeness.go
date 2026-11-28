@@ -99,7 +99,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	maxCarryAge := fs.Duration("max-carry-age", completeness.MaxProjectionCarryAge, "With -pass: a source whose clean projection claim was last reconciled over its whole served range longer ago than this (or never, on record) re-verifies from genesis instead of carrying the claim forward again — oldest evidence first, at most 3 sources per pass, never the SDEX census or a reproofOutlastsPass source such as sep41_transfers (their full re-verify outlasts the pass; compute-completeness-sdex.timer re-proves sdex weekly with -source sdex). 0 = carry without bound.")
 	sourceTimeout := fs.Duration("source-timeout", 45*time.Minute, "Deadline for ONE source's evaluation; a source that exceeds it gets no verdict (its prior stands) and the pass moves on, so one slow source cannot starve the rest. 0 disables; ignored with -source, where -timeout is the budget (the weekly SDEX re-proof needs hours).")
 	timeout := fs.Duration("timeout", 120*time.Minute, "Deadline for the whole run; sources not reached by it keep their prior verdict and are named in the error. Keep it below the systemd unit's TimeoutStartSec.")
-	absentFlag := fs.String("absent-by-design", "", "Comma-separated sources this NETWORK has none of (a quiet test net). An empty served tier for one is accepted as a projection claim only when substrate and recognition are verified and a lake read over its whole [genesis, tip] finds no row; a declared source with rows keeps its normal verdict and is flagged absent_declared_but_present. Each declared source re-reads its whole range every run, so never declare a busy source. An unknown name fails the run.")
+	absentFlag := fs.String("absent-by-design", "", "Comma-separated sources this NETWORK has none of (a quiet test net); only identity-free census sources (sdex) qualify. An empty served tier for one is accepted as a projection claim only when substrate and recognition are verified, a lake read over its whole [genesis, tip] finds no row, and the raw tables that read joins are whole (RawTableCensus); a declared source with rows keeps its normal verdict and is flagged absent_declared_but_present. Each declared source re-reads its whole range every run, so never declare a busy source. An unknown or identity-gated name fails the run.")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -272,6 +272,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		return fmt.Errorf("prior completeness verdicts (failing closed — an incremental run cannot gate its claim without them): %w", err)
 	}
 	priorProj, priorSub, priorRec, priorWatermark := buildPriorVerdicts(priorSnaps)
+	priorPresent := priorDeclaredPresence(priorSnaps, declaredAbsent)
 	if *pass { // projectionFloor honours an expired carry only in -pass
 		if refloored := expireStaleCarries(priorProj, catalogue, time.Now(), *maxCarryAge); len(refloored) > 0 {
 			fmt.Fprintf(os.Stderr, "compute-completeness: re-proving expired projection evidence from genesis this pass: %s\n", strings.Join(refloored, ", "))
@@ -426,7 +427,8 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		projFrom, deferDirty := projectionPlan(src, *pass, priorProj[src.name], priorWatermark[src.name], *fromLedger, srW.Ledger, dirtyWin, hasDirty)
 		switch {
 		case deferDirty:
-			// Detail is written by the window disposition below.
+			// Detail is written by the window disposition below. No fresh presence finding, so the stored one carries.
+			absence.present = priorPresent[src.name]
 		case srW.Ledger >= projFrom:
 			streamer := clickhouse.ReconcileEventStreamer{Addr: *chAddr, NeedOpArgs: src.needsOpArgs, NeedStateWriteKeys: src.needsStateWriteKeys, SymbolTopic0Only: src.symbolTopic0}
 			scopes, servedMins, servedFrom, runFrom, serr := projectionScopes(ctx, store, src, genesis, projFrom, srW.Ledger)
@@ -438,7 +440,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			// durable floor first and treat loss as a hard failure; the surviving rows would
 			// otherwise reconcile perfectly and read complete.
 			floorLoss := detectFloorLoss(src, servedMins, targetFloors)
-			delta, blind, pdetail, perr := reconcileProjectionAggregate(ctx, store, streamer, *chAddr, src, scopes)
+			delta, blind, pdetail, lakeRead, perr := reconcileProjectionAggregate(ctx, store, streamer, *chAddr, src, scopes)
 			if perr != nil {
 				return fmt.Errorf("%s: projection: %w", src.name, perr)
 			}
@@ -466,7 +468,8 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			if declaredAbsent[src.name] {
 				verified := lakeComplete && recOK && srW.Ledger == tip && len(floorLoss) == 0
 				var aerr error
-				if absence, aerr = judgeDeclaredAbsence(ctx, src, servedMins, verified, genesis, tip, lakeAbsenceReader(store, streamer, *chAddr, src)); aerr != nil {
+				if absence, aerr = judgeDeclaredAbsence(ctx, src, servedMins, verified, genesis, tip,
+					lakeAbsenceReader(store, streamer, *chAddr, src, lakeRead), rawCensusCheck(*chAddr, censusLakeTables)); aerr != nil {
 					return fmt.Errorf("%s: %w", src.name, aerr)
 				}
 			}
@@ -489,6 +492,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			}
 		default:
 			detail = append(detail, "projection: not evaluated (earlier claim failed at genesis)")
+			absence.present = priorPresent[src.name]
 		}
 		// Coverage is substrate and recognition; complete also requires the served-tier projection
 		// to reconcile, which lakeComplete never does. The served axis cannot be stronger than
@@ -1270,18 +1274,20 @@ func lakeCoverageProblem(genesis uint32, scanClean, substrateOK bool, prior prio
 
 // reconcileProjectionAggregate is the ClickHouse projection check (ADR-0033 Claim 2b), strict per ledger (totals let a drop net against a
 // phantom overcount); sources with mismatched keying opt out via reconSource.aggregate. Returns summed deltas (0 = clean).
-func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, chStreamer completeness.EventStreamer, chAddr string, src reconSource, scopes []projectionScope) (int, completeness.BlindSpots, string, error) {
+func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, chStreamer completeness.EventStreamer, chAddr string, src reconSource, scopes []projectionScope) (int, completeness.BlindSpots, string, projectionRead, error) {
+	var read projectionRead
 	if len(scopes) == 0 {
-		return 0, completeness.BlindSpots{}, "", nil
+		return 0, completeness.BlindSpots{}, "", read, nil
 	}
 	lo, hi := scopeUnion(scopes)
 	if lo > hi {
-		return 0, completeness.BlindSpots{}, "", nil // every target's scope is empty
+		return 0, completeness.BlindSpots{}, "", read, nil // every target's scope is empty
 	}
 	expectedFor, blind, eerr := expectedProjection(ctx, chStreamer, chAddr, src, lo, hi)
 	if eerr != nil {
-		return 0, completeness.BlindSpots{}, "", eerr
+		return 0, completeness.BlindSpots{}, "", read, eerr
 	}
+	read = projectionRead{lo: lo, hi: hi, ran: true, uniform: true, blind: blind}
 	var totalDelta int
 	var details []string
 	// Blindness goes first: it explains why a zero delta is not evidence.
@@ -1289,16 +1295,21 @@ func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, c
 		details = append(details, d)
 	}
 	for i, tgt := range src.targets {
-		d, detail, terr := reconcileTarget(ctx, store, src, tgt, expectedFor(tgt), scopes[i])
+		d, detail, served, terr := reconcileTarget(ctx, store, src, tgt, expectedFor(tgt), scopes[i])
 		if terr != nil {
-			return 0, completeness.BlindSpots{}, "", terr
+			return 0, completeness.BlindSpots{}, "", projectionRead{}, terr
+		}
+		read.served += served
+		read.uniform = read.uniform && scopes[i] == projectionScope{From: lo, To: hi}
+		for _, n := range clipCounts(expectedFor(tgt), scopes[i]) {
+			read.expected += n
 		}
 		if d != 0 {
 			totalDelta += d
 			details = append(details, detail)
 		}
 	}
-	return totalDelta, blind, strings.Join(details, "; "), nil
+	return totalDelta, blind, strings.Join(details, "; "), read, nil
 }
 
 // expectedProjection re-derives Claim 2b's expected side once over [lo, hi]: a per-target accessor plus blind spots. A ContractCall whose
@@ -1423,16 +1434,19 @@ type gatedContractSetter interface {
 
 // reconcileTarget compares one target's re-derived expected counts (clipped to
 // the target's own scope) against its served counts over that same scope.
-func reconcileTarget(ctx context.Context, store *timescale.Store, src reconSource, tgt reconTarget, expected map[uint32]int, sc projectionScope) (int, string, error) {
+func reconcileTarget(ctx context.Context, store *timescale.Store, src reconSource, tgt reconTarget, expected map[uint32]int, sc projectionScope) (delta int, detail string, served int, err error) {
 	if sc.empty() {
-		return 0, "", nil
+		return 0, "", 0, nil
 	}
 	actual, err := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.countFilter(), sc.From, sc.To)
 	if err != nil {
-		return 0, "", err
+		return 0, "", 0, err
 	}
-	d, detail := projectionDelta(src, tgt.table, clipCounts(expected, sc), actual, sc.From, sc.To)
-	return d, detail, nil
+	for _, n := range actual {
+		served += n
+	}
+	delta, detail = projectionDelta(src, tgt.table, clipCounts(expected, sc), actual, sc.From, sc.To)
+	return delta, detail, served, nil
 }
 
 // reDeriveSDEXCensusViaDecoder re-derives the expected SDEX trade count per ledger via the decoder, counting distinct valid priceable

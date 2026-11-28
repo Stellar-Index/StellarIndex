@@ -630,10 +630,14 @@ stellarindex_sources_not_yet_enabled: {}
 #   empty declared source does not read stale. Known names: sep1/issuers,
 #   supply/asset_supply_history, sep41_supply/supply_flows; any other such
 #   name fails data-freshness.service and voids its half of the list.
-# - a bare completeness source (sdex, soroswap, …): compute-completeness
-#   accepts its empty projection only if a lake read over its whole
-#   [genesis, tip] finds no row, and re-reads that range every run, so never
-#   declare a busy source. An unknown name fails compute-completeness.
+# - a bare completeness source, and only one whose expected side needs no
+#   contract identity: today just sdex. compute-completeness accepts its
+#   empty projection only if a lake read over its whole [genesis, tip]
+#   finds no row and the raw tables that read joins are whole; it re-reads
+#   that range every run, so never declare a busy source. Any other bare
+#   name (unknown, or identity-gated like soroswap) fails EVERY
+#   compute-completeness run on the host, and its prior verdicts stand;
+#   a name valid on one network's config can be invalid on another.
 # A declared source that holds rows keeps its normal verdict and raises
 # stellarindex_data_source_absent_declared_but_present. Empty on pubnet,
 # where an empty one of these is a fault. Futurenet after a reset:
