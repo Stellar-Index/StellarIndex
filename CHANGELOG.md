@@ -61,7 +61,7 @@ Tested against Stellar protocol 27. Migration 0241 (schema version 241): two `bo
 
 ## [v0.145.0] - 2026-11-28
 
-Tested against Stellar protocol 27. Migration 0240 (schema version 240): two new tables, `lending_emissions_usd_daily` and `lending_emissions_usd_coverage`, and their API-role grants; nothing existing is altered. No `pkg/*` break. No ClickHouse DDL change. Operator step after deploy: the scoped lending-state walk for the three Comet pools (see Added). No API shape change: one `usd_reason` description is widened.
+Tested against Stellar protocol 27. Migration 0240 (schema version 240): two new tables, `lending_emissions_usd_daily` and `lending_emissions_usd_coverage`, and their API-role grants; nothing existing is altered. No `pkg/*` break. No ClickHouse DDL change. No API shape change: one `usd_reason` description is widened.
 
 ### Added
 
@@ -77,7 +77,7 @@ Tested against Stellar protocol 27. Migration 0240 (schema version 240): two new
 
 ## [v0.144.0] - 2026-11-27
 
-Tested against Stellar protocol 27. No migration (schema version stays 239). No `pkg/*` break. No ClickHouse DDL change. Operator step after deploy: the scoped lending-state walk for the three Comet pools (see Added). No API contract change: several responses now carry the correct UTC day or month where a non-UTC ClickHouse server zone shifted it.
+Tested against Stellar protocol 27. No migration (schema version stays 239). No `pkg/*` break. No ClickHouse DDL change. No API contract change: several responses now carry the correct UTC day or month where a non-UTC ClickHouse server zone shifted it.
 
 ### Added
 
@@ -100,7 +100,7 @@ Tested against Stellar protocol 27. No migration (schema version stays 239). No 
 
 ## [v0.143.0] - 2026-11-27
 
-Tested against Stellar protocol 27. No migration (schema version stays 239). No `pkg/*` break (one test line under `pkg/client`). No ClickHouse DDL change. Operator step after deploy: the scoped lending-state walk for the three Comet pools (see Added). API additions only: one new endpoint and new optional fields on it.
+Tested against Stellar protocol 27. No migration (schema version stays 239). No `pkg/*` break (one test line under `pkg/client`). No ClickHouse DDL change. API additions only: one new endpoint and new optional fields on it.
 
 ### Added
 
