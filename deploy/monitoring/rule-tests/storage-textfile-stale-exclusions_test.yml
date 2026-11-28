@@ -13,6 +13,38 @@ rule_files:
 evaluation_interval: 10m
 
 tests:
+  # The weekly lending-interest-prove-full file is 3 days old between runs: the
+  # catch-all must stay silent on it (stellarindex_lending_interest_proof_stale,
+  # 8d, owns it) yet still fire on a daily producer of the same age.
+  - interval: 1m
+    name: textfile_producer_stale excludes the weekly prove-full file but fires on a daily producer 3 days old
+    input_series:
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_ch_entry_history_lending_interest_prove_full.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x4400'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_ch_entry_history_lending_interest_prove.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x4400'
+    alert_rule_test:
+      - eval_time: 72h
+        alertname: stellarindex_textfile_producer_stale
+        exp_alerts:
+          - exp_labels:
+              file: /var/lib/node_exporter/textfile_collector/ops_job_ch_entry_history_lending_interest_prove.prom
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-stale.md#stellarindex_textfile_producer_stale
+              summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/ops_job_ch_entry_history_lending_interest_prove.prom has not been refreshed in 24h+ on r1:9100"
+              description: |
+                node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/ops_job_ch_entry_history_lending_interest_prove.prom
+                for 24+ hours. Its producing timer/cron has likely died; check
+                scripts/ci/textfile-producers.manifest for which script owns
+                this file and `systemctl status` its unit. This is a catch-all:
+                most producers should have fired their own, tighter alert long
+                before this one does.
+
   # ── the textfile_producer_stale catch-all false-fires on producer shapes with
   # no dedicated staleness alert: ops_job's pid-orphan siblings, the
   # one-off backfill, ch-backfill, supply-seed, usd-volume-restamp, tag-tx-index and per-source projected-rebuild
