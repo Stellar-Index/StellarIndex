@@ -68,15 +68,21 @@ the underlying feed's rounds. Each rule and the upstream line it reproduces:
 ### Feed state
 
 The feed's own instance entry (Reflector v7.1.0, `oracleagg.DecodeFeedState`; an unknown String key fails the
-decode) carries everything the recipe needs from it: `last_timestamp` (ms), `resolution` (ms), `decimals`,
-`protocol` (only 2 is modelled), `base_asset`, `assets`, `expiration`, `history` (32 bytes per asset, bit `p` = priced `p` periods before `last_timestamp`) and `cache` (the
-recent rounds' update masks and prices). Our stored rounds are cross-checked against it, and any disagreement is
-`oracle_feed_incomplete`, never a price:
+decode) carries everything the recipe needs from it: `last_timestamp` (ms), `resolution` (ms), `period` (the
+retention, ms), `decimals`, `protocol` (only 2 is modelled), `base_asset`, `assets`, `history` (32 bytes per asset,
+bit `p` = priced `p` periods before `last_timestamp`; periods past 255 read not-priced) and `cache` (the recent
+rounds' update masks and prices). `expiration` is an allowed key that is not decoded. Our stored rounds are
+cross-checked against it, and any disagreement is `oracle_feed_incomplete`, never a price:
 
 - our newest stored round at or after `last_timestamp` must be `last_timestamp`, on the resolution boundary;
   fewer is allowed only when the history mask says that round priced nothing (an all-zero round writes no row);
 - for every round the recipe touches, a stored row exists iff the asset's history bit is set;
 - where the round is in `cache`, the stored integer equals the cached one.
+
+A round not in `cache` is read from its temporary entry, which `store_prices` extends to
+`(period/1000/5 + 1)·2` ledgers and only when that exceeds 16 (`prices.rs:181-188`). Counted at 5 s a ledger, a
+touched round that is uncached and at least that old (or any uncached round when the extension does not apply) is
+`oracle_unsupported`: the entry may have expired. With the feeds' 1-day retention that is ~48 h.
 
 An asset's index is `assets.rs::resolve_asset_index`, `load_all_assets(e).first_index_of(asset)`: its first
 position in `assets`. The instance also holds `Symbol`/`Address` → `u32` entries that v7.1.0 neither reads nor
@@ -89,14 +95,17 @@ read.
 
 Both real feeds (`test/fixtures/lending_oracle/reflector-instances.tsv`) decode, all 52 DEX assets resolve, and
 their history mask agrees with the cached last round's update mask asset by asset. Source files:
-`oracle_src_assets.rs`, `oracle_src_settings.rs` (sha256 `dc482728…`, fetched from
-`reflector-network/reflector-contract` tag `v7.1.0`, `oracle/src/settings.rs`).
+`oracle_src_assets.rs` (sha256 `666990736c704f001da616a929fc78f38ecc912f92d58c831691b2fe23905071`) and
+`oracle_src_settings.rs` (sha256 `dc482728ac274924d300b840c840e008e22105c7a79bdf25a0f0bccb83834b98`), both
+byte-identical to `reflector-network/reflector-contract` tag `v7.1.0`, `oracle/src/`.
 
 Verdicts the contract itself would give: `oracle_asset_missing`, `oracle_asset_blocked`, `oracle_contract_panics`
 (the call traps on underflow), `oracle_feed_asset_unknown` (the feed does not list the asset), `oracle_price_stale`,
 `oracle_price_absent` (v1: the asset sat out the last round), `oracle_deviation`, `oracle_deviation_unverifiable`
 (v2: no earlier period). Where we cannot reproduce it: `oracle_unsupported`, `oracle_read_failed` (our read
-failed), `oracle_feed_incomplete`, `oracle_state_newer` (an entry changed after the evaluation ledger).
+failed), `oracle_feed_incomplete`, `oracle_feed_conflict` (our stored rows for a round disagree with each other),
+`oracle_state_newer` (an entry changed after the evaluation ledger), `oracle_state_archived` (an entry is
+TTL-archived or undecodable in the lake).
 
 ## Read path
 
@@ -108,7 +117,12 @@ written yet is caught by the feed-state cross-check above and reported, not repl
    config; v1 reads its persistent entries by exact key. Each feed's instance entry gives its build and state.
    Every entry's last-modified ledger must be `<= L`, else `oracle_state_newer`; a v1 entry removed after `L`
    counts too. The adapter and its feeds' state are cached per (server, oracle, `L`), with concurrent misses
-   sharing one read; an adapter read failure and a feed read failure on our side are not cached.
+   sharing one read. Nothing that failed on our side is cached: not an adapter read failure, a feed read
+   failure, or a single `AssetConfig` / `Blocked` read failure. Chain-state verdicts (newer, archived,
+   unsupported layout) are cached for that `L`.
+   Known availability limit: the entries are read at the lake tip, not as of `L`, and the feed instance changes
+   every round, so roughly 5–10% of reads land between a round's write and the watermark reaching it and return
+   `oracle_state_newer`. Reading entries as of `L` from `ledger_entry_changes` would remove this; not done.
 2. Config failures fail the whole pool only when the instance itself cannot be read or decoded; one malformed
    or newer `AssetConfig` / `Blocked` entry fails that reserve alone.
 3. Feed rows come from `Store.OracleFeedRounds`, keyed on the feed CONTRACT from the adapter config, every stored
@@ -123,7 +137,13 @@ Verdicts per pool and reason: `stellarindex_lending_oracle_verdicts_total{pool,r
 ## Not verified, and modelled as explicit inputs
 
 - **Asset expiry.** `assets.rs` keeps an `expiration` vector per asset; the price read path (`price`,
-  `lastprice`) does not consult it, so it is decoded for the key check only.
+  `lastprice`) does not consult it, so it is allowed and not decoded.
+- **Temporary-entry expiry.** The entry life above assumes 5 s ledgers (Protocol 28) and that the round's entry
+  was extended once at `store_prices`; a later `extend_ttl` by anyone would only lengthen it. Rounds older than
+  the bound are refused rather than proven expired.
+- **`protocol.rs`.** `protocol` and `protocol_update` are read by `protocol::at_latest_protocol_version`, which is
+  not in the source copy. The recipe assumes `protocol == 2` means the latest-version path in
+  `retrieve_asset_price_data` (`prices.rs:34`) and models nothing else; `protocol_update`'s meaning is unverified.
 - **Reflector build.** The v6.0.x hashes are recorded only by prefix in [`reflector.md`](reflector.md), so only a
   feed running the attested v7.1.0 build (`25fc3060…`) is modelled; the v6 rule is implemented and tested but
   reachable only by explicit input.

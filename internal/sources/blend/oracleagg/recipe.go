@@ -27,17 +27,24 @@ const (
 	VerdictReadFailed     Verdict = "oracle_read_failed"     // our read of config, feed state or rows failed
 	VerdictFeedIncomplete Verdict = "oracle_feed_incomplete" // our stored rounds disagree with the feed's own state
 	VerdictStateNewer     Verdict = "oracle_state_newer"     // a config or feed entry changed after the evaluation ledger
+	VerdictStateArchived  Verdict = "oracle_state_archived"  // a config or feed entry is TTL-archived (or undecodable) in the lake
+	VerdictFeedConflict   Verdict = "oracle_feed_conflict"   // our stored rows for one round disagree (two prices, sources or quotes)
 )
 
 // ErrEntryNewer marks an entry last modified after the evaluation ledger; its value is not the state at that ledger.
 var ErrEntryNewer = errors.New("oracleagg: entry modified after the evaluation ledger")
 
-// ErrorVerdict names a config or feed-state failure: an entry newer than the evaluation ledger, a layout we do not
-// decode (ErrConfig), or else our own read failing.
+// ErrEntryArchived marks an entry the lake holds archived or undecodable: chain state we cannot read, not our failure.
+var ErrEntryArchived = errors.New("oracleagg: entry archived")
+
+// ErrorVerdict names a config or feed-state failure: an entry newer than the evaluation ledger, an archived entry,
+// a layout we do not decode (ErrConfig), or else our own read failing.
 func ErrorVerdict(err error) Verdict {
 	switch {
 	case errors.Is(err, ErrEntryNewer):
 		return VerdictStateNewer
+	case errors.Is(err, ErrEntryArchived):
+		return VerdictStateArchived
 	case errors.Is(err, ErrConfig):
 		return VerdictUnsupported
 	}
@@ -105,7 +112,7 @@ func lastPriceV2(cfg Config, asset Asset, t uint64, feed Feed) Result {
 	if !ok {
 		return verdict(VerdictAssetMissing, "%s is not configured on the adapter", asset)
 	}
-	q, r := newFeedQuery(feed, rule)
+	q, r := newFeedQuery(feed, rule, t)
 	if r != nil {
 		return *r
 	}
@@ -193,7 +200,7 @@ func lastPriceV1(cfg Config, asset Asset, t uint64, feed Feed) Result {
 	if rule.Blocked {
 		return verdict(VerdictAssetBlocked, "%s is blocked on the adapter", asset)
 	}
-	q, r := newFeedQuery(feed, rule)
+	q, r := newFeedQuery(feed, rule, t)
 	if r != nil {
 		return *r
 	}
@@ -224,9 +231,10 @@ type feedQuery struct {
 	feed  Feed
 	asset Asset
 	index uint32
+	nowMs uint64 // the ledger time
 }
 
-func newFeedQuery(feed Feed, rule AssetRule) (feedQuery, *Result) {
+func newFeedQuery(feed Feed, rule AssetRule, t uint64) (feedQuery, *Result) {
 	st := feed.State
 	switch {
 	case feed.Program == FeedUnknown:
@@ -243,7 +251,7 @@ func newFeedQuery(feed Feed, rule AssetRule) (feedQuery, *Result) {
 	if !ok {
 		return feedQuery{}, verdictPtr(VerdictFeedAssetUnknown, "feed %s does not quote %s", rule.Feed, rule.FeedAsset)
 	}
-	return feedQuery{feed: feed, asset: rule.FeedAsset, index: idx}, nil
+	return feedQuery{feed: feed, asset: rule.FeedAsset, index: idx, nowMs: t * 1000}, nil
 }
 
 // checkLastRound requires our newest stored round to be the feed's last_timestamp, unless the chain says that round
@@ -286,8 +294,15 @@ func (q feedQuery) roundPrice(ts uint64) (*big.Int, bool, *Result) {
 	if !onChain {
 		return nil, false, nil
 	}
-	if cp, cached := st.CachedPrice(q.index, ts); cached && cp.Cmp(row) != 0 {
+	cp, cached := st.CachedPrice(q.index, ts)
+	if cached && cp.Cmp(row) != 0 {
 		return nil, false, verdictPtr(VerdictFeedIncomplete, "%s at round %d ms: stored %s, chain cache %s", q.asset, ts, row, cp)
+	}
+	// load_history_record (prices.rs:136-147) falls back from the cache to the round's temporary entry, which
+	// lives only as long as store_prices extended it.
+	if !cached && q.nowMs > ts && q.nowMs-ts >= st.EntryLifeMs() {
+		return nil, false, verdictPtr(VerdictUnsupported, "%s round %d ms is not cached and %d ms old, past its entry life %d ms",
+			q.asset, ts, q.nowMs-ts, st.EntryLifeMs())
 	}
 	return row, true, nil
 }

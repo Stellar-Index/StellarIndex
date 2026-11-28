@@ -64,7 +64,7 @@ func consistent(lastS, resMs uint64, prices map[uint64]*big.Int) Feed {
 	f := Feed{
 		Program: FeedReflectorV7,
 		State: FeedState{
-			LastTimestampMs: lastS * 1000, ResolutionMs: resMs, Decimals: 14, Protocol: ReflectorProtocol,
+			LastTimestampMs: lastS * 1000, ResolutionMs: resMs, RetentionMs: 86_400_000, Decimals: 14, Protocol: ReflectorProtocol,
 			Base: Asset{Symbol: "USD"}, Assets: feedAssets, History: make([]byte, 32*len(feedAssets)),
 		},
 		Prices: prices,
@@ -300,6 +300,36 @@ func TestLastPriceV2_FeedResolution(t *testing.T) {
 		// Adapter caches 300 s against a 60 s feed: it probes R, R−300, R−600, R−900 and never sees R−60.
 		{name: "adapter 300 s, feed 60 s", cfg: v2Config(), asset: xlm, t: r + 30, feed: consistent(r, 60_000, rows), verdict: VerdictPriceStale},
 	})
+}
+
+// prices.rs:181-188: store_prices extends a round's temporary entry to (period/1000/5 + 1)·2 ledgers. A 1 h
+// retention gives (720 + 1)·2 = 1442 ledgers = 7210 s at 5 s; load_history_record (prices.rs:136-147) reads the
+// cache first, so only an uncached round past that life is unreachable.
+func TestLastPriceV1_TemporaryEntryLife(t *testing.T) {
+	xlm := Stellar(xlmSAC)
+	hour := func(f Feed) Feed { f.State.RetentionMs = 3_600_000; return f }
+	unset := func(f Feed) Feed { f.State.RetentionMs = 0; return f }
+	rows := map[uint64]int64{r: 1e14}
+	runRecipe(t, []recipeCase{
+		{name: "1 h retention, round 7209 s old", cfg: v1Config(false), asset: xlm, t: r + 7209, feed: hour(feed(r, rows)), price: "10000000", ts: r},
+		{name: "1 h retention, round 7210 s old", cfg: v1Config(false), asset: xlm, t: r + 7210, feed: hour(feed(r, rows)), verdict: VerdictUnsupported},
+		{name: "1 h retention, old round still cached", cfg: v1Config(false), asset: xlm, t: r + 7210, feed: hour(withCache(feed(r, rows), 1e14)), price: "10000000", ts: r},
+		// (0/1000/5 + 1)·2 = 2 ledgers <= 16: no extension, the network minimum is unknown.
+		{name: "retention unset", cfg: v1Config(false), asset: xlm, t: r + 1, feed: unset(feed(r, rows)), verdict: VerdictUnsupported},
+	})
+}
+
+// prices.rs:46-48: a round more than 255 periods back is never priced, whatever the next asset's mask holds.
+func TestHasPrice_256PeriodBound(t *testing.T) {
+	s := FeedState{Assets: feedAssets, History: make([]byte, 32*len(feedAssets))}
+	setHistory(&s, 1, 255)
+	setHistory(&s, 0, 0) // byte 31 of asset 0, where an unguarded period 256 of asset 1 would land
+	if !s.HasPrice(1, 255) {
+		t.Fatal("period 255 must be readable")
+	}
+	if s.HasPrice(1, 256) {
+		t.Fatal("period 256 must read not-priced")
+	}
 }
 
 // One asset whose config entry is unreadable fails alone.

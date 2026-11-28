@@ -3,6 +3,8 @@ package v1
 import (
 	"bufio"
 	"context"
+	"errors"
+	"fmt"
 	"math/big"
 	"os"
 	"slices"
@@ -23,6 +25,7 @@ import (
 const (
 	oracleCEXAdapter = "CCVTVW2CVA7JLH4ROQGP3CU4T3EXVCK66AZGSM4MUQPXAI4QHCZPOATS"
 	oracleDEXAdapter = "CDN7JD6SP32RZHB3DHK4S4AWCCQF6GYIUO455UCR4RGRZILZDRD24N36"
+	oracleV1Adapter  = "CATKK5ZNJCKQQWTUWIUFZMY6V6MOQUGSTFSXMNQZHVJHYF7GVV36FB3Y"
 	oracleCEXFeed    = "CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN"
 	oracleDEXFeed    = "CALI2BYU2JE6WVRUFYTS6MSBNEHGJ35P4AVCZYF3B6QOE3QKOB2PLE6M"
 	oracleFXFeed     = "CBKGPWGKSKZF52CFHMTRR23TBWTPMRDIYZ4O2P5VS65BMHYH4DXMCJZC"
@@ -42,16 +45,38 @@ var (
 
 type fakeOracleLake struct {
 	ExplorerReader
-	instance map[string]clickhouse.ContractInstance
+	instance    map[string]clickhouse.ContractInstance
+	instanceErr map[string]error
+	// persistent maps a key's base64 to its value; removed maps it to a removal ledger; fail fails it once.
+	persistent map[string]scval.ScVal
+	removed    map[string]uint32
+	fail       map[string]bool
+	reads      map[string]int
 }
 
 func (f *fakeOracleLake) ContractInstance(_ context.Context, c string) (clickhouse.ContractInstance, bool, error) {
+	if err := f.instanceErr[c]; err != nil {
+		return clickhouse.ContractInstance{}, false, err
+	}
 	i, ok := f.instance[c]
 	return i, ok, nil
 }
 
-func (f *fakeOracleLake) ContractPersistentEntry(context.Context, string, scval.ScVal) (scval.ScVal, uint32, bool, error) {
-	return scval.ScVal{}, 0, false, nil
+func (f *fakeOracleLake) ContractPersistentEntry(_ context.Context, _ string, k scval.ScVal) (scval.ScVal, uint32, bool, error) {
+	key, _ := xdr.MarshalBase64(k)
+	if f.reads == nil {
+		f.reads = map[string]int{}
+	}
+	f.reads[key]++
+	if f.fail[key] {
+		delete(f.fail, key)
+		return scval.ScVal{}, 0, false, errors.New("clickhouse: contract data lookup: connection reset")
+	}
+	if l, ok := f.removed[key]; ok {
+		return scval.ScVal{}, l, false, nil
+	}
+	v, ok := f.persistent[key]
+	return v, oracleLedger - 2000, ok, nil
 }
 
 // CloseTimeForLedger closes every ledger 5 s after the previous one, anchored at oracleLedger.
@@ -69,10 +94,14 @@ type fakeOracleRow struct {
 type fakeOracleFeeds struct {
 	LendingReader
 	rows []fakeOracleRow
+	err  error
 }
 
 // OracleFeedRounds applies the SQL's filters: contract, ts windows, ledger, and the asset keys for prices.
 func (f *fakeOracleFeeds) OracleFeedRounds(_ context.Context, contract string, keys []string, lastFrom, from, to time.Time, maxLedger uint32) (timescale.OracleFeedWindow, error) {
+	if f.err != nil {
+		return timescale.OracleFeedWindow{}, f.err
+	}
 	w := timescale.OracleFeedWindow{Prices: map[int64]canonical.Amount{}}
 	for _, r := range f.rows {
 		if r.contract != contract || r.ts.After(to) || r.ledger > maxLedger {
@@ -118,6 +147,48 @@ func fixtureInstance(t *testing.T, file string, col int, contract string) xdr.Sc
 	return xdr.ScContractInstance{}
 }
 
+// v1Entries is every persistent entry of oracleV1Adapter in v1-entries.tsv, keyed by the key ScVal's base64.
+func v1Entries(t *testing.T) map[string]scval.ScVal {
+	t.Helper()
+	raw, err := os.ReadFile("../../../test/fixtures/lending_oracle/v1-entries.tsv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]scval.ScVal{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		cols := strings.Split(line, "\t")
+		if len(cols) < 4 {
+			continue
+		}
+		var le xdr.LedgerEntry
+		if err := xdr.SafeUnmarshalBase64(cols[3], &le); err != nil {
+			t.Fatal(err)
+		}
+		cd := le.Data.MustContractData()
+		id := cd.Contract.MustContractId()
+		if strkey.MustEncode(strkey.VersionByteContract, id[:]) != oracleV1Adapter || cd.Key.Type == xdr.ScValTypeScvLedgerKeyContractInstance {
+			continue
+		}
+		k, _ := xdr.MarshalBase64(cd.Key)
+		out[k] = cd.Val
+	}
+	if len(out) == 0 {
+		t.Fatal("no v1 persistent entries")
+	}
+	return out
+}
+
+// v1Key is the base64 of the v1 adapter's persistent key variant(asset) for the XLM SAC.
+func v1Key(t *testing.T, variant string) string {
+	t.Helper()
+	ak, err := oracleagg.AssetScVal(oracleagg.Stellar(oracleXLMSAC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, _ := xdr.MarshalBase64(scval.NewVec(scval.NewSymbol(variant), ak))
+	return k
+}
+
 // feedPeriods is a feed's chain-side history: asset index → periods before the last round it was priced in.
 type feedPeriods map[uint32][]uint32
 
@@ -156,10 +227,15 @@ func newOracleServer(t *testing.T, adapterHash string, rows []fakeOracleRow, fee
 	adapter := func(id string) clickhouse.ContractInstance {
 		return clickhouse.ContractInstance{WasmHash: adapterHash, Storage: *fixtureInstance(t, "instances.tsv", 2, id).Storage, Ledger: oracleLedger - 1000}
 	}
-	lake := &fakeOracleLake{instance: map[string]clickhouse.ContractInstance{
-		oracleCEXAdapter: adapter(oracleCEXAdapter), oracleDEXAdapter: adapter(oracleDEXAdapter),
-		oracleCEXFeed: {WasmHash: oracleagg.ReflectorV71Hash, Storage: feed, Ledger: oracleLedger - 10},
-	}}
+	v1 := adapter(oracleV1Adapter)
+	v1.WasmHash = oracleagg.HashV1
+	lake := &fakeOracleLake{
+		instance: map[string]clickhouse.ContractInstance{
+			oracleCEXAdapter: adapter(oracleCEXAdapter), oracleDEXAdapter: adapter(oracleDEXAdapter), oracleV1Adapter: v1,
+			oracleCEXFeed: {WasmHash: oracleagg.ReflectorV71Hash, Storage: feed, Ledger: oracleLedger - 10},
+		},
+		persistent: v1Entries(t), removed: map[string]uint32{}, fail: map[string]bool{},
+	}
 	s := &Server{Options: Options{Explorer: lake, Lending: &fakeOracleFeeds{rows: rows}, LakeWatermark: &stubWatermark{ledger: oracleLedger, closedAt: oracleCloseAt}}}
 	return s, lake
 }
@@ -262,5 +338,48 @@ func TestPoolOraclePrices_StateNewerThanLedger(t *testing.T) {
 		if x, basis := priceXLM(t, s); x.Verdict != oracleagg.VerdictStateNewer || basis.Ledger != oracleLedger {
 			t.Fatalf("%s newer: XLM = %+v basis %+v", who, x, basis)
 		}
+	}
+}
+
+func priceV1XLM(s *Server) LendingOraclePrice {
+	got, _ := s.PoolOraclePrices(context.Background(), LendingOraclePool{ID: "POOL", Oracle: oracleV1Adapter, Reserves: []string{oracleXLMSAC}})
+	return got[oracleXLMSAC]
+}
+
+// A failed AssetConfig read is ours: it fails that reserve and is not cached, so the next call re-reads it.
+func TestPoolOraclePrices_V1ReadFailureNotCached(t *testing.T) {
+	rows := []fakeOracleRow{cexRow(oracleCEXFeed, "crypto:XLM", oracleRound, oracleLedger-10, 1e14)}
+	s, lake := newOracleServer(t, oracleagg.HashV2, rows, oracleFeedStorage(t, oracleRound, 300_000, feedPeriods{cexXLM: {0}}))
+	key := v1Key(t, "AssetConfig")
+	lake.fail[key] = true
+	if x := priceV1XLM(s); x.Verdict != oracleagg.VerdictReadFailed {
+		t.Fatalf("first read: XLM = %+v, want oracle_read_failed", x)
+	}
+	if x := priceV1XLM(s); x.Verdict != "" || x.Price.Price.String() != "10000000" || lake.reads[key] != 2 {
+		t.Fatalf("second read: XLM = %+v after %d AssetConfig reads, want a price after 2", x, lake.reads[key])
+	}
+}
+
+// Blocked(XLM) removed after the watermark: at that ledger the asset may have been blocked.
+func TestPoolOraclePrices_V1EntryRemovedAfterWatermark(t *testing.T) {
+	s, lake := newOracleServer(t, oracleagg.HashV2, nil, oracleFeedStorage(t, oracleRound, 300_000, feedPeriods{cexXLM: {0}}))
+	lake.removed[v1Key(t, "Blocked")] = oracleLedger + 1
+	if x := priceV1XLM(s); x.Verdict != oracleagg.VerdictStateNewer {
+		t.Fatalf("XLM = %+v, want oracle_state_newer", x)
+	}
+}
+
+// An archived feed instance is chain state and conflicting stored rows are a data conflict; neither is our read failing.
+func TestPoolOraclePrices_ArchivedAndConflictNamed(t *testing.T) {
+	feed := oracleFeedStorage(t, oracleRound, 300_000, feedPeriods{cexXLM: {0}})
+	s, lake := newOracleServer(t, oracleagg.HashV2, nil, feed)
+	lake.instanceErr = map[string]error{oracleCEXFeed: fmt.Errorf("%w: feed instance", clickhouse.ErrContractEntryUnreadable)}
+	if x, _ := priceXLM(t, s); x.Verdict != oracleagg.VerdictStateArchived {
+		t.Fatalf("archived feed: XLM = %+v", x)
+	}
+	s, _ = newOracleServer(t, oracleagg.HashV2, nil, feed)
+	s.Lending.(*fakeOracleFeeds).err = fmt.Errorf("%w: two prices", timescale.ErrOracleFeedAmbiguous)
+	if x, _ := priceXLM(t, s); x.Verdict != oracleagg.VerdictFeedConflict {
+		t.Fatalf("conflicting rows: XLM = %+v", x)
 	}
 }

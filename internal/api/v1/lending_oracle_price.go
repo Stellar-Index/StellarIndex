@@ -212,7 +212,7 @@ func readAdapter(ctx context.Context, lake lendingOracleLake, oracle string, led
 			if err == nil && modified > ledger {
 				err = fmt.Errorf("%w: %s %s at L%d, evaluating L%d", oracleagg.ErrEntryNewer, oracle, scval.Display(k), modified, ledger)
 			}
-			return v, ok, err
+			return v, ok, archived(err)
 		})
 	}
 	if err != nil {
@@ -235,14 +235,27 @@ func (a lendingOracleAdapter) cacheable() bool {
 			return false
 		}
 	}
+	for _, err := range a.cfg.Unreadable {
+		if oracleagg.ErrorVerdict(err) == oracleagg.VerdictReadFailed {
+			return false
+		}
+	}
 	return true
+}
+
+// archived marks the lake's archived-or-undecodable entry error as chain state, so it is not reported as ours.
+func archived(err error) error {
+	if errors.Is(err, clickhouse.ErrContractEntryUnreadable) {
+		return fmt.Errorf("%w: %w", oracleagg.ErrEntryArchived, err)
+	}
+	return err
 }
 
 // readInstance reads a contract's instance entry and refuses it when it was modified after ledger.
 func readInstance(ctx context.Context, lake lendingOracleLake, role, contract string, ledger uint32) (clickhouse.ContractInstance, error) {
 	inst, ok, err := lake.ContractInstance(ctx, contract)
 	if err != nil {
-		return inst, fmt.Errorf("%s %s instance: %w", role, contract, err)
+		return inst, fmt.Errorf("%s %s instance: %w", role, contract, archived(err))
 	}
 	if !ok {
 		return inst, fmt.Errorf("%s %s instance entry not in the lake", role, contract)
@@ -331,7 +344,11 @@ func readFeed(ctx context.Context, feeds lendingOracleFeeds, a lendingOracleAdap
 	// Every stored identity of the asset (canonical.AssetAliases); the window refuses two prices in one round.
 	w, err := feeds.OracleFeedRounds(ctx, rule.Feed, canonical.AssetAliasStrings(key), lastFrom, from, to, ledger)
 	if err != nil {
-		return oracleagg.Feed{}, &LendingOraclePrice{Verdict: oracleagg.VerdictReadFailed, Detail: fmt.Sprintf("feed %s: %v", rule.Feed, err)}
+		v := oracleagg.VerdictReadFailed
+		if errors.Is(err, timescale.ErrOracleFeedAmbiguous) {
+			v = oracleagg.VerdictFeedConflict
+		}
+		return oracleagg.Feed{}, &LendingOraclePrice{Verdict: v, Detail: fmt.Sprintf("feed %s: %v", rule.Feed, err)}
 	}
 	return oracleagg.FeedFromRounds(fs.program, fs.state, w.LastRound, w.Prices), nil
 }

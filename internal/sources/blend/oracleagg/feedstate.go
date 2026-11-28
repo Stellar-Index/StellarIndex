@@ -12,6 +12,7 @@ import (
 type FeedState struct {
 	LastTimestampMs uint64 // "last_timestamp": the newest round, ms; 0 before the first round
 	ResolutionMs    uint64 // "resolution": the live period length, ms
+	RetentionMs     uint64 // "period": the history retention period, ms; 0 when unset (settings.rs unwrap_or_default)
 	Decimals        uint32
 	Protocol        uint32
 	Base            Asset
@@ -110,6 +111,11 @@ func decodeFeedScalars(str map[string]scval.ScVal, s *FeedState) error {
 			return fmt.Errorf("%w: feed last_timestamp: %w", ErrConfig, err)
 		}
 	}
+	if v, ok := str["period"]; ok {
+		if s.RetentionMs, err = scval.AsU64(v); err != nil {
+			return fmt.Errorf("%w: feed period: %w", ErrConfig, err)
+		}
+	}
 	res, err := scval.AsU32(str["resolution"])
 	if err != nil {
 		return fmt.Errorf("%w: feed resolution: %w", ErrConfig, err)
@@ -173,8 +179,26 @@ func (s FeedState) AssetIndex(a Asset) (uint32, bool) {
 	return 0, false
 }
 
+// ledgerCloseMs is the Protocol 28 ledger cadence the entry life is converted at.
+const ledgerCloseMs = 5_000
+
+// EntryLifeMs is how long a round's temporary entry outlives the round: store_prices extends it to
+// ledgers_to_live = (period/1000/5 + 1)·2 ledgers, and only when that exceeds 16 (prices.rs:181-188); otherwise the
+// network minimum applies, which the feed state does not record, so it counts as no life at all.
+func (s FeedState) EntryLifeMs() uint64 {
+	ledgers := (s.RetentionMs/1000/5 + 1) * 2
+	if ledgers <= 16 {
+		return 0
+	}
+	return ledgers * ledgerCloseMs
+}
+
 // HasPrice is mapping.rs::check_history_updated: whether the asset was priced `period` periods before the last round.
+// The mask holds 256 periods; older ones are not priced (prices.rs:46-48).
 func (s FeedState) HasPrice(index, period uint32) bool {
+	if period > 255 {
+		return false
+	}
 	from := int(index*32 + (31 - period/8))
 	if from >= len(s.History) {
 		return false
