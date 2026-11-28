@@ -1,0 +1,79 @@
+# oracle-a7463634674ca764.wasm  sha256=a7463634674ca764401e713e4e29aef4e8521877f76ab78b1e91bea9d46ec6bb
+# decoded with: stellar contract info {meta,env-meta,interface --output rust} --wasm oracle-a7463634674ca764.wasm  (stellar 28.1.0)
+
+Contract meta:
+ • rsver: 1.77.2 (Rust version)
+ • rssdkver: 20.5.0#9e2c3022b4355b224a7a814e13ba51761eeb14bb (Soroban SDK version and its commit hash)
+
+Contract env-meta:
+ • Protocol: v20
+
+
+#[soroban_sdk::contractargs(name = "Args")]
+#[soroban_sdk::contractclient(name = "Client")]
+pub trait Contract {
+    fn resolution(env: soroban_sdk::Env) -> u32;
+    fn price(env: soroban_sdk::Env, _asset: Asset, _timestamp: u64) -> Option<PriceData>;
+    fn prices(
+        env: soroban_sdk::Env,
+        _asset: Asset,
+        _records: u32,
+    ) -> Option<soroban_sdk::Vec<PriceData>>;
+    fn base(env: soroban_sdk::Env) -> Asset;
+    fn decimals(env: soroban_sdk::Env) -> u32;
+    fn assets(env: soroban_sdk::Env) -> soroban_sdk::Vec<Asset>;
+    fn lastprice(env: soroban_sdk::Env, asset: Asset) -> Option<PriceData>;
+    fn initialize(
+        env: soroban_sdk::Env,
+        admin: soroban_sdk::Address,
+        base: Asset,
+        assets: soroban_sdk::Vec<Asset>,
+        asset_configs: soroban_sdk::Vec<OracleConfig>,
+        decimals: u32,
+    );
+    fn config(env: soroban_sdk::Env, asset: Asset) -> OracleConfig;
+    fn block(env: soroban_sdk::Env, asset: Asset);
+    fn unblock(env: soroban_sdk::Env, asset: Asset);
+}
+#[soroban_sdk::contracttype]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct OracleConfig {
+    pub asset: Asset,
+    pub decimals: u32,
+    pub oracle_id: soroban_sdk::Address,
+    pub resolution: u32,
+}
+#[soroban_sdk::contracttype]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct PriceData {
+    pub price: i128,
+    pub timestamp: u64,
+}
+#[soroban_sdk::contracttype]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub enum AggregatorDataKey {
+    AssetConfig(Asset),
+    CircuitBreakerStatus(Asset),
+    CircuitBreakerTimeout(Asset),
+    Blocked(Asset),
+}
+#[soroban_sdk::contracttype]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub enum Asset {
+    Stellar(soroban_sdk::Address),
+    Other(soroban_sdk::Symbol),
+}
+#[soroban_sdk::contracterror]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub enum OracleAggregatorErrors {
+    AlreadyInitialized = 3,
+    NotImplemented = 100,
+    InvalidOracleConfig = 101,
+    InvalidAssets = 102,
+    OracleNotFound = 103,
+    CircuitBreakerTripped = 104,
+    AssetNotFound = 105,
+    InvalidTimestamp = 106,
+    AssetBlocked = 107,
+}
+

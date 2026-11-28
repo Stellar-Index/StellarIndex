@@ -278,6 +278,31 @@ func NewU32(v uint32) xdr.ScVal {
 	return xdr.ScVal{Type: xdr.ScValTypeScvU32, U32: &u}
 }
 
+// NewSymbol builds a Symbol ScVal, e.g. a contract's storage key.
+func NewSymbol(s string) xdr.ScVal {
+	sym := xdr.ScSymbol(s)
+	return xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &sym}
+}
+
+// NewVec builds a Vec ScVal; a contracttype enum variant is NewVec(NewSymbol(tag), args...).
+func NewVec(elems ...xdr.ScVal) xdr.ScVal {
+	vec := xdr.ScVec(elems)
+	pv := &vec
+	return xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &pv}
+}
+
+// NewContractAddress builds an Address ScVal from a C-strkey.
+func NewContractAddress(contract string) (xdr.ScVal, error) {
+	raw, err := strkey.Decode(strkey.VersionByteContract, contract)
+	if err != nil {
+		return xdr.ScVal{}, fmt.Errorf("%w: contract address %q: %w", ErrScValType, contract, err)
+	}
+	var id xdr.ContractId
+	copy(id[:], raw)
+	addr := xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &id}
+	return xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &addr}, nil
+}
+
 // AsAmountFromI128 converts sv's I128 parts to canonical.Amount over the full signed 128-bit range; truncating to int64(parts.Lo) would silently mis-report large values.
 func AsAmountFromI128(sv xdr.ScVal) (canonical.Amount, error) {
 	if sv.Type != xdr.ScValTypeScvI128 {
