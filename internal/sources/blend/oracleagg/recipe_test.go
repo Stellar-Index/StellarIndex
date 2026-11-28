@@ -38,22 +38,59 @@ func v1Config(blocked bool) Config {
 	}
 }
 
-// feed builds a Reflector v7.1 feed whose last round is lastS (seconds) with the given (seconds → raw price) rows.
+// feedAssets is the test feed's asset list; every asset gets the same history, so whichever one a case prices
+// sees the rows it was given.
+var feedAssets = []Asset{{Symbol: "XLM"}, {Symbol: "USDC"}, {Symbol: "BTC"}}
+
+// feed builds a consistent Reflector v7.1 feed at 300 s: last_timestamp lastS (seconds), our stored rows (seconds →
+// raw price), and a history mask that marks exactly the stored periods.
 func feed(lastS uint64, rows map[uint64]int64) Feed {
-	f := Feed{Program: FeedReflectorV7, ResolutionMs: 300_000, LastRoundMs: lastS * 1000, Prices: map[uint64]*big.Int{}}
-	for s, p := range rows {
-		f.Prices[s*1000] = big.NewInt(p)
+	p := map[uint64]*big.Int{}
+	for s, v := range rows {
+		p[s*1000] = big.NewInt(v)
+	}
+	return consistent(lastS, 300_000, p)
+}
+
+func bigFeed(lastS uint64, rows map[uint64]string) Feed {
+	p := map[uint64]*big.Int{}
+	for s, v := range rows {
+		p[s*1000], _ = new(big.Int).SetString(v, 10)
+	}
+	return consistent(lastS, 300_000, p)
+}
+
+func consistent(lastS, resMs uint64, prices map[uint64]*big.Int) Feed {
+	f := Feed{
+		Program: FeedReflectorV7,
+		State: FeedState{
+			LastTimestampMs: lastS * 1000, ResolutionMs: resMs, Decimals: 14, Protocol: ReflectorProtocol,
+			Base: Asset{Symbol: "USD"}, Assets: feedAssets, Indexed: map[Asset]uint32{}, History: make([]byte, 32*len(feedAssets)),
+		},
+		Prices: prices,
+	}
+	for i, a := range feedAssets {
+		f.State.Indexed[a] = uint32(i)
+	}
+	for ts := range prices {
+		if ts > f.StoredLastRoundMs {
+			f.StoredLastRoundMs = ts
+		}
+		if ts <= f.State.LastTimestampMs {
+			for i := range feedAssets {
+				setHistory(&f.State, uint32(i), uint32((f.State.LastTimestampMs-ts)/resMs))
+			}
+		}
 	}
 	return f
 }
 
-func bigFeed(lastS uint64, rows map[uint64]string) Feed {
-	f := feed(lastS, nil)
-	for s, p := range rows {
-		v, _ := new(big.Int).SetString(p, 10)
-		f.Prices[s*1000] = v
+// setHistory is the inverse of check_history_updated.
+func setHistory(s *FeedState, index, period uint32) {
+	if period > 255 {
+		return
 	}
-	return f
+	s.History[index*32+(31-period/8)] |= 1 << (period % 8)
 }
 
 type recipeCase struct {
@@ -166,14 +203,122 @@ func TestLastPriceV2(t *testing.T) {
 		{name: "base_assets member", cfg: cfg, asset: Stellar(eurcSAC), t: r + 7, feed: Feed{}, price: "10000000", ts: r + 7},
 		// contract.rs:103-104: an unconfigured asset panics AssetNotFound.
 		{name: "asset not configured", cfg: cfg, asset: Stellar(eurcSAC + "X"), t: r, feed: feed(r, nil), verdict: VerdictAssetMissing},
+		{name: "feed program unknown", cfg: cfg, asset: xlm, t: r, feed: Feed{}, verdict: VerdictUnsupported},
+		{name: "feed asset is the feed base", cfg: cfg, asset: xlm, t: r, feed: withBase(feed(r, nil), Asset{Symbol: "XLM"}), verdict: VerdictUnsupported},
+		{name: "feed does not quote the asset", cfg: cfg, asset: xlm, t: r, feed: withAssets(feed(r, nil), Asset{Symbol: "BTC"}), verdict: VerdictFeedAssetUnknown},
+		{name: "listed without an index entry", cfg: cfg, asset: xlm, t: r, feed: unindexed(feed(r, nil), Asset{Symbol: "XLM"}), verdict: VerdictUnsupported},
+		{name: "storage protocol 1", cfg: cfg, asset: xlm, t: r, feed: withProtocol(feed(r, nil), 1), verdict: VerdictUnsupported},
 		{
-			name: "feed program unknown", cfg: cfg, asset: xlm, t: r,
-			feed: Feed{ResolutionMs: 300_000, LastRoundMs: r * 1000}, verdict: VerdictUnsupported,
+			name: "max_age above the ledger time traps", cfg: cfg, asset: xlm, t: 899,
+			feed: feed(0, nil), verdict: VerdictContractPanics,
+		},
+	})
+}
+
+func withBase(f Feed, b Asset) Feed { f.State.Base = b; return f }
+
+func withAssets(f Feed, a ...Asset) Feed {
+	f.State.Assets, f.State.Indexed = a, map[Asset]uint32{}
+	for i, x := range a {
+		f.State.Indexed[x] = uint32(i)
+	}
+	return f
+}
+
+func unindexed(f Feed, a Asset) Feed {
+	idx := map[Asset]uint32{}
+	for k, v := range f.State.Indexed {
+		if k != a {
+			idx[k] = v
+		}
+	}
+	f.State.Indexed = idx
+	return f
+}
+
+func withProtocol(f Feed, p uint32) Feed { f.State.Protocol = p; return f }
+
+// missing drops our stored row at round s (seconds) while the chain's history mask still says it was priced.
+func missing(f Feed, s uint64) Feed {
+	delete(f.Prices, s*1000)
+	f.StoredLastRoundMs = 0
+	for ts := range f.Prices {
+		f.StoredLastRoundMs = max(f.StoredLastRoundMs, ts)
+	}
+	return f
+}
+
+// A round on chain but not in oracle_updates (a decode-dropped event, a skipped poison row) must not let the recipe
+// read an older round: the feed's own last_timestamp and history mask decide, and a disagreement is a verdict.
+func TestLastPrice_FeedIncomplete(t *testing.T) {
+	xlm := Stellar(xlmSAC)
+	two := map[uint64]int64{r: 2e14, r - 300: 1e14, r - 600: 1e14}
+	cached := feed(r, two)
+	cached.State.Cache = []CachedRound{{TimestampMs: r * 1000, Mask: []byte{0b001}, Prices: []*big.Int{big.NewInt(3e14)}}}
+	// The decoder's closedAt fallback: a row 4 s past a round, behind an all-zero last round that excuses it.
+	offBoundary := feed(r, map[uint64]int64{r - 300: 1e14})
+	offBoundary.StoredLastRoundMs = (r-300)*1000 + 4_000
+	unstored := feed(r, map[uint64]int64{r - 300: 1e14, r - 600: 1e14})
+	setHistory(&unstored.State, 1, 0) // the last round priced USDC only: not an all-zero round
+	runRecipe(t, []recipeCase{
+		{name: "v2 last round on chain, absent here", cfg: v2Config(), asset: xlm, t: r + 10, feed: missing(feed(r, two), r), verdict: VerdictFeedIncomplete},
+		{name: "v1 last round on chain, absent here", cfg: v1Config(false), asset: xlm, t: r + 10, feed: missing(feed(r, two), r), verdict: VerdictFeedIncomplete},
+		{name: "v2 last round stored for other assets only", cfg: v2Config(), asset: xlm, t: r + 10, feed: unstored, verdict: VerdictFeedIncomplete},
+		{
+			name: "v2 deviation round on chain, absent here", cfg: v2Config(), asset: xlm, t: r + 10,
+			feed: func() Feed { f := feed(r, two); delete(f.Prices, (r-300)*1000); return f }(), verdict: VerdictFeedIncomplete,
 		},
 		{
-			name: "feed asset is the feed base", cfg: cfg, asset: xlm, t: r,
-			feed: Feed{Program: FeedReflectorV7, ResolutionMs: 300_000, LastRoundMs: r * 1000, AssetIsBase: true}, verdict: VerdictUnsupported,
+			name: "stored row the chain says was not priced", cfg: v1Config(false), asset: xlm, t: r + 10,
+			feed: func() Feed {
+				f := feed(r, two)
+				f.State.History = make([]byte, 96)
+				setHistory(&f.State, 1, 0)
+				return f
+			}(), verdict: VerdictFeedIncomplete,
 		},
+		{name: "stored price disagrees with the chain cache", cfg: v1Config(false), asset: xlm, t: r + 10, feed: cached, verdict: VerdictFeedIncomplete},
+		{name: "last stored round off the resolution boundary", cfg: v1Config(false), asset: xlm, t: r + 10, feed: offBoundary, verdict: VerdictFeedIncomplete},
+		// prices.rs:118-123: an all-zero round sets last_timestamp and no history bit; the walk goes on to R−300.
+		{
+			name: "v2 all-zero last round walks back", cfg: v2Config(), asset: xlm, t: r + 10,
+			feed: feed(r, map[uint64]int64{r - 300: 1e14, r - 600: 1e14}), price: "10000000", ts: r - 300,
+		},
+		{name: "v1 all-zero last round has no price", cfg: v1Config(false), asset: xlm, t: r + 10, feed: feed(r, map[uint64]int64{r - 300: 1e14}), verdict: VerdictPriceAbsent},
+		{name: "cache agrees", cfg: v1Config(false), asset: xlm, t: r + 10, feed: withCache(feed(r, two), 2e14), price: "20000000", ts: r},
+	})
+}
+
+func withCache(f Feed, p int64) Feed {
+	f.State.Cache = []CachedRound{{TimestampMs: f.State.LastTimestampMs, Mask: []byte{0b111}, Prices: []*big.Int{big.NewInt(p), big.NewInt(1), big.NewInt(1)}}}
+	return f
+}
+
+// The walk steps by the adapter's cached resolution while price() normalises by the feed's live one (price_data.rs:17,
+// prices.rs:36); neither is a constant.
+func TestLastPriceV2_FeedResolution(t *testing.T) {
+	xlm := Stellar(xlmSAC)
+	rows := map[uint64]*big.Int{(r - 60) * 1000: big.NewInt(1e14), (r - 120) * 1000: big.NewInt(1e14)}
+	at60 := v2Config()
+	rule := at60.Assets[xlm]
+	rule.ResolutionSeconds = 60
+	at60.Assets[xlm] = rule
+	runRecipe(t, []recipeCase{
+		{name: "60 s feed and adapter", cfg: at60, asset: xlm, t: r + 30, feed: consistent(r, 60_000, rows), price: "10000000", ts: r - 60},
+		// Adapter caches 300 s against a 60 s feed: it probes R, R−300, R−600, R−900 and never sees R−60.
+		{name: "adapter 300 s, feed 60 s", cfg: v2Config(), asset: xlm, t: r + 30, feed: consistent(r, 60_000, rows), verdict: VerdictPriceStale},
+	})
+}
+
+// One asset whose config entry is unreadable fails alone.
+func TestLastPrice_UnreadableAssetIsolated(t *testing.T) {
+	cfg := v2Config()
+	cfg.Unreadable = map[Asset]error{Stellar(eurcSAC + "X"): ErrEntryNewer, Stellar(eurcSAC + "Y"): ErrConfig}
+	f := feed(r, map[uint64]int64{r: 1e14, r - 300: 1e14})
+	runRecipe(t, []recipeCase{
+		{name: "newer entry", cfg: cfg, asset: Stellar(eurcSAC + "X"), t: r, feed: f, verdict: VerdictStateNewer},
+		{name: "undecodable entry", cfg: cfg, asset: Stellar(eurcSAC + "Y"), t: r, feed: f, verdict: VerdictUnsupported},
+		{name: "sibling still prices", cfg: cfg, asset: Stellar(xlmSAC), t: r, feed: f, price: "10000000", ts: r},
 	})
 }
 

@@ -46,6 +46,8 @@ type Config struct {
 	Decimals   uint32
 	MaxAge     uint64 // v2 only, seconds
 	Assets     map[Asset]AssetRule
+	// Unreadable holds the configured assets whose own entry or struct did not decode; only they fail.
+	Unreadable map[Asset]error
 }
 
 // SortedAssets returns the configured assets in a stable order.
@@ -91,7 +93,7 @@ func DecodeV2Instance(storage []scval.ScMapEntry) (Config, error) {
 		}
 	}
 	if v, ok := f["Assets"]; ok {
-		if err := decodeAssetsV2(v, oracles, cfg.Assets); err != nil {
+		if err := decodeAssetsV2(v, oracles, &cfg); err != nil {
 			return Config{}, err
 		}
 	}
@@ -136,8 +138,9 @@ func decodeOraclesV2(v scval.ScVal) ([]oracleV2, error) {
 	return out, nil
 }
 
-// decodeAssetsV2 decodes Map<Asset, AssetConfig{asset, max_dev, oracle_index}> into dst.
-func decodeAssetsV2(v scval.ScVal, oracles []oracleV2, dst map[Asset]AssetRule) error {
+// decodeAssetsV2 decodes Map<Asset, AssetConfig{asset, max_dev, oracle_index}> into cfg; an entry whose key decodes
+// but whose AssetConfig does not is recorded in cfg.Unreadable, failing that asset only.
+func decodeAssetsV2(v scval.ScVal, oracles []oracleV2, cfg *Config) error {
 	entries, err := scval.AsMap(v)
 	if err != nil {
 		return fmt.Errorf("%w: Assets: %w", ErrConfig, err)
@@ -147,28 +150,49 @@ func decodeAssetsV2(v scval.ScVal, oracles []oracleV2, dst map[Asset]AssetRule) 
 		if err != nil {
 			return fmt.Errorf("%w: Assets key: %w", ErrConfig, err)
 		}
-		m, err := structFields(e.Val, "asset", "max_dev", "oracle_index")
+		rule, err := decodeAssetV2(e.Val, oracles)
 		if err != nil {
-			return fmt.Errorf("%w: Assets[%s]: %w", ErrConfig, asset, err)
+			cfg.markUnreadable(asset, fmt.Errorf("%w: Assets[%s]: %w", ErrConfig, asset, err))
+			continue
 		}
-		var rule AssetRule
-		var idx uint32
-		if rule.FeedAsset, err = DecodeAsset(m["asset"]); err == nil {
-			if rule.MaxDev, err = scval.AsU32(m["max_dev"]); err == nil {
-				idx, err = scval.AsU32(m["oracle_index"])
-			}
-		}
-		if err != nil {
-			return fmt.Errorf("%w: Assets[%s]: %w", ErrConfig, asset, err)
-		}
-		if int(idx) >= len(oracles) {
-			return fmt.Errorf("%w: Assets[%s] oracle_index %d outside %d oracles", ErrConfig, asset, idx, len(oracles))
-		}
-		o := oracles[idx]
-		rule.Feed, rule.FeedDecimals, rule.ResolutionSeconds = o.address, o.decimals, o.resolution
-		dst[asset] = rule
+		cfg.Assets[asset] = rule
 	}
 	return nil
+}
+
+func decodeAssetV2(v scval.ScVal, oracles []oracleV2) (AssetRule, error) {
+	m, err := structFields(v, "asset", "max_dev", "oracle_index")
+	if err != nil {
+		return AssetRule{}, err
+	}
+	var rule AssetRule
+	var idx uint32
+	if rule.FeedAsset, err = DecodeAsset(m["asset"]); err == nil {
+		if rule.MaxDev, err = scval.AsU32(m["max_dev"]); err == nil {
+			idx, err = scval.AsU32(m["oracle_index"])
+		}
+	}
+	if err != nil {
+		return AssetRule{}, err
+	}
+	if int(idx) >= len(oracles) {
+		return AssetRule{}, fmt.Errorf("oracle_index %d outside %d oracles", idx, len(oracles))
+	}
+	o := oracles[idx]
+	rule.Feed, rule.FeedDecimals, rule.ResolutionSeconds = o.address, o.decimals, o.resolution
+	return rule, nil
+}
+
+// IsBase reports whether a v2 adapter prices the asset as exactly one Base without reading a feed.
+func (c Config) IsBase(a Asset) bool {
+	return c.Program == ProgramV2 && (a == c.Base || containsAsset(c.BaseAssets, a))
+}
+
+func (c *Config) markUnreadable(a Asset, err error) {
+	if c.Unreadable == nil {
+		c.Unreadable = map[Asset]error{}
+	}
+	c.Unreadable[a] = err
 }
 
 // EntryLookup reads one persistent entry of the adapter by its ScVal key; ok=false when the lake holds no such
@@ -211,7 +235,8 @@ func DecodeV1(instance []scval.ScMapEntry, lookup EntryLookup) (Config, error) {
 	for _, a := range assets {
 		rule, err := decodeV1Asset(lookup, a)
 		if err != nil {
-			return Config{}, err
+			cfg.markUnreadable(a, err)
+			continue
 		}
 		cfg.Assets[a] = rule
 	}
@@ -244,7 +269,7 @@ func decodeV1Asset(lookup EntryLookup, a Asset) (AssetRule, error) {
 	}
 	bv, ok, err := lookup(variantKey("Blocked", ak))
 	if err != nil {
-		return AssetRule{}, fmt.Errorf("%w: Blocked(%s): %w", ErrConfig, a, err)
+		return AssetRule{}, fmt.Errorf("Blocked(%s): %w", a, err)
 	}
 	if ok {
 		if rule.Blocked, err = scval.AsBool(bv); err != nil {
@@ -257,7 +282,8 @@ func decodeV1Asset(lookup EntryLookup, a Asset) (AssetRule, error) {
 func mustLookup(lookup EntryLookup, key scval.ScVal) (scval.ScVal, error) {
 	v, ok, err := lookup(key)
 	if err != nil {
-		return scval.ScVal{}, fmt.Errorf("%w: %s: %w", ErrConfig, scval.Display(key), err)
+		// Not ErrConfig: a failed read is ours, not a layout we cannot decode.
+		return scval.ScVal{}, fmt.Errorf("%s: %w", scval.Display(key), err)
 	}
 	if !ok {
 		return scval.ScVal{}, fmt.Errorf("%w: %s: entry missing", ErrConfig, scval.Display(key))

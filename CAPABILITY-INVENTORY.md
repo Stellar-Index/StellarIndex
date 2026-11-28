@@ -87,8 +87,8 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 - Served tier (Timescale/PG) → `timescale.Open(ctx, dsn)` → `*Store`
 - One daemon per database → `Store.HoldInstanceLock(ctx, name, onLost, logger)` (session advisory lock, re-verified; indexer + aggregator use it)
 - ClickHouse lake → `clickhouse.NewExplorerReader`, `NewSupplyReader`, `clickhouse.Open` (sink), `NewLiveSink`
-- A contract's current entries by exact key → `ExplorerReader.ContractInstanceStorage`, `ContractPersistentEntry` (archived = error, never absent); its current WASM hash → `ContractWasmHash`
-- A lending pool's own-oracle price (Blend `oracle-aggregator` v1/v2 only) → `oracleagg.ProgramForHash` gate, `DecodeV2Instance`/`DecodeV1`, pure `oracleagg.LastPrice` over `Store.OracleFeedRounds` (keyed on the feed contract); API glue `poolOraclePrices` (`internal/api/v1/lending_oracle_price.go`)
+- A contract's current entries by exact key, each with its last-modified ledger → `ExplorerReader.ContractInstance` (WASM hash + storage in one read), `ContractPersistentEntry` (archived = error, never absent; removal ledger when removed); its current WASM hash alone → `ContractWasmHash`
+- A lending pool's own-oracle price (Blend `oracle-aggregator` v1/v2 over Reflector v7.1.0) → `oracleagg.ProgramForHash` gate, `DecodeV2Instance`/`DecodeV1`, `DecodeFeedState` (the feed's own last round, resolution, history mask), pure `oracleagg.LastPrice` over `Store.OracleFeedRounds` (keyed on the feed contract) cross-checked against that state; API glue `Server.PoolOraclePrices` (`internal/api/v1/lending_oracle_price.go`)
 - Redis client from config → `redisclient.Build(cfg)`, `redisclient.Mode(cfg)` ⚠ (not in AGENTS.md; handles sentinel vs single; installs the command-error metrics hook — never construct a go-redis client directly)
 
 ## Ingest / decode — `ledgerstream`, `dispatcher`, `pipeline`, `projector`

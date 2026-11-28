@@ -2,6 +2,7 @@ package clickhouse
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 
@@ -11,24 +12,32 @@ import (
 // ErrContractEntryUnreadable marks a contract_data entry the lake holds archived or undecodable: unreadable, never absent.
 var ErrContractEntryUnreadable = errors.New("clickhouse: contract entry unreadable")
 
-// ContractInstanceStorage reads a contract's CURRENT instance storage by exact key (ok=false when the lake holds no
-// instance entry), for decoders that must see every key the contract wrote.
-func (r *ExplorerReader) ContractInstanceStorage(ctx context.Context, contract string) (storage []xdr.ScMapEntry, ok bool, err error) {
+// ContractInstance is one CURRENT instance entry: its executable, its storage and the ledger that last modified it, so a
+// caller evaluating at an earlier ledger can tell whether this is still the state there.
+type ContractInstance struct {
+	WasmHash string // hex; empty for a Stellar Asset Contract
+	Storage  []xdr.ScMapEntry
+	Ledger   uint32
+}
+
+// ContractInstance reads a contract's instance entry by exact key (ok=false when the lake holds none), for decoders that
+// must see every key the contract wrote and the build that wrote them in one read.
+func (r *ExplorerReader) ContractInstance(ctx context.Context, contract string) (ContractInstance, bool, error) {
 	id, err := contractIDFromStrkey(contract)
 	if err != nil {
-		return nil, false, fmt.Errorf("clickhouse: contract id %q: %w", contract, err)
+		return ContractInstance{}, false, fmt.Errorf("clickhouse: contract id %q: %w", contract, err)
 	}
 	keys, err := instanceKeyXDR(xdr.Hash(id))
 	if err != nil {
-		return nil, false, err
+		return ContractInstance{}, false, err
 	}
 	ce, err := r.readContractData(ctx, keys)
 	if err != nil {
-		return nil, false, err
+		return ContractInstance{}, false, err
 	}
 	for _, k := range keys {
 		if ce.archived[k] {
-			return nil, false, fmt.Errorf("%w: %s instance", ErrContractEntryUnreadable, contract)
+			return ContractInstance{}, false, fmt.Errorf("%w: %s instance", ErrContractEntryUnreadable, contract)
 		}
 		v, found := ce.vals[k]
 		if !found {
@@ -36,36 +45,40 @@ func (r *ExplorerReader) ContractInstanceStorage(ctx context.Context, contract s
 		}
 		inst, isInst := v.GetInstance()
 		if !isInst {
-			return nil, false, fmt.Errorf("%w: %s instance entry holds no instance", ErrContractEntryUnreadable, contract)
+			return ContractInstance{}, false, fmt.Errorf("%w: %s instance entry holds no instance", ErrContractEntryUnreadable, contract)
 		}
-		if inst.Storage == nil {
-			return nil, true, nil
+		out := ContractInstance{Ledger: ce.ledger[k]}
+		if inst.Executable.Type == xdr.ContractExecutableTypeContractExecutableWasm && inst.Executable.WasmHash != nil {
+			out.WasmHash = hex.EncodeToString(inst.Executable.WasmHash[:])
 		}
-		return *inst.Storage, true, nil
+		if inst.Storage != nil {
+			out.Storage = *inst.Storage
+		}
+		return out, true, nil
 	}
-	return nil, false, nil
+	return ContractInstance{}, false, nil
 }
 
-// ContractPersistentEntry reads one CURRENT persistent contract_data value by its exact ScVal key; ok=false when the
-// lake holds no live entry under it.
-func (r *ExplorerReader) ContractPersistentEntry(ctx context.Context, contract string, key xdr.ScVal) (val xdr.ScVal, ok bool, err error) {
+// ContractPersistentEntry reads one CURRENT persistent contract_data value by its exact ScVal key with the ledger that
+// last modified it; ok=false when the lake holds no live entry, with ledger the removal ledger if it was removed.
+func (r *ExplorerReader) ContractPersistentEntry(ctx context.Context, contract string, key xdr.ScVal) (val xdr.ScVal, ledger uint32, ok bool, err error) {
 	id, err := contractIDFromStrkey(contract)
 	if err != nil {
-		return xdr.ScVal{}, false, fmt.Errorf("clickhouse: contract id %q: %w", contract, err)
+		return xdr.ScVal{}, 0, false, fmt.Errorf("clickhouse: contract id %q: %w", contract, err)
 	}
 	k, err := persistentDataKeyXDR(id, key)
 	if err != nil {
-		return xdr.ScVal{}, false, err
+		return xdr.ScVal{}, 0, false, err
 	}
 	ce, err := r.readContractData(ctx, []string{k})
 	if err != nil {
-		return xdr.ScVal{}, false, err
+		return xdr.ScVal{}, 0, false, err
 	}
 	if ce.archived[k] {
-		return xdr.ScVal{}, false, fmt.Errorf("%w: %s key %s", ErrContractEntryUnreadable, contract, k)
+		return xdr.ScVal{}, 0, false, fmt.Errorf("%w: %s key %s", ErrContractEntryUnreadable, contract, k)
 	}
 	val, ok = ce.vals[k]
-	return val, ok, nil
+	return val, ce.ledger[k], ok, nil
 }
 
 // persistentDataKeyXDR builds the base64 LedgerKey of a persistent contract_data entry with an arbitrary ScVal key.

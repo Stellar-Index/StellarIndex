@@ -5,7 +5,6 @@ package integration_test
 import (
 	"bufio"
 	"context"
-	"encoding/hex"
 	"fmt"
 	"math/big"
 	"os"
@@ -15,9 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stellar/go-stellar-sdk/strkey"
-	"github.com/stellar/go-stellar-sdk/xdr"
-
+	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend/oracleagg"
@@ -37,14 +34,15 @@ const (
 	loLedger     = uint32(66_000_000)
 )
 
-// loFixtureRows returns (key_xdr, entry_xdr) of every fixture entry: instances.tsv columns 0/2, v1-entries.tsv 1/3.
+// loFixtureRows returns (key_xdr, entry_xdr) of every fixture entry: instances.tsv columns 0/2, v1-entries.tsv 1/3,
+// reflector-instances.tsv 1/3 (the real CEX and DEX feed instances).
 func loFixtureRows(t *testing.T) [][2]string {
 	t.Helper()
 	var out [][2]string
 	for _, f := range []struct {
 		name     string
 		key, val int
-	}{{"instances.tsv", 0, 2}, {"v1-entries.tsv", 1, 3}} {
+	}{{"instances.tsv", 0, 2}, {"v1-entries.tsv", 1, 3}, {"reflector-instances.tsv", 1, 3}} {
 		fh, err := os.Open(filepath.Join("..", "fixtures", "lending_oracle", f.name))
 		if err != nil {
 			t.Fatal(err)
@@ -62,37 +60,6 @@ func loFixtureRows(t *testing.T) [][2]string {
 	return out
 }
 
-// loFeedInstance is a synthetic instance entry for a Reflector feed running the attested v7.1.0 build.
-func loFeedInstance(t *testing.T, feed string) (key, entry string) {
-	t.Helper()
-	raw := strkey.MustDecode(strkey.VersionByteContract, feed)
-	var id xdr.ContractId
-	copy(id[:], raw)
-	hb, _ := hex.DecodeString(oracleagg.ReflectorV71Hash)
-	var h xdr.Hash
-	copy(h[:], hb)
-	addr := xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &id}
-	instKey := xdr.ScVal{Type: xdr.ScValTypeScvLedgerKeyContractInstance}
-	inst := &xdr.ScContractInstance{Executable: xdr.ContractExecutable{Type: xdr.ContractExecutableTypeContractExecutableWasm, WasmHash: &h}}
-	key, err := xdr.MarshalBase64(xdr.LedgerKey{Type: xdr.LedgerEntryTypeContractData, ContractData: &xdr.LedgerKeyContractData{
-		Contract: addr, Key: instKey, Durability: xdr.ContractDataDurabilityPersistent,
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	entry, err = xdr.MarshalBase64(xdr.LedgerEntry{LastModifiedLedgerSeq: 65_079_084, Data: xdr.LedgerEntryData{
-		Type: xdr.LedgerEntryTypeContractData,
-		ContractData: &xdr.ContractDataEntry{
-			Contract: addr, Key: instKey, Durability: xdr.ContractDataDurabilityPersistent,
-			Val: xdr.ScVal{Type: xdr.ScValTypeScvContractInstance, Instance: inst},
-		},
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return key, entry
-}
-
 func loSeedLake(t *testing.T, ctx context.Context) *chstore.ExplorerReader {
 	t.Helper()
 	addr := clickhouseAddr(t)
@@ -102,11 +69,8 @@ func loSeedLake(t *testing.T, ctx context.Context) *chstore.ExplorerReader {
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
-	rows := loFixtureRows(t)
-	fk, fe := loFeedInstance(t, loCEXFeed)
-	rows = append(rows, [2]string{fk, fe})
 	at := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
-	for _, r := range rows {
+	for _, r := range loFixtureRows(t) {
 		if err := b.Append("contract_data", r[0], "", "", int64(0), "updated", loLedger-100, at, r[1]); err != nil {
 			t.Fatalf("append: %v", err)
 		}
@@ -122,7 +86,7 @@ func loSeedLake(t *testing.T, ctx context.Context) *chstore.ExplorerReader {
 	return er
 }
 
-func loUpdate(t *testing.T, contract, asset string, ts time.Time, ledger uint32, price int64, op uint32) c.OracleUpdate {
+func loUpdate(t *testing.T, contract, asset string, ts time.Time, ledger uint32, price *big.Int, op uint32) c.OracleUpdate {
 	t.Helper()
 	a, err := c.ParseAsset(asset)
 	if err != nil {
@@ -132,17 +96,59 @@ func loUpdate(t *testing.T, contract, asset string, ts time.Time, ledger uint32,
 	return c.OracleUpdate{
 		Source: reflector.SourceCEX, ContractID: contract, Ledger: ledger, OpIndex: op,
 		TxHash: fmt.Sprintf("%064x", ledger), Timestamp: ts, Asset: a, Quote: usd,
-		Price: c.NewAmount(big.NewInt(price)), Decimals: 14,
+		Price: c.NewAmount(price), Decimals: 14,
 	}
 }
 
-// TestLendingOracle_EndToEnd runs the pool-oracle path on real ClickHouse and Postgres: the identity gate and config
-// from the adapter's own real entries by exact key, then the feed rows keyed on the Reflector CONTRACT, then the recipe.
+// loLake is the real lake reader with ledger close times pinned, since the fixture lake holds no ledgers.
+type loLake struct {
+	*chstore.ExplorerReader
+	closeAt time.Time
+}
+
+func (l loLake) CloseTimeForLedger(context.Context, uint32) (time.Time, bool, error) {
+	return l.closeAt, true, nil
+}
+
+type loWatermark struct{ closeAt time.Time }
+
+func (w loWatermark) LakeWatermark(context.Context) (uint32, time.Time, error) {
+	return loLedger, w.closeAt, nil
+}
+
+// loCEXState is the real CEX feed's state, decoded from the fixture: its last round and the prices the chain cached.
+func loCEXState(t *testing.T, ctx context.Context, er *chstore.ExplorerReader) oracleagg.FeedState {
+	t.Helper()
+	inst, ok, err := er.ContractInstance(ctx, loCEXFeed)
+	if err != nil || !ok || inst.WasmHash != oracleagg.ReflectorV71Hash {
+		t.Fatalf("feed instance: ok=%v err=%v hash=%s", ok, err, inst.WasmHash)
+	}
+	st, err := oracleagg.DecodeFeedState(inst.Storage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return st
+}
+
+// TestLendingOracle_EndToEnd runs PoolOraclePrices on real ClickHouse and Postgres: the identity gate, config and feed
+// state from the real entries by exact key, the feed rows through the production OracleFeedRounds SQL keyed on the
+// Reflector CONTRACT, cross-checked against the feed's own history mask and cache.
 func TestLendingOracle_EndToEnd(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	c.InstallAliasRegistry(nil)
 	er := loSeedLake(t, ctx)
+	st := loCEXState(t, ctx, er)
+	round := time.UnixMilli(int64(st.LastTimestampMs)).UTC()
+	prev := round.Add(-300 * time.Second)
+	xlm, _, _ := st.AssetIndex(oracleagg.Asset{Symbol: "XLM"})
+	xlmAt := func(ts time.Time) *big.Int {
+		p, ok := st.CachedPrice(xlm, uint64(ts.UnixMilli()))
+		if !ok {
+			t.Fatalf("XLM not in the chain cache at %s", ts)
+		}
+		return p
+	}
 
 	dsn := startTimescale(t, ctx)
 	applyMigrations(t, dsn)
@@ -151,20 +157,16 @@ func TestLendingOracle_EndToEnd(t *testing.T) {
 		t.Fatalf("store open: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-
-	round := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC) // aligned to 300 s
-	prev := round.Add(-300 * time.Second)
 	seeds := []c.OracleUpdate{
-		loUpdate(t, loCEXFeed, "crypto:XLM", round, loLedger-10, 12_345_678_901_234_567, 0),
-		loUpdate(t, loCEXFeed, "crypto:XLM", prev, loLedger-70, 12_345_678_901_234_567, 0),
+		loUpdate(t, loCEXFeed, "crypto:XLM", round, loLedger-10, xlmAt(round), 0),
+		loUpdate(t, loCEXFeed, "crypto:XLM", prev, loLedger-70, xlmAt(prev), 0),
 		// Same asset, same source name, a foreign contract: must not price the pool.
-		loUpdate(t, loFXFeed, "crypto:USDC", round, loLedger-10, 1e14, 1),
-		loUpdate(t, loFXFeed, "crypto:USDC", prev, loLedger-70, 1e14, 1),
+		loUpdate(t, loFXFeed, "crypto:USDC", round, loLedger-10, big.NewInt(1e14), 1),
+		loUpdate(t, loFXFeed, "crypto:USDC", prev, loLedger-70, big.NewInt(1e14), 1),
 		// A raw row on the pool's own feed: marks the round, never prices.
-		loUpdate(t, loCEXFeed, "raw:EURC", round, loLedger-10, 1e14, 2),
-		loUpdate(t, loCEXFeed, "raw:EURC", prev, loLedger-70, 1e14, 2),
+		loUpdate(t, loCEXFeed, "raw:EURC", round, loLedger-10, big.NewInt(1e14), 2),
 		// Applied after the evaluation ledger: invisible to it.
-		loUpdate(t, loCEXFeed, "crypto:XLM", round.Add(300*time.Second), loLedger+5, 9e14, 0),
+		loUpdate(t, loCEXFeed, "crypto:XLM", round.Add(300*time.Second), loLedger+5, big.NewInt(9e14), 0),
 	}
 	for _, u := range seeds {
 		if err := store.InsertOracleUpdate(ctx, u); err != nil {
@@ -172,46 +174,20 @@ func TestLendingOracle_EndToEnd(t *testing.T) {
 		}
 	}
 
-	hash, err := er.ContractWasmHash(ctx, loCEXAdapter)
-	if err != nil || oracleagg.ProgramForHash(hash) != oracleagg.ProgramV2 {
-		t.Fatalf("adapter hash %q (%v) is not the audited v2 build", hash, err)
+	closeAt := round.Add(100 * time.Second)
+	srv := v1.New(v1.Options{Explorer: loLake{er, closeAt}, Lending: store, LakeWatermark: loWatermark{closeAt}})
+	got, basis := srv.PoolOraclePrices(ctx, v1.LendingOraclePool{ID: "POOL", Oracle: loCEXAdapter, Reserves: []string{loXLMSAC, loUSDCSAC, loEURCSAC}})
+	if basis.Program != oracleagg.ProgramV2 || basis.Ledger != loLedger {
+		t.Fatalf("basis = %+v", basis)
 	}
-	feedHash, err := er.ContractWasmHash(ctx, loCEXFeed)
-	if err != nil {
-		t.Fatal(err)
+	want := new(big.Int).Quo(xlmAt(round), big.NewInt(10_000_000)) // 14 → 7 decimals, truncated
+	if x := got[loXLMSAC]; x.Verdict != "" || x.Price.Price.Cmp(want) != 0 || x.Price.Timestamp != uint64(round.Unix()) {
+		t.Fatalf("XLM = %+v, want %s at the round", x, want)
 	}
-	storage, ok, err := er.ContractInstanceStorage(ctx, loCEXAdapter)
-	if err != nil || !ok {
-		t.Fatalf("instance storage: ok=%v err=%v", ok, err)
-	}
-	cfg, err := oracleagg.DecodeV2Instance(storage)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	tClose := round.Add(100 * time.Second)
-	price := func(reserve string) oracleagg.Result {
-		rule := cfg.Assets[oracleagg.Stellar(reserve)]
-		key, err := oracleagg.FeedAssetKey(rule.FeedAsset)
-		if err != nil {
-			t.Fatal(err)
-		}
-		w, err := store.OracleFeedRounds(ctx, rule.Feed, c.AssetAliasStrings(key), tClose.Add(-2*time.Hour), tClose, loLedger)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !w.LastRound.Equal(round) || w.Source != reflector.SourceCEX {
-			t.Fatalf("%s: last round %s source %q, want %s from the own feed at or before L%d", reserve, w.LastRound, w.Source, round, loLedger)
-		}
-		f := oracleagg.FeedFromRounds(oracleagg.FeedProgramForHash(feedHash), reflector.DefaultResolutionSeconds, w.LastRound, w.Quote, key, w.Prices)
-		return oracleagg.LastPrice(cfg, oracleagg.Stellar(reserve), uint64(tClose.Unix()), f)
-	}
-	if x := price(loXLMSAC); x.Verdict != "" || x.Price.Price.String() != "1234567890" || x.Price.Timestamp != uint64(round.Unix()) {
-		t.Fatalf("XLM = %+v, want floor(12345678901234567/10^7) at the round", x)
-	}
+	// The chain priced USDC and EURC in its last round; we hold no mapped row of either from this feed.
 	for _, r := range []string{loUSDCSAC, loEURCSAC} {
-		if got := price(r); got.Verdict != oracleagg.VerdictPriceStale {
-			t.Fatalf("%s = %+v, want oracle_price_stale (no own-feed mapped row)", r, got)
+		if g := got[r]; g.Verdict != oracleagg.VerdictFeedIncomplete || g.Price.Price != nil {
+			t.Fatalf("%s = %+v, want oracle_feed_incomplete", r, g)
 		}
 	}
 }
@@ -222,12 +198,16 @@ func TestLendingOracle_V1ConfigFromLake(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	er := loSeedLake(t, ctx)
-	storage, ok, err := er.ContractInstanceStorage(ctx, loV1Adapter)
-	if err != nil || !ok {
-		t.Fatalf("instance storage: ok=%v err=%v", ok, err)
+	inst, ok, err := er.ContractInstance(ctx, loV1Adapter)
+	if err != nil || !ok || oracleagg.ProgramForHash(inst.WasmHash) != oracleagg.ProgramV1 {
+		t.Fatalf("instance: ok=%v err=%v hash=%s", ok, err, inst.WasmHash)
 	}
-	cfg, err := oracleagg.DecodeV1(storage, func(k scval.ScVal) (scval.ScVal, bool, error) {
-		return er.ContractPersistentEntry(ctx, loV1Adapter, k)
+	cfg, err := oracleagg.DecodeV1(inst.Storage, func(k scval.ScVal) (scval.ScVal, bool, error) {
+		v, modified, ok, err := er.ContractPersistentEntry(ctx, loV1Adapter, k)
+		if err == nil && ok && (modified == 0 || modified > loLedger) {
+			t.Errorf("entry %s last modified at L%d", scval.Display(k), modified)
+		}
+		return v, ok, err
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -241,5 +221,73 @@ func TestLendingOracle_V1ConfigFromLake(t *testing.T) {
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Fatalf("got  %+v\nwant %+v", cfg, want)
+	}
+}
+
+// TestOracleFeedRounds_PrunesToWindow measures both OracleFeedRounds statements, as prepared by the production call,
+// over 120 days of two feeds' 5-minute rounds with the r1 compression policy: each must scan only the chunks its ts
+// window touches, in the hot tier and in the compressed one.
+func TestOracleFeedRounds_PrunesToWindow(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	db := store.DB()
+	db.SetMaxOpenConns(1)
+
+	now := time.Now().UTC().Truncate(time.Hour)
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO oracle_updates (source, contract_id, ledger, tx_hash, op_index, ts, asset, quote, price, decimals)
+		SELECT 'reflector-cex', f.contract, (extract(epoch FROM g.ts)::bigint / 5)::int, md5(f.contract || a.asset || g.ts::text) || md5(g.ts::text),
+		       array_position($2::text[], a.asset), g.ts, a.asset, 'fiat:USD', 1000, 14
+		  FROM unnest($1::text[]) AS f(contract), unnest($2::text[]) AS a(asset),
+		       generate_series($3::timestamptz, $4::timestamptz, '5 minutes') AS g(ts)`,
+		"{"+loCEXFeed+","+loFXFeed+"}", "{crypto:XLM,crypto:USDC,crypto:BTC}", now.Add(-120*24*time.Hour), now); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	var compressed int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM (SELECT compress_chunk(c)
+		FROM show_chunks('oracle_updates', older_than => now() - INTERVAL '7 days') c) s`).Scan(&compressed); err != nil || compressed < 2 {
+		t.Fatalf("compressed %d chunks (%v), want >= 2", compressed, err)
+	}
+	if _, err := db.ExecContext(ctx, `ANALYZE oracle_updates`); err != nil {
+		t.Fatal(err)
+	}
+
+	keys := []string{"crypto:XLM", "native"}
+	var seen []string
+	for _, at := range []time.Time{now.Add(-time.Hour), now.Add(-60 * 24 * time.Hour)} {
+		to := at.Add(100 * time.Second)
+		from := to.Add(-2100 * time.Second)
+		w, err := store.OracleFeedRounds(ctx, loCEXFeed, keys, at, from, to, ^uint32(0)>>1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !w.LastRound.Equal(at) || len(w.Prices) != 7 {
+			t.Fatalf("at %s: last round %s, %d prices; want %s and the 7 rounds in [from, to]", at, w.LastRound, len(w.Prices), at)
+		}
+		if seen == nil {
+			seen = []string{
+				capturePreparedStatement(t, ctx, db, nil, "FROM oracle_updates", "contract_id = $1", "LIMIT 1"),
+				capturePreparedStatement(t, ctx, db, nil, "FROM oracle_updates", "asset = ANY($1)", "contract_id = $2"),
+			}
+		}
+		lit := func(ts time.Time) string { return ts.Format(time.RFC3339Nano) }
+		for i, args := range [][]any{
+			{loCEXFeed, lit(at), lit(to), int(^uint32(0) >> 1)},
+			{"{" + strings.Join(keys, ",") + "}", loCEXFeed, lit(from), lit(to), int(^uint32(0) >> 1)},
+		} {
+			pc := explainPrepared(t, ctx, db, "force_custom_plan", seen[i], args)
+			t.Logf("query %d at %s: %s", i, at, pc)
+			// A sub-hour window touches at most two 1-day chunks; a third means the ts bound did not prune.
+			if pc.chunkScans > 2 {
+				t.Errorf("query %d at %s scanned %d chunks, want <= 2: %s", i, at, pc.chunkScans, pc)
+			}
+		}
 	}
 }

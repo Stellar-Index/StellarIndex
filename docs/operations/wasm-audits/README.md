@@ -30,6 +30,8 @@ live rows can decode against unaudited bytes for up to a day before anyone is to
 - `<source>.md` — one audit log per source (e.g. `soroswap.md`, `aquarius.md`,
   `phoenix.md`, `comet.md`, `blend.md`, `spectra.md`); `ls` this directory for
   the current set.
+- `oracle-aggregator.md` — the one log that gates a read path rather than an ingest source: Blend's SEP-40
+  oracle adapters and the Reflector feed state the pool-oracle price reproduction reads.
 - `evidence/` — walk JSON worth keeping.
 - `protocol-epochs.md`, `r1-walk-2026-05-01.md`,
   `walker-investigation-2026-05-01.md` — dated investigations, kept as history.

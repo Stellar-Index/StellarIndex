@@ -16,6 +16,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend/oracleagg"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -29,6 +30,8 @@ const (
 	oracleUSDCSAC    = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
 	oracleEURCSAC    = "CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV"
 	oracleLedger     = uint32(66_000_000)
+	// cexXLM is XLM's index in the CEX feed's asset list.
+	cexXLM = 13
 )
 
 // oracleRound is a round timestamp aligned to the 300 s resolution; the watermark ledger closes 100 s after it.
@@ -39,21 +42,16 @@ var (
 
 type fakeOracleLake struct {
 	ExplorerReader
-	hashes   map[string]string
-	instance map[string][]scval.ScMapEntry
+	instance map[string]clickhouse.ContractInstance
 }
 
-func (f *fakeOracleLake) ContractWasmHash(_ context.Context, id string) (string, error) {
-	return f.hashes[id], nil
+func (f *fakeOracleLake) ContractInstance(_ context.Context, c string) (clickhouse.ContractInstance, bool, error) {
+	i, ok := f.instance[c]
+	return i, ok, nil
 }
 
-func (f *fakeOracleLake) ContractInstanceStorage(_ context.Context, c string) ([]scval.ScMapEntry, bool, error) {
-	s, ok := f.instance[c]
-	return s, ok, nil
-}
-
-func (f *fakeOracleLake) ContractPersistentEntry(context.Context, string, scval.ScVal) (scval.ScVal, bool, error) {
-	return scval.ScVal{}, false, nil
+func (f *fakeOracleLake) ContractPersistentEntry(context.Context, string, scval.ScVal) (scval.ScVal, uint32, bool, error) {
+	return scval.ScVal{}, 0, false, nil
 }
 
 // CloseTimeForLedger closes every ledger 5 s after the previous one, anchored at oracleLedger.
@@ -70,39 +68,31 @@ type fakeOracleRow struct {
 
 type fakeOracleFeeds struct {
 	LendingReader
-	rows    []fakeOracleRow
-	cursors map[string]uint32
+	rows []fakeOracleRow
 }
 
-// OracleFeedRounds applies the SQL's filters: contract, ts window, ledger, and the asset keys for prices.
-func (f *fakeOracleFeeds) OracleFeedRounds(_ context.Context, contract string, keys []string, from, to time.Time, maxLedger uint32) (timescale.OracleFeedWindow, error) {
+// OracleFeedRounds applies the SQL's filters: contract, ts windows, ledger, and the asset keys for prices.
+func (f *fakeOracleFeeds) OracleFeedRounds(_ context.Context, contract string, keys []string, lastFrom, from, to time.Time, maxLedger uint32) (timescale.OracleFeedWindow, error) {
 	w := timescale.OracleFeedWindow{Prices: map[int64]canonical.Amount{}}
 	for _, r := range f.rows {
-		if r.contract != contract || r.ts.Before(from) || r.ts.After(to) || r.ledger > maxLedger {
+		if r.contract != contract || r.ts.After(to) || r.ledger > maxLedger {
 			continue
 		}
-		if r.ts.After(w.LastRound) {
+		if !r.ts.Before(lastFrom) && r.ts.After(w.LastRound) {
 			w.LastRound, w.Source = r.ts, r.source
 			w.Quote, _ = canonical.ParseAsset(r.quote)
 		}
-		if slices.Contains(keys, r.asset) {
+		if !r.ts.Before(from) && slices.Contains(keys, r.asset) {
 			w.Prices[r.ts.UnixMilli()] = canonical.NewAmount(big.NewInt(r.price))
 		}
 	}
 	return w, nil
 }
 
-func (f *fakeOracleFeeds) GetCursor(_ context.Context, source, sub string) (timescale.Cursor, error) {
-	c, ok := f.cursors[sub]
-	if source != "projector" || !ok {
-		return timescale.Cursor{}, timescale.ErrNotFound
-	}
-	return timescale.Cursor{Source: source, Sub: sub, LastLedger: c}, nil
-}
-
-func oracleInstance(t *testing.T, adapter string) []scval.ScMapEntry {
+// fixtureEntry reads the instance entry of contract from a lending_oracle fixture whose entry column is col.
+func fixtureInstance(t *testing.T, file string, col int, contract string) xdr.ScContractInstance {
 	t.Helper()
-	f, err := os.Open("../../../test/fixtures/lending_oracle/instances.tsv")
+	f, err := os.Open("../../../test/fixtures/lending_oracle/" + file)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,40 +101,77 @@ func oracleInstance(t *testing.T, adapter string) []scval.ScMapEntry {
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
 	for sc.Scan() {
 		cols := strings.Split(sc.Text(), "\t")
-		if len(cols) < 3 || len(cols[2]) < 40 {
+		if len(cols) <= col || len(cols[col]) < 40 {
 			continue
 		}
 		var le xdr.LedgerEntry
-		if err := xdr.SafeUnmarshalBase64(cols[2], &le); err != nil {
+		if err := xdr.SafeUnmarshalBase64(cols[col], &le); err != nil {
 			t.Fatal(err)
 		}
 		cd := le.Data.MustContractData()
 		id := cd.Contract.MustContractId()
-		if strkey.MustEncode(strkey.VersionByteContract, id[:]) == adapter {
-			return *cd.Val.MustInstance().Storage
+		if strkey.MustEncode(strkey.VersionByteContract, id[:]) == contract {
+			return cd.Val.MustInstance()
 		}
 	}
-	t.Fatalf("no fixture instance for %s", adapter)
-	return nil
+	t.Fatalf("no fixture instance for %s", contract)
+	return xdr.ScContractInstance{}
 }
 
-func newOracleServer(t *testing.T, adapterHash string, rows []fakeOracleRow, cursor uint32) *Server {
+// feedPeriods is a feed's chain-side history: asset index → periods before the last round it was priced in.
+type feedPeriods map[uint32][]uint32
+
+// oracleFeedStorage is the real CEX feed instance with last_timestamp, resolution and history rewritten (and the
+// cache dropped) to describe a feed whose last round is last.
+func oracleFeedStorage(t *testing.T, last time.Time, resMs uint32, priced feedPeriods) []scval.ScMapEntry {
 	t.Helper()
-	lake := &fakeOracleLake{
-		hashes: map[string]string{
-			oracleCEXAdapter: adapterHash, oracleDEXAdapter: adapterHash,
-			oracleCEXFeed: oracleagg.ReflectorV71Hash, oracleDEXFeed: oracleagg.ReflectorV71Hash,
-		},
-		instance: map[string][]scval.ScMapEntry{
-			oracleCEXAdapter: oracleInstance(t, oracleCEXAdapter), oracleDEXAdapter: oracleInstance(t, oracleDEXAdapter),
-		},
+	inst := fixtureInstance(t, "reflector-instances.tsv", 3, oracleCEXFeed)
+	history := make([]byte, 32*16)
+	for idx, periods := range priced {
+		for _, p := range periods {
+			history[idx*32+(31-p/8)] |= 1 << (p % 8)
+		}
 	}
-	feeds := &fakeOracleFeeds{rows: rows, cursors: map[string]uint32{"reflector-cex": cursor, "reflector-dex": cursor}}
-	return &Server{Options: Options{Explorer: lake, Lending: feeds, LakeWatermark: &stubWatermark{ledger: oracleLedger, closedAt: oracleCloseAt}}}
+	var out []scval.ScMapEntry
+	for _, e := range *inst.Storage {
+		switch name, _ := scval.AsString(e.Key); name {
+		case "cache":
+			continue
+		case "last_timestamp":
+			v := xdr.Uint64(last.UnixMilli())
+			e.Val = xdr.ScVal{Type: xdr.ScValTypeScvU64, U64: &v}
+		case "resolution":
+			e.Val = scval.NewU32(resMs)
+		case "history":
+			b := xdr.ScBytes(history)
+			e.Val = xdr.ScVal{Type: xdr.ScValTypeScvBytes, Bytes: &b}
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+func newOracleServer(t *testing.T, adapterHash string, rows []fakeOracleRow, feed []scval.ScMapEntry) (*Server, *fakeOracleLake) {
+	t.Helper()
+	adapter := func(id string) clickhouse.ContractInstance {
+		return clickhouse.ContractInstance{WasmHash: adapterHash, Storage: *fixtureInstance(t, "instances.tsv", 2, id).Storage, Ledger: oracleLedger - 1000}
+	}
+	lake := &fakeOracleLake{instance: map[string]clickhouse.ContractInstance{
+		oracleCEXAdapter: adapter(oracleCEXAdapter), oracleDEXAdapter: adapter(oracleDEXAdapter),
+		oracleCEXFeed: {WasmHash: oracleagg.ReflectorV71Hash, Storage: feed, Ledger: oracleLedger - 10},
+	}}
+	s := &Server{Options: Options{Explorer: lake, Lending: &fakeOracleFeeds{rows: rows}, LakeWatermark: &stubWatermark{ledger: oracleLedger, closedAt: oracleCloseAt}}}
+	return s, lake
 }
 
 func cexRow(contract, asset string, ts time.Time, ledger uint32, price int64) fakeOracleRow {
 	return fakeOracleRow{contract: contract, source: "reflector-cex", asset: asset, quote: "fiat:USD", ts: ts, ledger: ledger, price: price}
+}
+
+func priceXLM(t *testing.T, s *Server) (LendingOraclePrice, LendingOracleBasis) {
+	t.Helper()
+	got, basis := s.PoolOraclePrices(context.Background(), LendingOraclePool{ID: "POOL", Oracle: oracleCEXAdapter, Reserves: []string{oracleXLMSAC}})
+	return got[oracleXLMSAC], basis
 }
 
 func TestPoolOraclePrices_OwnFeedOnly(t *testing.T) {
@@ -159,8 +186,8 @@ func TestPoolOraclePrices_OwnFeedOnly(t *testing.T) {
 		cexRow(oracleCEXFeed, "raw:EURC", oracleRound, oracleLedger-10, 1e14),
 		cexRow(oracleCEXFeed, "raw:EURC", prev, oracleLedger-70, 1e14),
 	}
-	s := newOracleServer(t, oracleagg.HashV2, rows, oracleLedger)
-	got, basis := s.poolOraclePrices(context.Background(), lendingOraclePool{
+	s, _ := newOracleServer(t, oracleagg.HashV2, rows, oracleFeedStorage(t, oracleRound, 300_000, feedPeriods{cexXLM: {0, 1}}))
+	got, basis := s.PoolOraclePrices(context.Background(), LendingOraclePool{
 		ID: "POOL", Oracle: oracleCEXAdapter, Reserves: []string{oracleXLMSAC, oracleUSDCSAC, oracleEURCSAC},
 	})
 	if basis.Program != oracleagg.ProgramV2 || basis.Ledger != oracleLedger || !basis.CloseTime.Equal(oracleCloseAt) {
@@ -181,39 +208,59 @@ func TestPoolOraclePrices_OwnFeedOnly(t *testing.T) {
 
 func TestPoolOraclePrices_ForeignWasmUnsupported(t *testing.T) {
 	foreign := "a41fc53d6753b6c04eb15b021c55052366a4c8e0e21bc72700f461264ec1350e"
-	s := newOracleServer(t, foreign, []fakeOracleRow{cexRow(oracleCEXFeed, "crypto:XLM", oracleRound, oracleLedger, 1e14)}, oracleLedger)
-	got, basis := s.poolOraclePrices(context.Background(), lendingOraclePool{ID: "POOL", Oracle: oracleCEXAdapter, Reserves: []string{oracleXLMSAC}})
-	if basis.WasmHash != foreign || got[oracleXLMSAC].Verdict != oracleagg.VerdictUnsupported || !strings.Contains(got[oracleXLMSAC].Detail, foreign) {
-		t.Fatalf("got %+v basis %+v", got, basis)
+	s, _ := newOracleServer(t, foreign, nil, oracleFeedStorage(t, oracleRound, 300_000, nil))
+	x, basis := priceXLM(t, s)
+	if basis.WasmHash != foreign || x.Verdict != oracleagg.VerdictUnsupported || !strings.Contains(x.Detail, foreign) {
+		t.Fatalf("got %+v basis %+v", x, basis)
 	}
 }
 
 // The DEX adapter's base is the USDC SAC: its base reserve is 10^7 at the ledger time and the quote stays the SAC.
 func TestPoolOraclePrices_DEXBaseQuoteVerbatim(t *testing.T) {
-	s := newOracleServer(t, oracleagg.HashV2, nil, oracleLedger)
-	got, _ := s.poolOraclePrices(context.Background(), lendingOraclePool{ID: "POOL", Oracle: oracleDEXAdapter, Reserves: []string{oracleUSDCSAC}})
+	s, _ := newOracleServer(t, oracleagg.HashV2, nil, nil)
+	got, _ := s.PoolOraclePrices(context.Background(), LendingOraclePool{ID: "POOL", Oracle: oracleDEXAdapter, Reserves: []string{oracleUSDCSAC}})
 	u := got[oracleUSDCSAC]
 	if u.Verdict != "" || u.Price.Price.String() != "10000000" || u.Price.Timestamp != uint64(oracleCloseAt.Unix()) || u.Quote.String() != oracleUSDCSAC {
 		t.Fatalf("USDC = %+v", u)
 	}
 }
 
-// When the feed's projector is behind the lake watermark, prices are reproduced at the cursor ledger, so a round the
-// projector has not written cannot be replaced by an older one at the newer ledger's time.
-func TestPoolOraclePrices_HeldBackToProjectorCursor(t *testing.T) {
-	cursor := oracleLedger - 30
+// The projector has not written the feed's last round: the chain's last_timestamp says it priced XLM, so the reserve
+// gets a verdict instead of the older stored round, and the basis stays the watermark.
+func TestPoolOraclePrices_RoundMissingHere(t *testing.T) {
 	rows := []fakeOracleRow{
-		cexRow(oracleCEXFeed, "crypto:XLM", oracleRound, oracleLedger-10, 2e14),
 		cexRow(oracleCEXFeed, "crypto:XLM", oracleRound.Add(-300*time.Second), oracleLedger-70, 1e14),
 		cexRow(oracleCEXFeed, "crypto:XLM", oracleRound.Add(-600*time.Second), oracleLedger-130, 1e14),
 	}
-	s := newOracleServer(t, oracleagg.HashV2, rows, cursor)
-	got, basis := s.poolOraclePrices(context.Background(), lendingOraclePool{ID: "POOL", Oracle: oracleCEXAdapter, Reserves: []string{oracleXLMSAC}})
-	if basis.Ledger != cursor || !basis.CloseTime.Equal(oracleCloseAt.Add(-150*time.Second)) {
-		t.Fatalf("basis = %+v, want ledger %d", basis, cursor)
+	s, _ := newOracleServer(t, oracleagg.HashV2, rows, oracleFeedStorage(t, oracleRound, 300_000, feedPeriods{cexXLM: {0, 1, 2}}))
+	x, basis := priceXLM(t, s)
+	if x.Verdict != oracleagg.VerdictFeedIncomplete || basis.Ledger != oracleLedger {
+		t.Fatalf("XLM = %+v basis %+v, want oracle_feed_incomplete at the watermark", x, basis)
 	}
-	x := got[oracleXLMSAC]
-	if x.Verdict != "" || x.Price.Price.String() != "10000000" || x.Price.Timestamp != uint64(oracleRound.Add(-300*time.Second).Unix()) {
+}
+
+// The feed's live resolution comes from its instance: at 60 s, R−300 is period 5, not period 1.
+func TestPoolOraclePrices_FeedResolutionFromChain(t *testing.T) {
+	rows := []fakeOracleRow{
+		cexRow(oracleCEXFeed, "crypto:XLM", oracleRound, oracleLedger-10, 2e14),
+		cexRow(oracleCEXFeed, "crypto:XLM", oracleRound.Add(-300*time.Second), oracleLedger-70, 2e14),
+	}
+	s, _ := newOracleServer(t, oracleagg.HashV2, rows, oracleFeedStorage(t, oracleRound, 60_000, feedPeriods{cexXLM: {0, 5}}))
+	if x, _ := priceXLM(t, s); x.Verdict != "" || x.Price.Price.String() != "20000000" {
 		t.Fatalf("XLM = %+v", x)
+	}
+}
+
+// An adapter or feed entry modified after the evaluation ledger is not the state there.
+func TestPoolOraclePrices_StateNewerThanLedger(t *testing.T) {
+	rows := []fakeOracleRow{cexRow(oracleCEXFeed, "crypto:XLM", oracleRound, oracleLedger-10, 1e14)}
+	for _, who := range []string{oracleCEXFeed, oracleCEXAdapter} {
+		s, lake := newOracleServer(t, oracleagg.HashV2, rows, oracleFeedStorage(t, oracleRound, 300_000, feedPeriods{cexXLM: {0}}))
+		e := lake.instance[who]
+		e.Ledger = oracleLedger + 1
+		lake.instance[who] = e
+		if x, basis := priceXLM(t, s); x.Verdict != oracleagg.VerdictStateNewer || basis.Ledger != oracleLedger {
+			t.Fatalf("%s newer: XLM = %+v basis %+v", who, x, basis)
+		}
 	}
 }

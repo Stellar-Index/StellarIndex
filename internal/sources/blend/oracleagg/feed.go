@@ -25,18 +25,12 @@ func FeedAssetKey(a Asset) (canonical.Asset, error) {
 	return k, nil
 }
 
-// FeedFromRounds builds the recipe's Feed from a feed's stored rounds: lastRound is its newest round (zero when
-// none), quote its stored quote (its SEP-40 base), key the feed asset's identity and prices its raw integers by
-// round timestamp in Unix ms.
-func FeedFromRounds(program FeedProgram, resolutionSeconds uint64, lastRound time.Time, quote, key canonical.Asset, prices map[int64]canonical.Amount) Feed {
-	f := Feed{
-		Program:      program,
-		ResolutionMs: resolutionSeconds * 1000,
-		Prices:       make(map[uint64]*big.Int, len(prices)),
-		AssetIsBase:  !quote.IsZero() && canonical.CanonicalAsset(quote) == canonical.CanonicalAsset(key),
-	}
-	if !lastRound.IsZero() {
-		f.LastRoundMs = uint64(lastRound.UnixMilli())
+// FeedFromRounds builds the recipe's Feed from the feed's on-chain state and our stored rounds: storedLast is our
+// newest stored round of the feed (zero when none) and prices the asset's raw integers by round timestamp (Unix ms).
+func FeedFromRounds(program FeedProgram, state FeedState, storedLast time.Time, prices map[int64]canonical.Amount) Feed {
+	f := Feed{Program: program, State: state, Prices: make(map[uint64]*big.Int, len(prices))}
+	if !storedLast.IsZero() {
+		f.StoredLastRoundMs = uint64(storedLast.UnixMilli())
 	}
 	for ms, p := range prices {
 		f.Prices[uint64(ms)] = p.BigInt()

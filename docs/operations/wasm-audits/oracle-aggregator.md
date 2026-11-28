@@ -16,8 +16,8 @@ below (`ProgramForHash`); any other hash is `oracle_unsupported`.
 **Source-checked 2026-11-28.** Both builds are Blend Capital's
 [`oracle-aggregator`](https://github.com/blend-capital/oracle-aggregator), byte-identical to the upstream release
 assets (`shasum -a 256` of the deployed bytes against `gh release download`). Neither exports an upgrade
-function or imports `update_current_contract_wasm`, so a contract's program is fixed for its life; the read path
-still checks the hash on every (cached) config read.
+function or imports `update_current_contract_wasm`, so a contract's program is fixed for its life. The read path
+takes the hash from the same instance entry it decodes the config from, so the gate and the config are one read.
 
 ## Builds
 
@@ -63,39 +63,64 @@ the underlying feed's rounds. Each rule and the upstream line it reproduces:
 | v1: unconfigured asset panics `AssetNotFound`; `Blocked(asset)` panics `AssetBlocked` | v1 `contract.rs:38-45` |
 | v1: feed `lastprice`: no round, or last round after `t`, is None; the last round only, no walk back | Reflector v7.1.0 `prices.rs:19-58` |
 | v1 on Reflector v6.0.x: also None when `t·1000 − R >= 2·resolution` | Reflector v6.0.0 `prices.rs:19-31` (v6.0.1 identical) |
-| feed `price(asset, T)`: `T` normalised down to the feed resolution; no price after the last round or more than 255 periods before it | Reflector v7.1.0 `price_oracle.rs:211-220`, `prices.rs:32-58` |
+| feed `price(asset, T)`: `T` normalised down to the feed's live resolution; no price after the last round or more than 255 periods before it; priced iff the history mask bit is set | Reflector v7.1.0 `price_oracle.rs:211-220`, `prices.rs:32-58`, `mapping.rs::check_history_updated` |
 
-Verdicts, one per None or panic: `oracle_asset_missing`, `oracle_asset_blocked`, `oracle_price_stale`,
-`oracle_price_absent` (v1: the asset sat out the last round), `oracle_deviation`,
-`oracle_deviation_unverifiable` (v2: no earlier period), plus `oracle_unsupported` and `oracle_read_failed`.
+### Feed state
+
+The feed's own instance entry (Reflector v7.1.0, `oracleagg.DecodeFeedState`; an unknown String key fails the
+decode) carries everything the recipe needs from it: `last_timestamp` (ms), `resolution` (ms), `decimals`,
+`protocol` (only 2 is modelled), `base_asset`, `assets` (index order), one `Symbol`/`Address` → index entry per
+asset, `history` (32 bytes per asset, bit `p` = priced `p` periods before `last_timestamp`) and `cache` (the
+recent rounds' update masks and prices). Our stored rounds are cross-checked against it, and any disagreement is
+`oracle_feed_incomplete`, never a price:
+
+- our newest stored round at or after `last_timestamp` must be `last_timestamp`, on the resolution boundary;
+  fewer is allowed only when the history mask says that round priced nothing (an all-zero round writes no row);
+- for every round the recipe touches, a stored row exists iff the asset's history bit is set;
+- where the round is in `cache`, the stored integer equals the cached one.
+
+Both real feeds (`test/fixtures/lending_oracle/reflector-instances.tsv`) decode, and their history mask agrees
+with the cached last round's update mask asset by asset.
+
+Verdicts the contract itself would give: `oracle_asset_missing`, `oracle_asset_blocked`, `oracle_contract_panics`
+(the call traps on underflow), `oracle_feed_asset_unknown` (the feed does not list the asset), `oracle_price_stale`,
+`oracle_price_absent` (v1: the asset sat out the last round), `oracle_deviation`, `oracle_deviation_unverifiable`
+(v2: no earlier period). Where we cannot reproduce it: `oracle_unsupported`, `oracle_read_failed` (our read
+failed), `oracle_feed_incomplete`, `oracle_state_newer` (an entry changed after the evaluation ledger).
 
 ## Read path
 
-`poolOraclePrices` (`internal/api/v1/lending_oracle_price.go`), per pool:
+`PoolOraclePrices` (`internal/api/v1/lending_oracle_price.go`), per pool, at one evaluation ledger `L` = the lake
+watermark, whose close time is `t`. Nothing is held back to a projector cursor: a round the projector has not
+written yet is caught by the feed-state cross-check above and reported, not replaced by an older one.
 
-1. The oracle's current WASM hash (`ExplorerReader.ContractWasmHash`) must be one of the two builds; the hash, the
-   decoded config and each feed's build are cached per (server, oracle) and re-read whenever the lake watermark
-   moves. A read failure is `oracle_read_failed` and is not cached.
-2. The evaluation ledger is the lake watermark, held back to each feed's `projector` cursor when that is behind,
-   since an unwritten round would make the recipe read an older one; its close time is `t`.
+1. The oracle's instance entry gives the WASM hash (one of the two builds, else `oracle_unsupported`) and the
+   config; v1 reads its persistent entries by exact key. Each feed's instance entry gives its build and state.
+   Every entry's last-modified ledger must be `<= L`, else `oracle_state_newer`; a v1 entry removed after `L`
+   counts too. The adapter and its feeds' state are cached per (server, oracle, `L`), with concurrent misses
+   sharing one read; an adapter read failure and a feed read failure on our side are not cached.
+2. Config failures fail the whole pool only when the instance itself cannot be read or decoded; one malformed
+   or newer `AssetConfig` / `Blocked` entry fails that reserve alone.
 3. Feed rows come from `Store.OracleFeedRounds`, keyed on the feed CONTRACT from the adapter config, every stored
-   identity of the feed asset (`canonical.AssetAliasStrings`), a bounded `ts` window and `ledger <= L`. The feed's
-   last round counts every row of the contract, raw ones included; a raw row never prices, and a feed symbol that
-   maps only to `raw:` is `oracle_unsupported`. A v1 window is 24 h, the pool's own price bound.
-4. The quote is the adapter's base, served verbatim: `fiat:USD`, or the USDC SAC for `CDN7JD6S`.
+   identity of the feed asset (`canonical.AssetAliasStrings`) and `ledger <= L`, over exactly the rounds the
+   program can touch: v1 `[last_timestamp, t]`; v2 `t − (MaxAge + res + MaxAge/res·res + feed resolution)`. A raw
+   row marks a round but never prices, and a feed symbol that maps only to `raw:` is `oracle_unsupported`.
+4. The quote is the adapter's base, served verbatim: `fiat:USD`, or the USDC SAC for `CDN7JD6S`. The pool's own
+   24 h age bound is not applied here; blend's health math applies `pool.rs::load_price` to the price timestamp.
 
 Verdicts per pool and reason: `stellarindex_lending_oracle_verdicts_total{pool,reason}`.
 
 ## Not verified, and modelled as explicit inputs
 
-- **Feed resolution.** Reflector normalises by its own live resolution; the adapter steps by the copy it cached.
-  Both are 300 s at `add_oracle`; the live value is not ingested, so the feed resolution is the repo's
-  `reflector.DefaultResolutionSeconds`, an assumption.
+- **Asset index entries.** The DEX feed lists 52 assets but carries index entries for 49; the last three (positions
+  49-51) were added without one. `assets.rs` (`resolve_asset_index`) is not in the audited source copy, so a
+  listed asset without an entry is `oracle_unsupported` rather than assumed to resolve by position.
 - **Reflector build.** The v6.0.x hashes are recorded only by prefix in [`reflector.md`](reflector.md), so only a
   feed running the attested v7.1.0 build (`25fc3060…`) is modelled; the v6 rule is implemented and tested but
   reachable only by explicit input.
 - **Reflector base asset.** v7.1.0 quotes its own base asset as 1 at the last round; that branch is not modelled
   and returns `oracle_unsupported`. No deployed adapter's feed asset is its feed's base.
-- **All-zero rounds.** Reflector advances `last_timestamp` on a round whose prices are all zero, but its event then
-  carries no prices and `oracle_updates` holds no row for it. v2 is unaffected (no period skipped carries the
-  asset); v1 would read the previous round where the contract reads None.
+- **i128 overflow.** The adapters compute in `i128` and would trap on overflow (`max_dev` product, rescaling);
+  the recipe computes in `big.Int` and does not model the trap, a non-goal: the largest cached feed price is
+  ~6·10^18 and decimal shifts are at most 10^14, so the worst product (~6·10^32) is five orders of magnitude below
+  2^127. An input that did overflow would trap on chain and still price here.

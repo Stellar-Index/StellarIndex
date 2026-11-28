@@ -9,6 +9,7 @@ them to the configurations recorded in
 | --- | --- | --- |
 | `instances.tsv` | `370842c809437f7c0bdb5ffbf22f890992343b83eda0e59e789410a01e112871` | lines 1-4: `key_xdr`, `last_modified_ledger`, `entry_xdr` of each adapter's instance entry; lines 5-8: `<adapter prefix>`, entry count, ledger (a capture summary, not entries) |
 | `v1-entries.tsv` | `8cc2684ce3b4dcf6985211d39b323c64438d7bd313f011611913848de545084e` | `<adapter prefix>`, `key_xdr`, `last_modified_ledger`, `entry_xdr`: all seven `contract_data` entries of each v1 adapter |
+| `reflector-instances.tsv` | `11f028b726ad72eadd9de5f016a5c4391c6e1041df4791a0ec5390c2f7226e50` | `CEX` / `DEX`, `key_xdr`, `ledger_seq`, `entry_xdr`: the instance entry of each Reflector feed (`CAFJZQWS…`, `CALI2BYU…`) at L65,712,333 / L65,712,329; `CEX-count` / `DEX-count` rows: each contract's other `contract_data` entry count (a capture summary, not entries). Pinned by `feedstate_real_test.go` |
 
 | adapter | WASM | program |
 | --- | --- | --- |
