@@ -207,7 +207,16 @@ func emisRollupOverZone(t *testing.T, loc *time.Location, d0 time.Time, writer u
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A position lists the pool on /v1/lending/protocols, whose emissions block reads what the rollup stores.
+	if err := store.InsertBlendPositionEvent(ctx, domain.BlendPositionEvent{
+		Pool: pool, Kind: domain.BlendEventSupply, Asset: resA, User: "GDEA2WMOWYQ3T56A2PZH5QYYEQBAORW2AUUJYX4FFD5GDPESAICTFTAL",
+		TokenAmount: big.NewInt(1), BOrDAmount: big.NewInt(1), Ledger: 69_999_999, TxHash: fmt.Sprintf("%064x", 1<<20),
+		Timestamp: time.Now().UTC().Add(-time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
 	srv := v1.New(v1.Options{
+		ProtocolStats: store,
 		Explorer: emisRollupLake{ExplorerReader: er, state: chstore.LendingEmissionsState{
 			Instance: &chstore.PoolInstance{Backstop: blnt.MainnetBackstop}, EmissionToken: token, ReserveList: []string{resA, resB},
 		}},
@@ -297,10 +306,12 @@ func emisRollupOverZone(t *testing.T, loc *time.Location, d0 time.Time, writer u
 		t.Fatal(err)
 	}
 	served := 0
+	var servedRows []timescale.LendingEmissionsUSDDay
 	check := func(stream, line string, at v1.WireTime, amount string, usd *string, priced, unpriced int) {
 		served++
 		k := stream + " " + line + " " + time.Time(at).UTC().Format(time.DateOnly)
 		r, ok := stored[k]
+		servedRows = append(servedRows, r)
 		switch {
 		case !ok:
 			t.Errorf("/emissions/history serves %s; no row stored for it", k)
@@ -332,4 +343,5 @@ func emisRollupOverZone(t *testing.T, loc *time.Location, d0 time.Time, writer u
 	if written != len(stored) {
 		t.Errorf("cycles wrote %d rows; %d stored", written, len(stored))
 	}
+	checkProtocolEmissions(t, ctx, ts.URL, token, day(3), yesterday, servedRows)
 }

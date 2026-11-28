@@ -108,6 +108,29 @@ and one `GROUP BY` over the daily table on its primary key.
 named, never `"0.00"`. When something is valued but every day carrying an amount was left out, the amounts are null with
 `usd_reason: all_excluded`.
 
+## Protocol emissions: `emissions` on `GET /v1/lending/protocols`
+
+Each protocol (Blend and BLNT alike) carries an `emissions` block over the same windows, ending on its own `through_day`
+by the revenue block's rule. It sums the stored days of `lending_emissions_usd_daily`, which the emissions rollup writes
+as `/emissions/history?interval=1d` serves them. Each window has one entry per stored stream: `reserve_schedule`,
+`pool_claims`, `backstop_alloc_backstop`, `backstop_alloc_pool` and `backstop_claims`. Each entry gives `amount_usd`
+(the exact sum, rounded to cents once) and `amount` (exact base units of `emission_token`). The streams are layers of
+the same tokens, so they are never added together and the block has no all-streams total. The per-reserve claim lines
+are part of `pool_claims` and are not summed again.
+
+Exclusions use the revenue block's pool-level reasons (`not_valued`, `days_not_valued`, `pool_list_read_failed`), plus
+`emissions_read_failed` and `emissions_timed_out`. Coverage stored at an older valuation revision counts as no coverage.
+Stream-level entries carry a `stream` and give:
+- a stream the pool does not serve, with the reason `/emissions/history` gives;
+- rows at an older revision (`valuation_stale`), left out entirely;
+- a stored `usd_reason` (for example `no_price_within_bound`), which leaves the USD out but keeps the tokens;
+- the stored day's own stream exclusions;
+- `price_missing` hours.
+
+The emission token's read-time verdict is applied the way the revenue block applies a reserve's. `lower_bound` marks a
+floor for `amount_usd` and `amount_lower_bound` one for `amount`. Until the rollup is enabled every stream is null with
+`usd_reason: not_valued`.
+
 ## Bad debt: `GET /v1/lending/pools/{pool}/bad-debt`
 
 When a borrower's collateral is gone but debt remains, the pool moves that debt onto its backstop's own position. From
