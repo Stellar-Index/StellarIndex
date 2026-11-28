@@ -420,7 +420,7 @@ function HistoryBody({
           <p className="text-ink-muted text-xs">
             The streams are the same tokens at different stages, so they are
             charted apart and never added. Hatched columns are lower bounds;
-            faint bands have no value.
+            grey cross-hatched bands with a dashed outline have no value.
           </p>
         </>
       )}
