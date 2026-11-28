@@ -99,6 +99,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	maxCarryAge := fs.Duration("max-carry-age", completeness.MaxProjectionCarryAge, "With -pass: a source whose clean projection claim was last reconciled over its whole served range longer ago than this (or never, on record) re-verifies from genesis instead of carrying the claim forward again — oldest evidence first, at most 3 sources per pass, never the SDEX census or a reproofOutlastsPass source such as sep41_transfers (their full re-verify outlasts the pass; compute-completeness-sdex.timer re-proves sdex weekly with -source sdex). 0 = carry without bound.")
 	sourceTimeout := fs.Duration("source-timeout", 45*time.Minute, "Deadline for ONE source's evaluation; a source that exceeds it gets no verdict (its prior stands) and the pass moves on, so one slow source cannot starve the rest. 0 disables; ignored with -source, where -timeout is the budget (the weekly SDEX re-proof needs hours).")
 	timeout := fs.Duration("timeout", 120*time.Minute, "Deadline for the whole run; sources not reached by it keep their prior verdict and are named in the error. Keep it below the systemd unit's TimeoutStartSec.")
+	absentFlag := fs.String("absent-by-design", "", "Comma-separated sources this NETWORK has none of (a quiet test net). An empty served tier for one is accepted as a projection claim only when substrate and recognition are verified and a lake read over its whole [genesis, tip] finds no row; a declared source with rows keeps its normal verdict and is flagged absent_declared_but_present. Each declared source re-reads its whole range every run, so never declare a busy source. An unknown name fails the run.")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -161,6 +162,10 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	// having verified nothing.
 	if verr := validateSourceFilter(*only, catalogue); verr != nil {
 		return fmt.Errorf("compute-completeness: %w", verr)
+	}
+	declaredAbsent, err := parseAbsentByDesign(*absentFlag, catalogue)
+	if err != nil {
+		return fmt.Errorf("compute-completeness: %w", err)
 	}
 
 	// Warm the factory-anchored gated registries (ADR-0035) so recognition accepts real protocol children and flags foreign
@@ -412,6 +417,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			projReconciledFrom uint32
 			evidencedNow       bool
 			evidencedAt        time.Time
+			absence            declaredAbsence
 		)
 		// Incremental: reconcile only [projFrom, srW.Ledger], with projFrom from projectionFloor.
 		// A pending replay-rewind window overrides that floor, because the rewritten range must be
@@ -449,18 +455,35 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			// delta == 0 && !blind.Any(): undecodable ledgers add 0 to delta while proving
 			// nothing, so a bare delta == 0 would certify exactly what the check cannot see.
 			var claimDetail string
+			projDetailAt := len(detail)
 			projOK, claimDetail = projectionClaim(servedFrom, runFrom, srW.Ledger, delta == 0 && !blind.Any(), pdetail, priorProj[src.name], newClaimScope(src, scopes, servedMins, targetFloors))
 			detail = append(detail, claimDetail)
 			if len(floorLoss) > 0 {
 				projOK = false
 				detail = append(detail, floorLoss...)
 			}
-			if vacuous, d := projectionWithoutEvidence(projOK, len(src.targets), servedMins, genesis, srW.Ledger); vacuous {
-				projOK, projVerifiedFrom = false, 0
-				detail = append(detail, d)
+			vacuous, vacuousDetail := projectionWithoutEvidence(projOK, len(src.targets), servedMins, genesis, srW.Ledger)
+			if declaredAbsent[src.name] {
+				verified := lakeComplete && recOK && srW.Ledger == tip && len(floorLoss) == 0
+				var aerr error
+				if absence, aerr = judgeDeclaredAbsence(ctx, src, servedMins, verified, genesis, tip, lakeAbsenceReader(store, streamer, *chAddr, src)); aerr != nil {
+					return fmt.Errorf("%s: %w", src.name, aerr)
+				}
 			}
 			projReconciledFrom = runFrom
-			evidencedNow, evidencedAt = projectionEvidence(projOK, servedFrom, runFrom, priorProj[src.name])
+			switch {
+			case absence.applied:
+				// The whole-range read is this run's own evidence from genesis; it replaces the served-scoped claim.
+				projOK, projVerifiedFrom, projReconciledFrom = true, genesis, genesis
+				detail = detail[:projDetailAt]
+			case vacuous:
+				projOK, projVerifiedFrom = false, 0
+				detail = append(detail, vacuousDetail)
+			}
+			if absence.detail != "" {
+				detail = append(detail, absence.detail)
+			}
+			evidencedNow, evidencedAt = projectionEvidence(projOK, projVerifiedFrom, projReconciledFrom, priorProj[src.name])
 			if projOK && !evidencedNow {
 				detail = append(detail, carriedEvidenceDetail(evidencedAt))
 			}
@@ -505,6 +528,8 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			ProjectionReconciledFrom: projReconciledFrom,
 			ProjectionEvidencedNow:   evidencedNow,
 			ProjectionEvidencedAt:    evidencedAt,
+			AbsentByDesign:           absence.applied,
+			AbsentDeclaredButPresent: absence.present,
 			SubstrateOK:              substrateOK, RecognitionOK: recOK, ProjectionOK: projOK,
 			Detail: strings.Join(detail, "; "),
 		}

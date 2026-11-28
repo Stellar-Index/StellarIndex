@@ -24174,6 +24174,17 @@ export interface operations {
                                  */
                                 projection_evidenced_at: string | null;
                                 /**
+                                 * @description `true` when `projection_ok` rests on the
+                                 *     operator declaring that this network has none
+                                 *     of the source (a quiet test net with, say, no
+                                 *     SDEX trade ever) AND a lake read over the whole
+                                 *     `[genesis_ledger, tip_ledger]` finding no row.
+                                 *     It is a verified absence, not a reconciled
+                                 *     projection. Read from the stored verdict.
+                                 *     Omitted otherwise; pubnet declares nothing.
+                                 */
+                                absent_by_design?: boolean;
+                                /**
                                  * @description Lake-axis coverage (watermark vs tip) — see
                                  *     watermark_ledger. A FRACTION in [0,1] despite
                                  *     the `_pct` name: 1.0 means the verdict reaches
