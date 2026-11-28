@@ -184,7 +184,8 @@ func (r lendingRun) interestPass(ctx context.Context, log io.Writer) error {
 	}
 	err = r.deriveInterest(ctx, log, wm, hb)
 	hb.Stop(err == nil)
-	return err
+	// The pass is durable by now; a heartbeat that could not be written must still fail the unit.
+	return errors.Join(err, hb.FinalWriteErr())
 }
 
 // deriveInterest plans and runs the pass from watermark wm. The timer's pass only catches up: behind by more than
