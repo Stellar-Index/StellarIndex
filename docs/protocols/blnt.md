@@ -103,6 +103,19 @@ BLNT differs in three ways:
 - `backstop_claims` is served per tier: `blnt_amount` (BLNT), `lp_amount` (backstop LP tokens) and `shares`
   (tier shares), each labelled in `units`.
 
+## Health factor
+
+**UNVERIFIED.** BLNT V3 is closed source, so its health formula cannot be read. What the repo supports:
+
+- Its storage types decode with Blend V2's decoders, and `b_rate`/`d_rate` are 12-decimal as in V2
+  (`internal/sources/blnt/reserves.go`). On that basis it is treated as the V2 lineage.
+- Nothing establishes that BLNT values an account, rounds, gates liquidation or checks oracle staleness as V2 does
+  ([blend.md](blend.md#health-factor)). No BLNT health figure is served until a behavioural check compares the V2
+  rules with the contract's own decisions on real BLNT liquidations.
+- A real BLNT `Positions` fixture exists (`test/fixtures/lending_storage/positions_entries.json`: collateral at reserves
+  0 and 1, a liability at reserve 2), but the fixtures hold no reserve list, no config for reserve 2 and no oracle
+  price, so it cannot yet be valued (`TestHealth_RealBLNTFixture`).
+
 ## Emission data inventory
 
 What the repo establishes about BLNT emission data, read 2026-11-27 from the
