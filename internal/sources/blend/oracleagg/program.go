@@ -6,17 +6,19 @@ package oracleagg
 // Program is an audited oracle-aggregator build.
 type Program int
 
-// The audited builds. Neither has an upgrade path, so a contract's program is fixed by its WASM hash.
+// The audited builds. None has an upgrade path, so a contract's program is fixed by its WASM hash.
 const (
-	ProgramUnknown Program = iota
-	ProgramV1              // oracle-aggregator v1.0.0: per-asset SEP-40 lastprice passthrough
-	ProgramV2              // oracle-aggregator v2.0.0: period walk with max_age and max_dev
+	ProgramUnknown  Program = iota
+	ProgramV1               // oracle-aggregator v1.0.0: per-asset SEP-40 lastprice passthrough
+	ProgramV2               // oracle-aggregator v2.0.0: period walk with max_age and max_dev
+	ProgramYBForkV2         // yieldblox/oracle-aggregator v2.0.0: v2 storage, max_dev on the feed's newest two records
 )
 
-// WASM hashes of the audited builds, byte-identical to the upstream release assets.
+// WASM hashes of the audited builds, byte-identical to their repositories' release assets.
 const (
-	HashV1 = "a7463634674ca764401e713e4e29aef4e8521877f76ab78b1e91bea9d46ec6bb"
-	HashV2 = "41df04894bf2d8291492326f7a6ab9c90a90cc9828e31990ce8aeeab42680bfd"
+	HashV1       = "a7463634674ca764401e713e4e29aef4e8521877f76ab78b1e91bea9d46ec6bb"
+	HashV2       = "41df04894bf2d8291492326f7a6ab9c90a90cc9828e31990ce8aeeab42680bfd"
+	HashYBForkV2 = "8cf43882ff2e6757bef1900973ab26efb1b42b832a640a320a9b881fa501cf76"
 )
 
 // ProgramForHash maps a lower-hex WASM hash to its audited program; ProgramUnknown for any other.
@@ -26,6 +28,8 @@ func ProgramForHash(hash string) Program {
 		return ProgramV1
 	case HashV2:
 		return ProgramV2
+	case HashYBForkV2:
+		return ProgramYBForkV2
 	}
 	return ProgramUnknown
 }
@@ -36,10 +40,15 @@ func (p Program) String() string {
 		return "oracle-aggregator v1.0.0"
 	case ProgramV2:
 		return "oracle-aggregator v2.0.0"
+	case ProgramYBForkV2:
+		return "oracle-aggregator v2.0.0 (YieldBlox fork)"
 	case ProgramUnknown:
 	}
 	return "unknown"
 }
+
+// v2Storage reports whether the program keeps v2.0.0's storage.rs layout (the fork's storage.rs is unchanged).
+func (p Program) v2Storage() bool { return p == ProgramV2 || p == ProgramYBForkV2 }
 
 // FeedProgram is the build of the underlying Reflector feed, which decides v1's lastprice age rule.
 type FeedProgram int
