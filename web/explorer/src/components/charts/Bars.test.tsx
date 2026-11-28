@@ -1,7 +1,71 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-import { HBarList, PairedBars, DivergingColumns } from './Bars';
+import { HBarList, PairedBars, DivergingColumns, StackedColumns } from './Bars';
+
+describe('StackedColumns', () => {
+  const series = [{ label: 'S', color: 'red' }];
+  it('hatches a lower-bound column and draws a missing one as a band, not a zero', () => {
+    const { container } = render(
+      <StackedColumns
+        ariaLabel="cols"
+        series={series}
+        max={10}
+        buckets={[
+          { label: 'a', values: [5] },
+          { label: 'b', values: [4], hatched: true, note: 'why' },
+          { label: 'c', values: [0], missing: true, note: 'not read' },
+        ]}
+      />,
+    );
+    const lb = container.querySelectorAll('[data-mark="lower-bound"]');
+    expect([...lb].map((e) => e.textContent)).toEqual([
+      'b — S: at least 4 (why)',
+    ]);
+    const missing = container.querySelectorAll('[data-mark="missing"]');
+    expect([...missing].map((e) => e.textContent)).toEqual([
+      'c: no value (not read)',
+    ]);
+  });
+  it('draws a legend only for more than one series', () => {
+    const one = render(
+      <StackedColumns
+        ariaLabel="one"
+        series={series}
+        buckets={[{ label: 'a', values: [1] }]}
+      />,
+    );
+    expect(one.container.querySelector('ul')).toBeNull();
+    one.unmount();
+    const two = render(
+      <StackedColumns
+        ariaLabel="two"
+        series={[...series, { label: 'T', color: 'blue' }]}
+        buckets={[{ label: 'a', values: [1, 2] }]}
+      />,
+    );
+    expect(
+      [...two.container.querySelectorAll('li')].map((l) => l.textContent),
+    ).toEqual(['S', 'T']);
+  });
+  it('scales to a fixed max so sibling charts compare', () => {
+    const { container } = render(
+      <StackedColumns
+        ariaLabel="cols"
+        series={series}
+        height={116}
+        max={10}
+        buckets={[{ label: 'a', values: [5] }]}
+      />,
+    );
+    // plot height 100, less 2 of headroom: 5 of 10 is 49.
+    expect(
+      container
+        .querySelector('svg > g rect:not([data-mark])')
+        ?.getAttribute('height'),
+    ).toBe('49');
+  });
+});
 import { DonutChart } from './DonutChart';
 
 describe('charts render nothing when there is nothing to draw', () => {

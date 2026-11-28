@@ -565,13 +565,21 @@ func fillPoolClaims(v *LendingEmissionsHistoryView, rows []timescale.EmissionCla
 	}
 }
 
+// emissionsVerdictSources are every source emissionsWriterSources names.
+var emissionsVerdictSources = []string{"blend", blend_backstop.SourceName, blnt.SourceName}
+
+// emissionsWriterSources are the sources whose projection verdicts judge a pool's and its backstop's emission streams.
+func emissionsWriterSources(isBLNT bool) (poolSrc, bstopSrc string) {
+	if isBLNT {
+		return blnt.SourceName, blnt.SourceName
+	}
+	return "blend", blend_backstop.SourceName
+}
+
 // applyEmissionsVerdicts withholds the "complete" claim from a stream whose writer's projection is not verified back to its
 // first ledger, as /emissions does for claim totals.
 func (s *Server) applyEmissionsVerdicts(ctx context.Context, v *LendingEmissionsHistoryView, isBLNT bool, flags *Flags) {
-	poolSrc, bstopSrc := "blend", blend_backstop.SourceName
-	if isBLNT {
-		poolSrc, bstopSrc = blnt.SourceName, blnt.SourceName
-	}
+	poolSrc, bstopSrc := emissionsWriterSources(isBLNT)
 	verdicts := s.projectionHistoryVerdicts(ctx, poolSrc, bstopSrc)
 	judge := func(stream, src string) {
 		switch verdicts[src] {

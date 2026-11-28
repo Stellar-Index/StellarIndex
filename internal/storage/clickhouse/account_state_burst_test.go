@@ -66,9 +66,9 @@ func TestAccountStateCached_ColdBurstDrainsNotSheds(t *testing.T) {
 	}
 }
 
-// TestAccountStateCached_StaleSkipsAndMarksWhenSaturated: a stale entry never waits for a slot; with the class full it is served at
-// once flagged RefreshFailed.
-func TestAccountStateCached_StaleSkipsAndMarksWhenSaturated(t *testing.T) {
+// TestAccountStateCached_StaleSkipsAndFlagsWhenSaturated: a stale entry never waits for a slot; with the class full it is served at
+// once flagged RefreshRefused, the entry left unmarked.
+func TestAccountStateCached_StaleSkipsAndFlagsWhenSaturated(t *testing.T) {
 	t.Parallel()
 	r := &ExplorerReader{
 		stateCache:  newAccountStateCache(),
@@ -82,7 +82,7 @@ func TestAccountStateCached_StaleSkipsAndMarksWhenSaturated(t *testing.T) {
 	}
 	r.stateCache.put("GSTALE", AccountState{Exists: true, Balance: 1}, time.Now().Add(-time.Hour))
 	st, stale, err := r.AccountStateCached(context.Background(), "GSTALE")
-	if err != nil || !stale || !st.RefreshFailed {
-		t.Fatalf("got (stale=%t, refreshFailed=%t, err=%v), want a stale serve flagged RefreshFailed", stale, st.RefreshFailed, err)
+	if err != nil || !stale || !st.RefreshRefused || st.RefreshFailed {
+		t.Fatalf("got (stale=%t, refused=%t, failed=%t, err=%v), want a stale serve flagged RefreshRefused only", stale, st.RefreshRefused, st.RefreshFailed, err)
 	}
 }
