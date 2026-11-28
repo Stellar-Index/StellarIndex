@@ -905,7 +905,8 @@ func awaitExternalSink(ctx context.Context, done <-chan struct{}, loss *pipeline
 			if !loss.OffChainFrom.IsZero() {
 				attrs = append(attrs, "from", loss.OffChainFrom, "to", loss.OffChainTo, "venues", loss.Venues)
 			}
-			logger.Error("external sink abandoned rows on exit — off-chain rows have no cursor, refetch the window from the venues with stellarindex-ops backfill-external",
+			logger.Error("external sink abandoned rows on exit — off-chain fills have no cursor or lake copy and no command restores them "+
+				"(backfill-external writes candles and refuses a window holding live rows); record the venues and window as a gap in the stored trades",
 				attrs...)
 		}
 		return true

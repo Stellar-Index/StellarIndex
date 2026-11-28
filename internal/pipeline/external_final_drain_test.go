@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
@@ -19,7 +20,7 @@ func TestExternalRetryBuffer_FinalDrainCountsUndrainedRows(t *testing.T) {
 		buf.enqueue(mkTrade("kraken", 0))
 	}
 
-	buf.finalDrain(nil)
+	buf.finalDrain(time.Now().Add(50*time.Millisecond), nil)
 
 	if got := counter(t, obs.SinkUndrainedRowsTotal, obs.SinkPersistEvents, "trade") - before; got != 3 {
 		t.Errorf("undrained trade rows delta = %v, want 3 (one per external trade left in the ring after the final pass)", got)
@@ -36,7 +37,7 @@ func TestExternalRetryBuffer_FinalDrainDoesNotCountLandedRows(t *testing.T) {
 	buf.enqueue(mkTrade("kraken", 0))
 	buf.enqueue(mkTrade("coinbase", 0))
 
-	buf.finalDrain(nil)
+	buf.finalDrain(time.Now().Add(time.Second), nil)
 
 	if got := counter(t, obs.SinkUndrainedRowsTotal, obs.SinkPersistEvents, "trade") - before; got != 0 {
 		t.Errorf("undrained trade rows delta = %v, want 0 (the final pass landed every row)", got)

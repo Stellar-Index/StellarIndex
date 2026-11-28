@@ -31,6 +31,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/cctp"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sdex"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -1666,7 +1667,7 @@ func assertGaps(t *testing.T, label string, got, want []timescale.LedgerGap) {
 
 // On shutdown (parent ctx cancelled) with N events in flight on the sink channel, all N must persist, none dropped: a
 // persistWorker select could take the shutdown arm over draining, and the drain timeout dropped the remainder. Buffers N
-// distinct trades, cancels the ctx, runs PersistEvents on a REAL store, asserts every trade landed.
+// distinct trades, cancels the ctx, runs each sink lane on a REAL store, asserts every trade landed.
 func TestSinkShutdownDrain_PersistsAllInFlight(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1691,45 +1692,72 @@ func TestSinkShutdownDrain_PersistsAllInFlight(t *testing.T) {
 
 	const n = 200
 	ts := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
-
-	// Buffer all N trades on the channel BEFORE starting the sink, then cancel
-	// the parent ctx, so every worker's first select sees ctx.Done ready with
-	// the channel full — the exact race the fix must survive.
-	in := make(chan consumer.Event, n)
-	for i := 0; i < n; i++ {
-		txHash := fmt.Sprintf("%064x", i) // 64 hex chars, distinct per trade
-		in <- sdex.TradeEvent{Trade: canonical.Trade{
-			Source:      "test-shutdown-drain",
-			Ledger:      uint32(70_000_000 + i),
-			TxHash:      txHash,
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	trade := func(source string, ledger uint32, i int) canonical.Trade {
+		return canonical.Trade{
+			Source:      source,
+			Ledger:      ledger,
+			TxHash:      fmt.Sprintf("%064x", i), // 64 hex chars, distinct per trade
 			OpIndex:     0,
 			Timestamp:   ts,
 			Pair:        pair,
 			BaseAmount:  canonical.NewAmount(big.NewInt(1_000_000_000)),
 			QuoteAmount: canonical.NewAmount(big.NewInt(12_000_000)),
-		}}
+		}
 	}
-
-	sinkCtx, sinkCancel := context.WithCancel(ctx)
-	sinkCancel() // shutdown requested with N events already buffered
-	close(in)    // producer done — lets the blocking drain exit cleanly
-
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		pipeline.PersistEvents(sinkCtx, logger, store, in, pipeline.SinkModeAll, nil)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(90 * time.Second):
-		t.Fatal("PersistEvents did not return within 90s after ctx cancel + channel close")
+	// The venue-stream lane holds off-chain trades, which have no cursor to replay them from.
+	lanes := []struct {
+		name, source string
+		event        func(i int) consumer.Event
+		run          func(context.Context, <-chan consumer.Event)
+	}{
+		{
+			"on-chain", "test-shutdown-drain",
+			func(i int) consumer.Event {
+				return sdex.TradeEvent{Trade: trade("test-shutdown-drain", uint32(70_000_000+i), i)}
+			},
+			func(c context.Context, in <-chan consumer.Event) {
+				pipeline.PersistEvents(c, logger, store, in, pipeline.SinkModeAll, nil)
+			},
+		},
+		{
+			"venue-stream", "coinbase",
+			func(i int) consumer.Event { return external.TradeEvent{Trade: trade("coinbase", 0, i)} },
+			func(c context.Context, in <-chan consumer.Event) {
+				pipeline.PersistExternalEvents(c, logger, store, in, nil)
+			},
+		},
 	}
+	for _, lane := range lanes {
+		t.Run(lane.name, func(t *testing.T) {
+			// Buffer all N trades on the channel BEFORE starting the sink, then cancel
+			// the parent ctx, so every worker's first select sees ctx.Done ready with
+			// the channel full — the exact race the fix must survive.
+			in := make(chan consumer.Event, n)
+			for i := 0; i < n; i++ {
+				in <- lane.event(i)
+			}
 
-	got := countTrades(t, store, "test-shutdown-drain")
-	if got != n {
-		t.Fatalf("persisted trades = %d, want %d — shutdown dropped %d in-flight events (C2-17 regression)", got, n, n-got)
+			sinkCtx, sinkCancel := context.WithCancel(ctx)
+			sinkCancel() // shutdown requested with N events already buffered
+			close(in)    // producer done — lets the blocking drain exit cleanly
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				lane.run(sinkCtx, in)
+			}()
+
+			select {
+			case <-done:
+			case <-time.After(90 * time.Second):
+				t.Fatal("sink did not return within 90s after ctx cancel + channel close")
+			}
+
+			if got := countTrades(t, store, lane.source); got != n {
+				t.Fatalf("persisted trades = %d, want %d — shutdown dropped %d in-flight events", got, n, n-got)
+			}
+		})
 	}
 }
 

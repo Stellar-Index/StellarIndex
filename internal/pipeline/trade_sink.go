@@ -274,13 +274,22 @@ type externalRetryBuffer struct {
 	maxDepth int
 	w        tradeWriter
 	logger   *slog.Logger
+	// shutdownBudget is how long after the lane's cancellation finalDrain may keep writing: the workers' drain
+	// plus the final pass, so the ring ends with the rest of the lane inside ShutdownDeadline.
+	shutdownBudget time.Duration
 }
 
 func newExternalRetryBuffer(w tradeWriter, logger *slog.Logger, maxDepth int) *externalRetryBuffer {
 	if maxDepth <= 0 {
 		maxDepth = externalRetryBufferMaxDepth
 	}
-	return &externalRetryBuffer{maxDepth: maxDepth, w: w, logger: logger}
+	return &externalRetryBuffer{maxDepth: maxDepth, w: w, logger: logger, shutdownBudget: drainTimeout + drainFinalPassBudget}
+}
+
+func (b *externalRetryBuffer) depth() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.ring)
 }
 
 // enqueue adds one external trade to the tail, dropping the oldest if
@@ -316,15 +325,14 @@ func (b *externalRetryBuffer) trimOldestLocked() {
 	obs.TradeInsertBufferDepth.Set(float64(len(b.ring)))
 }
 
-// run drives the background retrier until ctx is cancelled, then does a
-// final bounded drain of whatever remains, recording what it abandons in lt.
-func (b *externalRetryBuffer) run(ctx context.Context, lt *lossTracker) {
+// run drives the background retrier until ctx is cancelled. The shutdown drain is finalDrain's, run by the lane once
+// every worker has stopped handing it rows.
+func (b *externalRetryBuffer) run(ctx context.Context) {
 	ticker := time.NewTicker(externalRetryInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			b.finalDrain(lt)
 			return
 		case <-ticker.C:
 			b.drainOnce(ctx)
@@ -384,20 +392,28 @@ func (b *externalRetryBuffer) drainOnce(ctx context.Context) {
 	}
 }
 
-// finalDrain makes one last attempt at shutdown under a fresh ctx bounded by drainFinalPassBudget (it runs at the end of ShutdownDeadline).
-// Whatever does not land is counted on SinkUndrainedRowsTotal, recorded in lt (the lane's ShutdownLoss) and logged at ERROR with depth and venues for refetch.
+// finalDrain writes the ring at shutdown under a fresh ctx ending at deadline, retrying with capped backoff until it is
+// empty. Whatever has not landed by then is counted on SinkUndrainedRowsTotal, recorded in lt and logged at ERROR.
 //
 //nolint:contextcheck // intentional fresh context: the parent ctx is cancelled at shutdown, so threading it would fail every insert instantly (same pattern as drainBufferedEvents / flushShutdown).
-func (b *externalRetryBuffer) finalDrain(lt *lossTracker) {
-	b.mu.Lock()
-	pending := len(b.ring)
-	b.mu.Unlock()
-	if pending == 0 {
-		return
-	}
-	fctx, cancel := context.WithTimeout(context.Background(), drainFinalPassBudget)
+func (b *externalRetryBuffer) finalDrain(deadline time.Time, lt *lossTracker) {
+	fctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
-	b.drainOnce(fctx)
+	backoff := infraRetryInitialBackoff
+	for b.depth() > 0 {
+		b.drainOnce(fctx)
+		if b.depth() == 0 {
+			break
+		}
+		select {
+		case <-fctx.Done():
+		case <-time.After(backoff):
+		}
+		if fctx.Err() != nil {
+			break
+		}
+		backoff = min(backoff*2, infraRetryMaxBackoff)
+	}
 	b.abandonRemaining(lt)
 }
 
