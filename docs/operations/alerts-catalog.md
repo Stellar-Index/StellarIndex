@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 74 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 344 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 345 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -387,6 +387,7 @@ Per [ADR-0016](../adr/0016-per-region-storage-strategy.md). The indexer appends 
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_data_source_stale` | `stellarindex_data_freshness_stale{domain,source}` | == 1 for > 1h | ticket | [data-source-stale](runbooks/data-freshness.md#stellarindex_data_source_stale) |
+| `stellarindex_data_source_absent_declared_but_present` | `stellarindex_data_freshness_absent_declared_but_present{domain,source}` | == 1 for > 1h (listed in `stellarindex_sources_absent_by_design` yet holds rows) | ticket | [absent-declared-but-present](runbooks/data-freshness.md#stellarindex_data_source_absent_declared_but_present) |
 | `stellarindex_supply_assets_stale` | `supply_assets_stale` | > 0 for 2 h (per-asset frozen supply; the domain `supply` check cannot see it) | ticket | [supply-assets-stale](runbooks/data-freshness.md#stellarindex_supply_assets_stale) |
 | `stellarindex_completeness_incomplete` | `stellarindex_completeness_incomplete{source}` | == 1 for > 1h | ticket | [completeness-incomplete](runbooks/data-freshness.md#stellarindex_completeness_incomplete) |
 | `stellarindex_twap_history_missing` | `twap_history_missing{view}` or `cagg_history_missing{view}` | == 1 for 2 h. A CAGG recreated WITH NO DATA never got its manual refresh; newest-bar freshness reads green while history is empty | ticket | [twap-history-missing](runbooks/data-freshness.md#stellarindex_twap_history_missing) |

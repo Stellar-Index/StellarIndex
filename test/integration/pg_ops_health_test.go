@@ -80,7 +80,29 @@ func TestDataFreshnessSurvivesADeadFeed(t *testing.T) {
 		t.Fatalf("seed issuer: %v", err)
 	}
 
-	samples := runFreshnessDomainQueries(t, ctx, db, "NULL")
+	samples := runFreshnessDomainQueries(t, ctx, db, "NULL", "")
+
+	t.Run("a source declared absent by design is excused only while it is empty", func(t *testing.T) {
+		s := runFreshnessDomainQueries(t, ctx, db, "99999999", "sep1/issuers supply/asset_supply_history")
+		for key, want := range map[string]string{
+			// sep1: no payload ever fetched, declared → not stale, and the declaration is visible.
+			`stellarindex_data_freshness_stale{domain="sep1",source="issuers"}`:                       "0",
+			`stellarindex_data_freshness_empty{domain="sep1",source="issuers"}`:                       "1",
+			`stellarindex_data_freshness_absent_by_design{domain="sep1",source="issuers"}`:            "1",
+			`stellarindex_data_freshness_absent_declared_but_present{domain="sep1",source="issuers"}`: "0",
+			// supply: rows frozen 40 days, declared → the declaration is wrong; normal rule stands.
+			`stellarindex_data_freshness_stale{domain="supply",source="asset_supply_history"}`:                       "1",
+			`stellarindex_data_freshness_absent_declared_but_present{domain="supply",source="asset_supply_history"}`: "1",
+		} {
+			if s[key] != want {
+				t.Errorf("%s = %q, want %s", key, s[key], want)
+			}
+		}
+		// Undeclared, the same empty sep1 on the same old chain is stale.
+		if v := runFreshnessDomainQueries(t, ctx, db, "99999999", "")[`stellarindex_data_freshness_stale{domain="sep1",source="issuers"}`]; v != "1" {
+			t.Errorf("undeclared empty sep1 on an old chain = %q, want 1", v)
+		}
+	})
 
 	t.Run("an empty source is stale only once the chain is older than its threshold", func(t *testing.T) {
 		stale := `stellarindex_data_freshness_stale{domain="sep1",source="issuers"}`
@@ -90,7 +112,7 @@ func TestDataFreshnessSurvivesADeadFeed(t *testing.T) {
 			{"99999999", "1"}, // old chain: an empty source is overdue
 			{"NULL", "1"},     // unmeasurable chain: fail safe, stale
 		} {
-			s := runFreshnessDomainQueries(t, ctx, db, c.chainAge)
+			s := runFreshnessDomainQueries(t, ctx, db, c.chainAge, "")
 			if s[stale] != c.wantStale {
 				t.Errorf("chain age %s: %s = %q, want %s", c.chainAge, stale, s[stale], c.wantStale)
 			}
@@ -184,8 +206,9 @@ func TestDataFreshnessSurvivesADeadFeed(t *testing.T) {
 // per-asset blocks and returns every exposition sample it rendered,
 // keyed by `name{labels}`. chainAge stands in for the psql variable
 // `:chain_age` the script passes with -v: whole seconds, or "NULL" for an
-// unmeasurable chain.
-func runFreshnessDomainQueries(t *testing.T, ctx context.Context, db *sql.DB, chainAge string) map[string]string {
+// unmeasurable chain. absentByDesign stands in for `:'absent_by_design'`, the
+// space-separated declared list ("" when none).
+func runFreshnessDomainQueries(t *testing.T, ctx context.Context, db *sql.DB, chainAge, absentByDesign string) map[string]string {
 	t.Helper()
 	out := map[string]string{}
 	for _, needle := range []string{
@@ -193,7 +216,9 @@ func runFreshnessDomainQueries(t *testing.T, ctx context.Context, db *sql.DB, ch
 		"stellarindex_supply_assets_stale",
 	} {
 		for _, stmt := range freshnessSQLBlocks(t, needle) {
-			rows, err := db.QueryContext(ctx, strings.ReplaceAll(stmt, ":chain_age", chainAge))
+			stmt = strings.ReplaceAll(stmt, ":chain_age", chainAge)
+			stmt = strings.ReplaceAll(stmt, ":'absent_by_design'", "'"+absentByDesign+"'")
+			rows, err := db.QueryContext(ctx, stmt)
 			if err != nil {
 				t.Fatalf("execute watchdog block: %v\n--- SQL ---\n%s", err, stmt)
 			}

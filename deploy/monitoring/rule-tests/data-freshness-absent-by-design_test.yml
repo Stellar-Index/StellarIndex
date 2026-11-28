@@ -1,0 +1,59 @@
+---
+# promtool unit tests for stellarindex_data_source_absent_declared_but_present:
+# a source a host declared absent by design (stellarindex_sources_absent_by_design)
+# that holds rows tickets; a declared source that stays empty does not, and
+# neither does it read stale.
+#
+#   promtool test rules deploy/monitoring/rule-tests/data-freshness-absent-by-design_test.yml
+
+rule_files:
+  - ../rules/data-freshness.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: a declared-absent source that holds rows fires after 1h
+    input_series:
+      - series: 'stellarindex_data_freshness_absent_declared_but_present{domain="sep1",source="issuers",instance="futurenet",job="node"}'
+        values: '1x90'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_data_source_absent_declared_but_present
+        exp_alerts: []
+      - eval_time: 75m
+        alertname: stellarindex_data_source_absent_declared_but_present
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: data-freshness
+              domain: sep1
+              source: issuers
+              instance: futurenet
+              job: node
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_data_source_absent_declared_but_present
+              summary: "sep1/issuers is declared absent by design but holds rows"
+              description: |
+                stellarindex_data_freshness_absent_declared_but_present{domain="sep1",source="issuers"} = 1
+                — futurenet lists sep1/issuers in
+                stellarindex_sources_absent_by_design, but the source has data. It is judged
+                by its normal staleness rule meanwhile. Remove it from the host's list.
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_data_source_absent_declared_but_present
+
+  - interval: 1m
+    name: a declared-absent source that stays empty is quiet on both alerts
+    input_series:
+      - series: 'stellarindex_data_freshness_absent_declared_but_present{domain="sep41_supply",source="supply_flows",instance="futurenet",job="node"}'
+        values: '0x180'
+      - series: 'stellarindex_data_freshness_stale{domain="sep41_supply",source="supply_flows",instance="futurenet",job="node"}'
+        values: '0x180'
+    alert_rule_test:
+      - eval_time: 150m
+        alertname: stellarindex_data_source_absent_declared_but_present
+        exp_alerts: []
+      - eval_time: 150m
+        alertname: stellarindex_data_source_stale
+        exp_alerts: []

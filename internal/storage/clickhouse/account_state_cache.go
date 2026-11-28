@@ -21,8 +21,8 @@ const accountStateCacheMax = 4096
 type accountStateEntry struct {
 	state    AccountState
 	cachedAt time.Time
-	// refreshFailed: the last finished refresh errored, timed out, panicked or was skipped by the
-	// gate. A new entry (a complete successful fill) is the only thing that clears it.
+	// refreshFailed: the last finished refresh errored, timed out or panicked. A new entry (a complete
+	// successful fill) is the only thing that clears it; a refusal by the gate neither sets nor clears it.
 	refreshFailed bool
 }
 
@@ -114,8 +114,9 @@ func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string)
 	if st, ok, fresh := r.stateCache.get(account); ok {
 		if !fresh {
 			// Serve the expired entry now while one detached refresh runs: old-but-real beats a 503.
-			if _, skipped := r.refreshAccountState(account, tryAdmitAccountState); skipped { //nolint:contextcheck // intentional detach — see refreshAccountState
-				st.RefreshFailed = true
+			// A gate refusal says nothing about whether the scan works: flag this serve only, never the entry.
+			if _, refused := r.refreshAccountState(account, tryAdmitAccountState); refused { //nolint:contextcheck // intentional detach — see refreshAccountState
+				st.RefreshRefused = true
 			}
 		}
 		return st, !fresh, nil
@@ -186,7 +187,6 @@ func (r *ExplorerReader) refreshAccountState(account string, admit func(*Refresh
 	// account space is attacker-chosen, so key churn would queue unbounded scans on the shared
 	// pool. admit claims the slot: a bounded wait for a cold read, a skip for a stale one (see RefreshGate).
 	if err := admit(r.refreshGate, "account_state"); err != nil {
-		r.stateCache.markRefreshFailed(account)
 		// Both published to waiters by end()'s close.
 		fl.saturated = true
 		fl.ownerRefused = errors.Is(err, errAccountStateOwnerRefused)
