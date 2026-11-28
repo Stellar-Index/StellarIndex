@@ -2032,6 +2032,12 @@ Counter.
 
 Live lending reserve `ResData` entries the pool-state reader returned but could not decode. Each one is served as `decode_failed` and left out of its pool's totals. Should read 0; an increment means a contract upgrade changed the layout or a lake row is corrupt. Alert: `stellarindex_lending_reserve_undecodable` (ticket).
 
+### `stellarindex_lending_oracle_verdicts_total`
+
+Counter, labels `pool`, `reason`.
+
+Pool reserves whose own-oracle `lastprice` was not reproduced, one per reserve per read, by verdict. What the contract itself returns (the pool cannot price either): `oracle_asset_missing`, `oracle_asset_blocked`, `oracle_contract_panics`, `oracle_feed_asset_unknown`, `oracle_price_stale`, `oracle_price_absent`, `oracle_deviation`, `oracle_deviation_unverifiable`. Ours: `oracle_unsupported` (unaudited adapter or feed build, unmodelled layout), `oracle_read_failed` (our read failed), `oracle_feed_incomplete` (`oracle_updates` disagrees with the feed's own on-chain state, e.g. a round the projector has not written or dropped), `oracle_state_newer` (an entry changed after the evaluation ledger; ~5–10% of reads by design), `oracle_state_archived` (an entry is TTL-archived or undecodable in the lake), `oracle_feed_conflict` (our stored rows for one round disagree). A sustained rise in `oracle_feed_incomplete` means missing rounds. See [oracle-aggregator.md](../../operations/wasm-audits/oracle-aggregator.md). No alert yet.
+
 ### `stellarindex_worker_panics_total`
 
 Counter, label `worker`. Incremented by `worker.Recover` when a background goroutine panics and is swallowed.
