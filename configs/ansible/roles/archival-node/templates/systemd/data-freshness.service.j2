@@ -18,6 +18,8 @@ EnvironmentFile=-/etc/default/stellarindex
 # The script runs stellarindex-ops cagg-history, which is the batch tier (ops_batch identity).
 EnvironmentFile=-/etc/default/stellarindex-ops
 Environment=TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/data_freshness.prom
+# stellarindex_sources_absent_by_design; the script rejects a name it does not know.
+Environment="DATA_FRESHNESS_ABSENT_BY_DESIGN={{ stellarindex_sources_absent_by_design | join(' ') }}"
 
 ExecStart=/usr/local/sbin/data-freshness.sh
 

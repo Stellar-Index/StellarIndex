@@ -39,6 +39,29 @@ groups:
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#retiring-a-source
 
+      # The other side of stellarindex_sources_absent_by_design: a source the
+      # host declared this network has none of now holds rows, so the
+      # declaration is wrong here and would excuse a real outage the day the
+      # source goes quiet.
+      - alert: stellarindex_data_source_absent_declared_but_present
+        expr: |
+          stellarindex_data_freshness_absent_declared_but_present == 1
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: data-freshness
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_data_source_absent_declared_but_present
+          summary: "{{ $labels.domain }}/{{ $labels.source }} is declared absent by design but holds rows"
+          description: |
+            stellarindex_data_freshness_absent_declared_but_present{domain="{{ $labels.domain }}",source="{{ $labels.source }}"} = 1
+            — {{ $labels.instance }} lists {{ $labels.domain }}/{{ $labels.source }} in
+            stellarindex_sources_absent_by_design, but the source has data. It is judged
+            by its normal staleness rule meanwhile. Remove it from the host's list.
+
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_data_source_absent_declared_but_present
+
       # The domain-level `supply` freshness check measures max(time) across
       # the WHOLE table, so it proves only that SOME asset is publishing. On
       # r1 it read green while 37 of 48 watched assets were frozen — the
