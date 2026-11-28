@@ -180,8 +180,10 @@ How the pool contract values an account, read from the upstream source at two pi
 
 Paths are under `pool/src/`. The fixed-point helpers are `soroban-fixed-point-math` (V2 pins 1.3.0, V1 1.0.0, each
 repo's `Cargo.toml:31-32`): `fixed_mul_floor(x, y, d)` is `floor(x·y/d)`, `fixed_mul_ceil` the ceiling, and
-`fixed_div_floor(x, y, d)` is `floor(x·d/y)` (`src/i128.rs:6-56` in both versions). V2's `SorobanFixedPoint` widens to
-I256 on overflow (1.3.0 `src/i128.rs:78-110`); V1's `FixedPoint` returns `None`, which the pool unwraps into a panic.
+`fixed_div_floor(x, y, d)` is `floor(x·d/y)` (`src/i128.rs:6-56` in both versions). Both versions panic on overflow:
+V2's `SorobanFixedPoint` retries a too-large product in I256 but panics when the result does not fit i128 (1.3.0
+`src/i128.rs:78-110`, the `to_i128().unwrap_optimized()` at `:89-90`); V1's `FixedPoint` returns `None`, which the pool
+unwraps into a panic; and both build with `overflow-checks = true` (`Cargo.toml:20`), so the `+=` sums panic too.
 `internal/sources/blend/health.go` implements these steps in `*big.Int`.
 
 ### Per reserve, then summed (identical in V1 and V2)
@@ -216,13 +218,32 @@ differently (`TestAccountHealth_OracleDecimalsMatterAtBoundary`).
 
 | Rule | V2 | V1 |
 |---|---|---|
-| User liquidation allowed (auction creation) | `liability_base > collateral_base`; otherwise `InvalidLiquidation` (`v2:auctions/user_liquidation_auction.rs:49-52`) | `liability_base >= collateral_base`; refuses only `liability_base < collateral_base` (`v1:auctions/user_liquidation_auction.rs:35-38`). At exactly equal bases V1 liquidates and V2 does not. |
+| User liquidation allowed (health gate) | `liability_base > collateral_base`; otherwise `InvalidLiquidation` (`v2:auctions/user_liquidation_auction.rs:49-52`) | `liability_base >= collateral_base`; refuses only `liability_base < collateral_base` (`v1:auctions/user_liquidation_auction.rs:35-38`). At exactly equal bases V1 liquidates and V2 does not. |
+| No collateral to auction (bad debt) | An empty lot is `InvalidLot` (`v2:auctions/user_liquidation_auction.rs:87-89`) and a lot whose raw value is 0 divides by zero in the sizing (`:108-112`); debt left with no collateral is moved to the backstop by `check_and_handle_user_bad_debt` (`v2:pool/bad_debt.rs:53-75`) | The sizing divides by `collateral_raw` (`v1:auctions/user_liquidation_auction.rs:43-46`), so zero raw collateral panics |
+| Not already in auction | `AuctionInProgress` when a user-liquidation auction exists for the account (`v2:auctions/user_liquidation_auction.rs:22-24`) | Same (`v1:auctions/user_liquidation_auction.rs:17-19`) |
+| Not the pool or its backstop | `InvalidLiquidation` for the pool contract or its backstop (`v2:auctions/user_liquidation_auction.rs:19-21`) | Same, in `create_liquidation` (`v1:auctions/auction.rs:101-103`) |
+| Prices fresh | Every held reserve's price passes `load_price` (below); a stale one aborts the whole call | Same |
 | After a borrow, withdraw or other health-checked request | Refused with `InvalidHf` when the account has liabilities and `HF < floor(oracle_scalar · 1.0000100)`; also `MinCollateralNotMet` when `collateral_base < min_collateral` (`v2:pool/submit.rs:186-194`, `is_hf_under` at `v2:pool/health_factor.rs:101-110`) | Same `InvalidHf` rule, no `min_collateral` (`v1:pool/submit.rs:41-49`, `v1:pool/health_factor.rs:106-118`) |
-| Post-liquidation size bounds | HF must end at most 1.15 and at least 1.03 (`v2:auctions/user_liquidation_auction.rs:193-201`) | Same (`v1:auctions/user_liquidation_auction.rs:109-117`) |
+| Post-liquidation size bounds | A full liquidation (all positions, percent > 95; `:97`) only fails `InvalidLiqTooLarge` when `est_withdrawn < collateral_raw` and HF would end above 1.15, with no 1.03 check (`v2:auctions/user_liquidation_auction.rs:180-191`); otherwise HF must end at most 1.15 and at least 1.03 (`:193-201`) | At 100% only `InvalidLiqTooLarge` when `est_withdrawn < collateral_raw` (`v1:auctions/user_liquidation_auction.rs:95-100`); below 100%, at most 1.15 and at least 1.03 (`:109-117`) |
 
-An account with no liabilities passes the borrow check (`is_hf_under` returns false) and is never user-liquidatable:
-V2's gate refuses it, and V1's sizing divides by the zero liability and collateral totals
-(`v1:auctions/user_liquidation_auction.rs:43-51`).
+`health.go`'s `Classify` returns `liquidatable` only from the health gate and the bad-debt rule. Before publishing an
+account as liquidatable the caller must also exclude accounts already in a user-liquidation auction, the pool contract
+and its backstop. `AccountHealth` already refuses stale prices.
+
+An account with no liabilities passes the borrow check (`is_hf_under` returns false) and is never user-liquidatable.
+Both gates refuse it when it holds collateral; V1's gate passes only when both totals are zero, and its sizing then
+divides by zero (`v1:auctions/user_liquidation_auction.rs:43-51`).
+
+### Interest since the last write can flip the answer near the boundary
+
+The contract accrues each reserve to the current ledger when it loads it (`v2:pool/reserve.rs:35-77`; V1 the same in
+`reserve.rs::load`) before converting tokens. Stored `b_rate`/`d_rate` are as of the reserve's `last_time`, and
+`health.go` does not reproduce accrual. Example: a reserve last written 10 days ago at a 20% borrow APR has a stored
+`d_rate` about 0.55% below the one the contract would use now, so an account with HF 1.004 on stored rates, borrowing that asset against collateral that
+earns less, can already be liquidatable on-chain. Supply-side accrual raises `b_rate` too, so the error runs both ways: a false "healthy" and a false
+"liquidatable" are both possible. `AccountHealth` returns `AccrualPendingSeconds`, the largest `now − last_time` over the
+reserves it valued; until accrual is exact, callers must publish accounts within that margin of the boundary
+separately and never as plainly liquidatable or healthy.
 
 ### Oracle price
 
@@ -237,12 +258,10 @@ V2's gate refuses it, and V1's sizing divides by the zero liability and collater
 
 ### Still open
 
-- **Interest since the last write.** The contract accrues each reserve to the current ledger when it loads it
-  (`v2:pool/reserve.rs:35-77`) before converting tokens. Stored `b_rate`/`d_rate` are as of `last_time`, so health
-  computed from storage is as of each reserve's last write, not now.
+- **Accrual.** Reproducing interest accrued since `last_time` (above).
 - **Behavioural check.** These rules are read from source, not yet compared with the contract's own decision on a
   sample of mainnet liquidation auctions.
-- **Overflow.** An account whose intermediate products exceed i128 makes V1 panic; `health.go` computes it without
+- **Overflow.** An account whose results exceed i128 makes either version panic; `health.go` computes it without
   panicking. No mainnet account is known to reach that size.
 - **BLNT** is closed source; see [blnt.md](blnt.md#health-factor).
 

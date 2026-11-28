@@ -100,7 +100,7 @@ func TestHealth_RealBLNTFixture(t *testing.T) {
 		}
 	}
 	reserves := map[string]blend.HealthReserve{}
-	prices := map[string]blend.OraclePrice{}
+	var now uint64
 	for asset := range pool.data {
 		rd := pool.data[asset]
 		h := blend.HealthReserve{Data: &rd}
@@ -108,13 +108,17 @@ func TestHealth_RealBLNTFixture(t *testing.T) {
 			h.Config = &rc
 		}
 		reserves[asset] = h
-		prices[asset] = blend.OraclePrice{Price: big.NewInt(1), Decimals: 14}
+		now = max(now, rd.LastTime)
+	}
+	prices := map[string]blend.OraclePrice{}
+	for asset := range pool.data {
+		prices[asset] = blend.OraclePrice{Price: big.NewInt(1), Decimals: 14, Timestamp: now}
 	}
 	liabilityAsset := unmappedIndex(2)
 	if _, ok := pos.Liabilities[liabilityAsset]; !ok {
 		t.Fatal("fixtures now map reserve 2 to an asset: replace this refusal with a valued case")
 	}
-	_, _, err := blend.AccountHealth(pos, reserves, prices, blend.PoolV2)
+	_, err := blend.AccountHealth(pos, reserves, prices, blend.PoolV2, now)
 	if !errors.Is(err, blend.ErrMissingReserve) || !strings.Contains(err.Error(), liabilityAsset) {
 		t.Fatalf("err = %v, want ErrMissingReserve naming %s", err, liabilityAsset)
 	}
