@@ -200,6 +200,9 @@ func shortBandPolicy(path string, cdnEnabled bool) (string, bool) {
 		// Every pool's reserves from that same per-pool view.
 		path == "/v1/lending/rates",
 		path == "/v1/lending/protocols",
+		// Yields read the same reserve history and caches as the rates' yield block.
+		path == "/v1/lending/yields/summary",
+		path == "/v1/lending/yields/history",
 		// The non-Stellar half of /v1/assets: same live valuations, so the same band.
 		path == "/v1/external/assets",
 		strings.HasPrefix(path, "/v1/external/assets/"),

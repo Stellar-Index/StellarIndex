@@ -1948,6 +1948,112 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/lending/yields/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Lending yields — every reserve side ranked by net yield over one window.
+         * @description A ranking table built from the same rows, caches and yield
+         *     block `/v1/lending/rates` serves for the same `window`, `asset`
+         *     and `protocol`: each row's `supply` and `borrow` yield appears
+         *     once per side, field for field as `/rates` serves it.
+         *
+         *     Only a side with `rankable: true` is ranked, by the exact net
+         *     yield before its 4 dp rounding, highest first; equal nets are
+         *     ordered by pool id, then asset (each table is one side;
+         *     `order: net_yield_desc`). Two rows may so show the same
+         *     `net_yield` at different ranks. `rank` is 1-based. Every other
+         *     side is listed in `unrankable`, in pool and asset order, with
+         *     its `rankable_reasons`: it is never dropped and never ranked
+         *     last as if it were low. `counts` counts both lists and, per
+         *     reason, the unrankable sides naming it. A BLNT side never ranks
+         *     (`backstop_liabilities_unknown`), nor does a Blend V1 side (its
+         *     pool status is unknown), nor a lower bound (`net_lower_bound`):
+         *     a floor cannot be ordered against an exact figure. Every rate
+         *     is a decimal string at 4 dp; there is no float to sort on.
+         *     See docs/protocols/blend.md, "Yields".
+         */
+        get: operations["getLendingYieldsSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/lending/yields/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Lending yields — one reserve side's realised and emissions APR per UTC day.
+         * @description One point per complete UTC day in `[from, to)` that the
+         *     reserve-state history is derived through (`served_through`; the
+         *     watermark's own hour is never read, so the current day is not
+         *     served). At most 1,998 days per request (`invalid-window`
+         *     otherwise); the default range is the last 90 days. The response
+         *     is the whole series: there is no cursor.
+         *
+         *     `realised_apr` is `(r1/r0 − 1) / years` from `b_rate` (supply)
+         *     or `d_rate` (borrow) between the day's two bounding reserve
+         *     states, by `/v1/lending/rates`' rule over a one-day window: the
+         *     base is the state in force at the day's start when it closed in
+         *     the hour before it, else the day's first state; the end is the
+         *     last state closing by the day's end. `realised_from` and
+         *     `realised_to` are those states' `last_time`. A day with no
+         *     such pair is null with the reason `/rates` uses
+         *     (`no_accrual_in_window`, `base_state_before_window`,
+         *     `no_base_state_in_window`, `states_under_one_hour_apart`,
+         *     `insufficient_resolution`, `rate_history_timed_out`, ...): never
+         *     interpolated, never another day's rate carried forward.
+         *     `utilization` is the state in force at the day's close, read
+         *     only from that day or the hour before it.
+         *
+         *     Emissions come from the emissions rollup's stored days
+         *     (`lending_emissions_usd_daily`, stream `reserve_schedule`):
+         *     `emissions_tokens` are the base units scheduled to the side
+         *     that day, `emissions_usd` their value as the rollup priced them
+         *     hour by hour (an unthinned price, never a later one), and
+         *     `emissions_apr` = `emissions_usd` × 365 ÷ the side's USD at the
+         *     day's close (`emissions_basis`), the side valued at that day's
+         *     price. A stored day with no row for the side is an exact zero
+         *     only while the stream's writer is verified back to its first
+         *     ledger, and its APR is `0.0000` only over a valued side (null
+         *     with the side's reason over an empty, dust or unpriced side);
+         *     a day the rollup has not stored is null (`days_not_valued`),
+         *     never zero. A thin or refused price keeps the tokens and nulls
+         *     the USD and APR with the stored reason.
+         *
+         *     Source exclusions: the side's price is read under the
+         *     exclusions in force now. `emissions_usd` was valued under those
+         *     in force at `emissions_valued_at`; an exclusion created or
+         *     lifted later re-values the days it covers on the rollup's next
+         *     cycle, and until then the day serves its earlier valuation.
+         *
+         *     Every request, cached or not, is charged one rate-limit token
+         *     per 90 days of range started. The series' reads are cached
+         *     together; each is bounded, and a slow one nulls only its own
+         *     figures with a timed-out reason. A day not yet complete in UTC
+         *     is never served, even when the history's extent is unread.
+         *     See docs/protocols/blend.md, "Yields".
+         */
+        get: operations["getLendingYieldsHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/lending/protocols": {
         parameters: {
             query?: never;
@@ -7482,10 +7588,101 @@ export interface components {
             }[];
             /** @description Why a supplier may not be able to collect what the rate says they are owed, and `emission_rate_is_current_not_window_average` on every net that adds an emission stream (informational: it does not block ranking). */
             net_caveats: ("pool_status_unknown" | "pool_not_active" | "utilization_unknown" | "utilization_full" | "backstop_liabilities_unknown" | "backstop_holds_liabilities" | "emission_rate_is_current_not_window_average")[];
-            /** @description True only with a `net_yield`, no collectability caveat, an obtainable row, a current history, a span of at least half the window and a fully read stream list; the gate for any "earns most" ordering. A lower bound from a priced-out emission token ranks, since it never overstates. */
+            /** @description True only with a `net_yield`, no collectability caveat, an obtainable row, a current history, a span of at least half the window, a fully read stream list and an exact net; the gate for any "earns most" ordering. A lower bound (`net_lower_bound`) never ranks: a floor cannot be ordered against an exact figure. */
             rankable: boolean;
-            /** @description The caveats, `value_unknown`, the row's `exclusions`, and `rate_history_behind`, `realised_span_under_half_window`, `emission_stream_unknown`. */
+            /** @description The caveats, `value_unknown`, the row's `exclusions`, and `rate_history_behind`, `realised_span_under_half_window`, `emission_stream_unknown`, `net_lower_bound`. */
             rankable_reasons: string[];
+        };
+        /** @description One side's table on `/v1/lending/yields/summary`. */
+        LendingYieldsSummarySide: {
+            /** @description The rankable sides, highest exact net yield first (before 4 dp rounding), equal nets by pool id then asset. */
+            ranked: components["schemas"]["LendingYieldsSummaryRow"][];
+            /** @description Every other side, in pool and asset order, each with its `rankable_reasons`. */
+            unrankable: components["schemas"]["LendingYieldsSummaryRow"][];
+            counts: {
+                ranked: number;
+                unrankable: number;
+                /** @description Unrankable sides naming each reason; a side can name several. */
+                by_reason: {
+                    [key: string]: number;
+                };
+            };
+        };
+        /** @description A reserve side as its `/v1/lending/rates` row serves it. */
+        LendingYieldsSummaryRow: {
+            /** @description 1-based place in `ranked`; null in `unrankable`. */
+            rank: number | null;
+            /** @enum {string} */
+            protocol: "blend" | "blnt";
+            /** @enum {string|null} */
+            pool_version: "v1" | "v2" | "v3" | null;
+            pool: string;
+            asset: string;
+            asset_id: string | null;
+            asset_code: string | null;
+            asset_issuer: string | null;
+            /** @description The `/rates` row's exclusions. */
+            exclusions: string[];
+            /** Format: date-time */
+            realised_from: string | null;
+            /** Format: date-time */
+            realised_to: string | null;
+            realised_span_seconds: number | null;
+        } & components["schemas"]["LendingSideYield"];
+        /** @description One UTC day of a reserve side on `/v1/lending/yields/history`. Rates are fractions as decimal strings at 4 dp; every null carries its reason. */
+        LendingYieldHistoryPoint: {
+            /**
+             * Format: date-time
+             * @description The day's start (UTC midnight).
+             */
+            t: string;
+            /**
+             * Format: date-time
+             * @description `last_time` of the day's base state.
+             */
+            realised_from: string | null;
+            /**
+             * Format: date-time
+             * @description `last_time` of the day's end state.
+             */
+            realised_to: string | null;
+            realised_span_seconds: number | null;
+            /** @description (r1/r0 − 1) / years between the two states, exact before rounding. */
+            realised_apr: string | null;
+            /** @description The `/v1/lending/rates` `realised_apr_reason` vocabulary, over a one-day window (base slack 1h). */
+            realised_apr_reason: string | null;
+            /** @description Display only (`apy_convention`). */
+            realised_apy: string | null;
+            /** @description Liabilities over supply of the state in force at the day's close, a fraction at 4 dp. */
+            utilization: string | null;
+            /**
+             * Format: date-time
+             * @description When that state closed: within the day or the hour before it.
+             */
+            utilization_at: string | null;
+            /** @enum {string|null} */
+            utilization_reason: "no_accrual_in_window" | "state_undecodable" | "reserve_state_removed" | "rate_history_reader_unavailable" | "rate_history_not_derived" | "rate_history_read_failed" | "rate_history_timed_out" | null;
+            /** @description Emission-token base units scheduled to the side that day, from the rollup. `0` only on a stored day whose writer is verified. */
+            emissions_tokens: string | null;
+            /** @description The stored day's stream is a floor (its exclusions). */
+            emissions_tokens_lower_bound: boolean;
+            /** @description `not_valued`, `days_not_valued`, `valuation_stale`, `history_unverified`, `history_verdict_stale`, `history_verdict_unread`, `emission_stream_unmapped`, `emissions_read_failed`, `emissions_timed_out`, or the stream's unavailable reason (for example `v1_emission_schedule_unverified`). */
+            emissions_tokens_reason: string | null;
+            /** @description The tokens as the rollup valued them, 2 dp. Null with `emissions_apr_reason` when a price was refused (for example `price_withheld` for a thin market) or the token is not the protocol's verified one. */
+            emissions_usd: string | null;
+            /**
+             * Format: date-time
+             * @description When the rollup last valued the day's rows: `emissions_usd` reflects the source exclusions in force then. An exclusion changed later re-values the day on the rollup's next cycle. Null when no USD is served or none was recorded.
+             */
+            emissions_valued_at: string | null;
+            /** @description `emissions_usd` × 365 ÷ the side's USD at the day's close; `0.0000` on a stored zero day only over a valued side. */
+            emissions_apr: string | null;
+            /** @description The tokens' reason, a price refusal, or the side's (also on a stored zero day): `reserve_unread`, `side_unpriced`, `side_empty`, `side_dust` (under $1), `no_price_within_bound`. */
+            emissions_apr_reason: string | null;
+            /** @description Some hours of the day were unpriced, or the stream is a floor: the APR never overstates. */
+            emissions_lower_bound: boolean;
+            /** @description The stored schedule is approximate (BLNT's, rebuilt to dust). */
+            emissions_approximate: boolean;
         };
         /** @description One reserve's bad-debt parts and the d-token identity moved = covered + socialised + repaid + outstanding. */
         LendingBadDebtReserve: {
@@ -19898,6 +20095,318 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getLendingYieldsSummary: {
+        parameters: {
+            query?: {
+                /** @description The one window every side's realised yield is read over, as on `/v1/lending/rates`. */
+                window?: "24h" | "7d" | "30d";
+                /** @description Only this asset's reserves: a token contract C-strkey or a canonical asset id. Every alias matches, so `native`, `crypto:XLM` and the XLM SAC select the same rows. */
+                asset?: string;
+                protocol?: "blend" | "blnt";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The ranking table. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "yield_window": "7d",
+                     *         "apy_convention": "realised",
+                     *         "yield_history_through": "2026-07-03T22:31:07Z",
+                     *         "omitted_pools": [],
+                     *         "partial": false,
+                     *         "order": "net_yield_desc",
+                     *         "supply": {
+                     *           "ranked": [
+                     *             {
+                     *               "rank": 1,
+                     *               "protocol": "blend",
+                     *               "pool_version": "v2",
+                     *               "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                     *               "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *               "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *               "asset_code": "USDC",
+                     *               "asset_issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *               "exclusions": [],
+                     *               "realised_from": "2026-06-26T22:31:07Z",
+                     *               "realised_to": "2026-07-02T22:31:07Z",
+                     *               "realised_span_seconds": 518400,
+                     *               "realised_apr": "0.0608",
+                     *               "realised_apr_reason": null,
+                     *               "realised_apy": "0.0627",
+                     *               "emissions_apr": "0.1577",
+                     *               "emissions_apr_reason": null,
+                     *               "emissions_tokens_per_1000usd_year": "3153.6000000",
+                     *               "net_yield": "0.2185",
+                     *               "net_basis": "realised_base_current_emissions",
+                     *               "net_lower_bound": false,
+                     *               "net_excluded": [],
+                     *               "net_caveats": [
+                     *                 "emission_rate_is_current_not_window_average"
+                     *               ],
+                     *               "rankable": true,
+                     *               "rankable_reasons": []
+                     *             }
+                     *           ],
+                     *           "unrankable": [
+                     *             {
+                     *               "rank": null,
+                     *               "protocol": "blnt",
+                     *               "pool_version": "v3",
+                     *               "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+                     *               "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *               "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *               "asset_code": "USDC",
+                     *               "asset_issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *               "exclusions": [],
+                     *               "realised_from": "2026-06-26T22:30:02Z",
+                     *               "realised_to": "2026-07-02T22:30:02Z",
+                     *               "realised_span_seconds": 518400,
+                     *               "realised_apr": "0.0712",
+                     *               "realised_apr_reason": null,
+                     *               "realised_apy": "0.0738",
+                     *               "emissions_apr": null,
+                     *               "emissions_apr_reason": "emission_price_thin_market",
+                     *               "emissions_tokens_per_1000usd_year": "1200.0000000",
+                     *               "net_yield": "0.0712",
+                     *               "net_basis": "realised_base_current_emissions",
+                     *               "net_lower_bound": true,
+                     *               "net_excluded": [
+                     *                 {
+                     *                   "kind": "emissions",
+                     *                   "reason": "emission_price_thin_market"
+                     *                 }
+                     *               ],
+                     *               "net_caveats": [
+                     *                 "backstop_liabilities_unknown"
+                     *               ],
+                     *               "rankable": false,
+                     *               "rankable_reasons": [
+                     *                 "backstop_liabilities_unknown",
+                     *                 "net_lower_bound"
+                     *               ]
+                     *             }
+                     *           ],
+                     *           "counts": {
+                     *             "ranked": 1,
+                     *             "unrankable": 1,
+                     *             "by_reason": {
+                     *               "backstop_liabilities_unknown": 1,
+                     *               "net_lower_bound": 1
+                     *             }
+                     *           }
+                     *         },
+                     *         "borrow": {
+                     *           "ranked": [],
+                     *           "unrankable": [],
+                     *           "counts": {
+                     *             "ranked": 0,
+                     *             "unrankable": 0,
+                     *             "by_reason": {}
+                     *           }
+                     *         }
+                     *       },
+                     *       "as_of": "2026-07-03T22:38:00.032774886Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data?: {
+                            /** @enum {string} */
+                            yield_window?: "24h" | "7d" | "30d";
+                            /** @enum {string} */
+                            apy_convention?: "realised";
+                            /**
+                             * Format: date-time
+                             * @description As on `/v1/lending/rates`: more than 2 hours behind the request, nothing ranks (`rate_history_behind`).
+                             */
+                            yield_history_through?: string | null;
+                            /** @description Pools whose reserves could not be read; none of their sides is listed, and `partial` is true. */
+                            omitted_pools?: {
+                                /** @enum {string} */
+                                protocol?: "blend" | "blnt";
+                                pool?: string;
+                                reason?: string;
+                            }[];
+                            partial?: boolean;
+                            /** @enum {string} */
+                            order?: "net_yield_desc";
+                            supply?: components["schemas"]["LendingYieldsSummarySide"];
+                            borrow?: components["schemas"]["LendingYieldsSummarySide"];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getLendingYieldsHistory: {
+        parameters: {
+            query: {
+                /** @description Pool contract C-strkey. */
+                pool: string;
+                /** @description The reserve: its token contract C-strkey or a canonical asset id. Every alias matches, so `native`, `crypto:XLM` and the XLM SAC read the same series. */
+                asset: string;
+                side?: "supply" | "borrow";
+                interval?: "day";
+                /** @description RFC 3339; rounded down to its UTC day. Default: 90 days before `to`. */
+                from?: string;
+                /** @description RFC 3339; rounded down to its UTC day, which is excluded. Default: now. */
+                to?: string;
+                /** @description Shorthand for `from = to − window` (for example `30d`); exclusive with `from`. */
+                window?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The day series. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                     *         "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *         "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *         "protocol": "blend",
+                     *         "side": "supply",
+                     *         "interval": "day",
+                     *         "from": "2026-07-01T00:00:00Z",
+                     *         "to": "2026-07-03T00:00:00Z",
+                     *         "served_through": "2026-07-03T00:00:00Z",
+                     *         "history_through_ledger": 58123456,
+                     *         "history_through_time": "2026-07-03T22:31:07Z",
+                     *         "dropped_points": 0,
+                     *         "apy_convention": "realised",
+                     *         "emissions_basis": "rollup_day_usd_over_side_usd_at_close",
+                     *         "emissions_through_day": "2026-07-01",
+                     *         "emission_token": "CD25MNVTZDL4Y3XBCPCJXGXATV5WUHHOWMYFF4YBEGU5FCPGMYTVG5JY",
+                     *         "emission_token_decimals": 7,
+                     *         "points": [
+                     *           {
+                     *             "t": "2026-07-01T00:00:00Z",
+                     *             "realised_from": "2026-06-30T23:41:12Z",
+                     *             "realised_to": "2026-07-01T23:52:40Z",
+                     *             "realised_span_seconds": 87088,
+                     *             "realised_apr": "0.0611",
+                     *             "realised_apr_reason": null,
+                     *             "realised_apy": "0.0630",
+                     *             "utilization": "0.7507",
+                     *             "utilization_at": "2026-07-01T23:52:40Z",
+                     *             "utilization_reason": null,
+                     *             "emissions_tokens": "25920000000",
+                     *             "emissions_tokens_lower_bound": false,
+                     *             "emissions_tokens_reason": null,
+                     *             "emissions_usd": "25.40",
+                     *             "emissions_valued_at": "2026-07-02T01:05:00Z",
+                     *             "emissions_apr": "0.1573",
+                     *             "emissions_apr_reason": null,
+                     *             "emissions_lower_bound": false,
+                     *             "emissions_approximate": false
+                     *           },
+                     *           {
+                     *             "t": "2026-07-02T00:00:00Z",
+                     *             "realised_from": null,
+                     *             "realised_to": null,
+                     *             "realised_span_seconds": null,
+                     *             "realised_apr": null,
+                     *             "realised_apr_reason": "no_accrual_in_window",
+                     *             "realised_apy": null,
+                     *             "utilization": "0.7507",
+                     *             "utilization_at": "2026-07-01T23:52:40Z",
+                     *             "utilization_reason": null,
+                     *             "emissions_tokens": null,
+                     *             "emissions_tokens_lower_bound": false,
+                     *             "emissions_tokens_reason": "days_not_valued",
+                     *             "emissions_usd": null,
+                     *             "emissions_valued_at": null,
+                     *             "emissions_apr": null,
+                     *             "emissions_apr_reason": "days_not_valued",
+                     *             "emissions_lower_bound": false,
+                     *             "emissions_approximate": false
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-07-03T22:38:00.032774886Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data?: {
+                            pool?: string;
+                            /** @description The reserve token contract C-strkey the `asset` parameter named. */
+                            asset?: string;
+                            /** @description Canonical id of the classic or native asset a SAC reserve wraps; null when the token is not a known SAC. */
+                            asset_id?: string | null;
+                            /** @enum {string} */
+                            protocol?: "blend" | "blnt";
+                            /** @enum {string} */
+                            side?: "supply" | "borrow";
+                            /** @enum {string} */
+                            interval?: "day";
+                            /** Format: date-time */
+                            from?: string;
+                            /** Format: date-time */
+                            to?: string;
+                            /**
+                             * Format: date-time
+                             * @description End of the last day served: the earliest of `to` and the start of the day holding the history's watermark hour. Null when no day is served.
+                             */
+                            served_through?: string | null;
+                            history_through_ledger?: number;
+                            /** Format: date-time */
+                            history_through_time?: string | null;
+                            /** @description Days holding a reserve state that failed to decode; their figures are null (`state_undecodable`) and the response is degraded. */
+                            dropped_points?: number;
+                            /** @enum {string} */
+                            apy_convention?: "realised";
+                            /** @enum {string} */
+                            emissions_basis?: "rollup_day_usd_over_side_usd_at_close";
+                            /**
+                             * Format: date
+                             * @description The last day the emissions rollup has stored for the pool; null when it holds none.
+                             */
+                            emissions_through_day?: string | null;
+                            emission_token?: string | null;
+                            emission_token_decimals?: number | null;
+                            points?: components["schemas"]["LendingYieldHistoryPoint"][];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };

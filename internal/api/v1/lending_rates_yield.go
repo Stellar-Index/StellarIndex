@@ -110,6 +110,8 @@ type LendingSideYield struct {
 	NetCaveats      []string                `json:"net_caveats"`
 	Rankable        bool                    `json:"rankable"`
 	RankableReasons []string                `json:"rankable_reasons"`
+	// netExact is NetYield before rounding: what an ordering compares.
+	netExact *big.Rat
 }
 
 // LendingYieldExclusion is a component left out of a net yield.
@@ -416,6 +418,12 @@ func (in rateYieldInputs) realisedPair(asset string) (base, end *clickhouse.Lend
 		return nil, nil, in.statesReason
 	}
 	st, ok := in.states[asset]
+	return realisedStatePair(st, ok, in.from, in.window)
+}
+
+// realisedStatePair is realisedPair over one reserve's states read around a window opening at from; ok is false when the
+// read held no state for the reserve. /v1/lending/yields/history applies it to each day.
+func realisedStatePair(st clickhouse.LendingRateStates, ok bool, from time.Time, window time.Duration) (base, end *clickhouse.LendingRateState, reason string) {
 	switch {
 	case ok && st.Undecodable:
 		return nil, nil, yieldReasonUndecodable
@@ -425,7 +433,7 @@ func (in rateYieldInputs) realisedPair(asset string) (base, end *clickhouse.Lend
 		return nil, nil, yieldReasonRemoved
 	}
 	base, old := st.Base, st.Prior
-	if base != nil && !base.Removed && base.LastTime.Before(in.from.Add(-clickhouse.LendingRateBaseSlack(in.window))) {
+	if base != nil && !base.Removed && base.LastTime.Before(from.Add(-clickhouse.LendingRateBaseSlack(window))) {
 		base, old = nil, true
 	}
 	if base == nil {
@@ -559,7 +567,7 @@ func (in rateYieldInputs) sideYield(side blend.YieldSide, emisSide string, rv Re
 		net = blend.NetYield{}
 	}
 	if net.Value != nil {
-		out.NetYield = strRef(blend.FormatRate(net.Value))
+		out.NetYield, out.netExact = strRef(blend.FormatRate(net.Value)), net.Value
 	}
 	out.NetLowerBound = net.LowerBound
 	for _, x := range net.Excluded {

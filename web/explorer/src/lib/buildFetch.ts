@@ -257,10 +257,10 @@ const ROUTE_WORDS = new Set(
   passkey pools positions premium price price-alerts prices protocols rates
   readyz register reserves resolve revenue rotate-secret rwa sac-wrappers sdex search
   sep10 series signer-on signup since-inception sources sponsors sponsorships
-  stablecoins stats status status-notices stream streams supply throughput tip
+  stablecoins stats status status-notices stream streams summary supply throughput tip
   token top-accounts trades transactions transfers trustline-history tvl twap
   tx usage verified verify verify-code version vwap wasm webhooks
-  x_last_price`.split(/\s+/),
+  x_last_price yields`.split(/\s+/),
 );
 
 /** routeTemplate maps a request path to its route: query dropped, each id segment `{id}`. */

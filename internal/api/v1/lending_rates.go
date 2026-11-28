@@ -139,10 +139,24 @@ func (s *Server) handleLendingRates(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), maxHandlerBudget)
 	defer cancel()
 	var vintage dataVintage
-	pools, flags, err := s.lendingRatePools(ctx, q.protocol, &vintage)
+	flags, err := s.buildLendingRates(ctx, q, &view, &vintage)
 	if err != nil {
 		s.writeListBlendPoolsError(ctx, w, r, err)
 		return
+	}
+	sortLendingRates(view.Rates, q.sort)
+	if len(view.Rates) > lendingRatesMaxRows {
+		view.Rates, view.Truncated = view.Rates[:lendingRatesMaxRows], true
+	}
+	writeEnvelope(w, Envelope{Data: view, AsOf: vintage.asOf(), Flags: flags})
+}
+
+// buildLendingRates fills view's rows, each with its yield block, and its omitted pools: the one path both
+// /v1/lending/rates and /v1/lending/yields/summary read, so the summary never ranks a figure /rates would not serve.
+func (s *Server) buildLendingRates(ctx context.Context, q lendingRatesQuery, view *LendingRatesView, vintage *dataVintage) (Flags, error) {
+	pools, flags, err := s.lendingRatePools(ctx, q.protocol, vintage)
+	if err != nil {
+		return flags, err
 	}
 	view.Partial = flags.Degraded
 	reads := make([]ratePoolRead, len(pools))
@@ -170,28 +184,34 @@ func (s *Server) handleLendingRates(w http.ResponseWriter, r *http.Request) {
 		}
 		view.Rates = append(view.Rates, rows[i]...)
 	}
-	sortLendingRates(view.Rates, q.sort)
-	if len(view.Rates) > lendingRatesMaxRows {
-		view.Rates, view.Truncated = view.Rates[:lendingRatesMaxRows], true
-	}
-	writeEnvelope(w, Envelope{Data: view, AsOf: vintage.asOf(), Flags: flags})
+	return flags, nil
 }
 
 func parseLendingRatesQuery(w http.ResponseWriter, r *http.Request) (lendingRatesQuery, bool) {
-	v := r.URL.Query()
-	q := lendingRatesQuery{protocol: v.Get("protocol"), sort: lendingRatesSort(cmp.Or(v.Get("sort"), string(sortSupplyAPR)))}
-	switch q.protocol {
-	case "", "blend", blnt.SourceName:
-	default:
-		writeProblem(w, r, "https://api.stellarindex.io/errors/invalid-parameter",
-			"Invalid parameter", http.StatusBadRequest, "protocol must be blend or blnt")
+	q, ok := parseLendingRateFilter(w, r)
+	if !ok {
 		return q, false
 	}
+	q.sort = lendingRatesSort(cmp.Or(r.URL.Query().Get("sort"), string(sortSupplyAPR)))
 	switch q.sort {
 	case sortSupplyAPR, sortBorrowAPR, sortSuppliedUSD:
 	default:
 		writeProblem(w, r, "https://api.stellarindex.io/errors/invalid-parameter",
 			"Invalid parameter", http.StatusBadRequest, "sort must be supply_apr, borrow_apr or supplied_usd")
+		return q, false
+	}
+	return q, true
+}
+
+// parseLendingRateFilter reads the protocol, window and asset filters /v1/lending/rates and /v1/lending/yields/summary share.
+func parseLendingRateFilter(w http.ResponseWriter, r *http.Request) (lendingRatesQuery, bool) {
+	v := r.URL.Query()
+	q := lendingRatesQuery{protocol: v.Get("protocol")}
+	switch q.protocol {
+	case "", "blend", blnt.SourceName:
+	default:
+		writeProblem(w, r, "https://api.stellarindex.io/errors/invalid-parameter",
+			"Invalid parameter", http.StatusBadRequest, "protocol must be blend or blnt")
 		return q, false
 	}
 	var ok bool

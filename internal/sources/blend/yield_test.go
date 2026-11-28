@@ -375,7 +375,7 @@ func TestRankable(t *testing.T) {
 		want  []Caveat
 	}{
 		{"collectable", func(*CollectabilityFacts) {}, YieldPart{Value: rat(5, 100)}, nil},
-		{"lower_bound_ranks", func(*CollectabilityFacts) {}, YieldPart{Value: rat(5, 100)}, nil},
+		{"lower_bound_never_ranks", func(*CollectabilityFacts) {}, YieldPart{Value: rat(5, 100)}, []Caveat{CaveatNetLowerBound}},
 		{"status_unknown", func(f *CollectabilityFacts) { f.PoolStatusKnown = false }, YieldPart{Value: rat(5, 100)}, []Caveat{CaveatPoolStatusUnknown}},
 		{"not_active", func(f *CollectabilityFacts) { f.PoolActive = false }, YieldPart{Value: rat(5, 100)}, []Caveat{CaveatPoolNotActive}},
 		{"utilization_unknown", func(f *CollectabilityFacts) { f.Utilization = nil }, YieldPart{Value: rat(5, 100)}, []Caveat{CaveatUtilizationUnknown}},
@@ -392,7 +392,7 @@ func TestRankable(t *testing.T) {
 			f := collectable()
 			c.facts(&f)
 			emissions := YieldPart{Value: rat(1, 100)}
-			if c.name == "lower_bound_ranks" {
+			if c.name == "lower_bound_never_ranks" {
 				emissions = YieldPart{Reason: "unpriced"}
 			}
 			n, err := ComposeNetYield(YieldSupply, c.base, emissions, f)

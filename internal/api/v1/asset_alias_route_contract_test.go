@@ -26,6 +26,8 @@ var aliasSpellingTests = map[string]string{
 	"/price/stream":                      "TestPriceStream_AliasSubscriptionReceivesCryptoXLMPublishes",
 	"/lending/pools/{pool}/top-accounts": "TestLendingTopAccounts_XLMSpellingsReadTheSACOrAreRejected",
 	"/lending/pools/{pool}/revenue":      "TestLendingPoolRevenue_XLMSpellingsReadTheSACOrAreRejected",
+	"/lending/yields/history":            "TestLendingYieldsHistory_EveryXLMSpellingReadsTheSACReserve",
+	"/lending/yields/summary":            "TestLendingYieldsSummary_EveryXLMSpellingSelectsTheSACReserve",
 }
 
 // aliasSpellingDebt lists asset-taking routes with no spelling-equivalence test yet. Debt: shrink it by adding a test above; a
