@@ -53,6 +53,10 @@ PROBE_FAILED=0
   echo '# TYPE stellarindex_data_freshness_stale gauge'
   echo '# HELP stellarindex_data_freshness_empty 1 when a domain/source has no rows at all; it then reads stale only if the chain is older than its threshold (young chain: nothing can be overdue).'
   echo '# TYPE stellarindex_data_freshness_empty gauge'
+  echo '# HELP stellarindex_data_freshness_absent_by_design 1 for a domain/source the operator declared absent by design on this network (stellarindex_sources_absent_by_design); while it is empty it does not read stale.'
+  echo '# TYPE stellarindex_data_freshness_absent_by_design gauge'
+  echo '# HELP stellarindex_data_freshness_absent_declared_but_present 1 when a domain/source declared absent by design holds rows: the declaration is wrong for this network, and the source is judged by its normal staleness rule.'
+  echo '# TYPE stellarindex_data_freshness_absent_declared_but_present gauge'
   echo '# HELP stellarindex_completeness_incomplete 1 when a source latest ADR-0033 verdict is complete=false (real served<>lake gap). Excludes the system recognition row — see stellarindex_recognition_unattributed_shapes.'
   echo '# TYPE stellarindex_completeness_incomplete gauge'
   echo '# HELP stellarindex_recognition_unattributed_shapes UNKNOWN-PROTOCOL events: distinct (contract, topic) shapes in the lake on contracts NO source owns. Foreign protocols we do not index. Expected large and permanently growing as Stellar grows — 23866 as of 2026-09-01 against ~30/day organic drift. A coverage-ambition number for prioritising which decoders to build next, NOT an error condition. Deliberately NOT alerted on: see stellarindex_recognition_ok for the signal that means a real defect.'
@@ -88,6 +92,26 @@ case "$CHAIN_AGE" in
   '' | *[!0-9]*) CHAIN_AGE=NULL ;;
 esac
 
+# Sources the operator declared absent by design on this network (role variable
+# stellarindex_sources_absent_by_design, rendered into the unit). An EMPTY declared source is
+# not stale; one holding rows contradicts the declaration, keeps its normal staleness rule and
+# raises _absent_declared_but_present. An unknown name voids the whole list (fail closed) and
+# fails the unit, so a typo can never excuse a source.
+ABSENT_KNOWN="sep1/issuers supply/asset_supply_history sep41_supply/supply_flows"
+ABSENT=""
+read -ra absent_req <<<"${DATA_FRESHNESS_ABSENT_BY_DESIGN:-}"
+for a in ${absent_req[@]+"${absent_req[@]}"}; do
+  case " $ABSENT_KNOWN " in
+    *" $a "*) ABSENT="${ABSENT:+$ABSENT }$a" ;;
+    *)
+      echo "data-freshness: '$a' in stellarindex_sources_absent_by_design is not a source this watchdog can excuse (known: $ABSENT_KNOWN) — ignoring the whole declaration" >&2
+      PROBE_FAILED=$((PROBE_FAILED + 1))
+      ABSENT_INVALID=1
+      ;;
+  esac
+done
+if [ -n "${ABSENT_INVALID:-}" ]; then ABSENT=""; fi
+
 # (domain, source, age_seconds, threshold_seconds) per domain. Thresholds are a generous
 # multiple of each domain's natural cadence so only a real stall fires.
 #
@@ -103,7 +127,7 @@ esac
 # means deleting its rows or excluding it here in the same change.
 #
 # shellcheck disable=SC2129  # the appends below are separate on purpose: each is a distinct query with its own reasoning between them, and a single `{ … } >> $TMP` would bury that
-if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -v ON_ERROR_STOP=1 -v chain_age="$CHAIN_AGE" -tA -F$'\t' >> "$TMP" <<'SQL'
+if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -v ON_ERROR_STOP=1 -v chain_age="$CHAIN_AGE" -v absent_by_design="$ABSENT" -tA -F$'\t' >> "$TMP" <<'SQL'
 WITH f AS (
   -- Crypto oracles (reflector/redstone/band/coingecko) update every
   -- few minutes → 3h threshold. ECB is the exception: a DAILY FX reference
@@ -185,6 +209,10 @@ WITH f AS (
   -- domain. sep1_payload_fetched_at is stamped only on success.
   SELECT 'sep1', 'issuers', extract(epoch FROM now()-max(sep1_payload_fetched_at)), 172800
     FROM issuers WHERE sep1_payload_fetched_at IS NOT NULL
+), g AS (
+  -- :'absent_by_design' is the shell-validated, space-separated declared list ('' when none).
+  SELECT f.*, (domain||'/'||src) = ANY(string_to_array(:'absent_by_design', ' ')) AS declared
+    FROM f
 )
 -- The age sample is emitted only when an age EXISTS; the verdict is emitted
 -- always. A domain whose table holds no rows at all (the sep1 refresh that
@@ -194,18 +222,27 @@ WITH f AS (
 -- `== 1` alert over it stayed quiet. Unknown is NOT healthy: no observation
 -- ever is the most stale a domain can be, so it reads 1 — EXCEPT while the chain is younger
 -- than the threshold (:chain_age, seconds; NULL when unmeasurable, which keeps it stale):
--- nothing can be overdue yet, so it reads 0 and `_empty` says why.
+-- nothing can be overdue yet, so it reads 0 and `_empty` says why. A declared-absent source
+-- that is empty also reads 0; a declared one with rows keeps the age rule.
 SELECT 'stellarindex_data_freshness_age_seconds{domain="'||domain||'",source="'||src||'"} '||round(age)::text
-  FROM f WHERE age IS NOT NULL
+  FROM g WHERE age IS NOT NULL
 UNION ALL
 SELECT 'stellarindex_data_freshness_stale{domain="'||domain||'",source="'||src||'"} '
        ||(CASE WHEN age IS NOT NULL THEN age > thr
+               WHEN declared THEN false
                WHEN (:chain_age)::numeric IS NOT NULL AND (:chain_age)::numeric <= thr THEN false
                ELSE true END)::int::text
-  FROM f
+  FROM g
 UNION ALL
 SELECT 'stellarindex_data_freshness_empty{domain="'||domain||'",source="'||src||'"} 1'
-  FROM f WHERE age IS NULL;
+  FROM g WHERE age IS NULL
+UNION ALL
+SELECT 'stellarindex_data_freshness_absent_by_design{domain="'||domain||'",source="'||src||'"} 1'
+  FROM g WHERE declared
+UNION ALL
+SELECT 'stellarindex_data_freshness_absent_declared_but_present{domain="'||domain||'",source="'||src||'"} '
+       ||(age IS NOT NULL)::int::text
+  FROM g WHERE declared;
 SQL
 then
   echo "data-freshness: per-domain oracle/fx/supply/cursor freshness query failed — its gauges skipped this tick, others unaffected" >&2
@@ -353,13 +390,23 @@ case "$SF_AGE" in
   empty) SF_EMPTY=1; SF_AGE="" ;;
   '' | *[!0-9]*) SF_AGE="" ;;
 esac
+SF_DECLARED=0
+case " $ABSENT " in
+  *" sep41_supply/supply_flows "*) SF_DECLARED=1 ;;
+esac
+if [ "$SF_DECLARED" -eq 1 ] && { [ "$SF_EMPTY" -eq 1 ] || [ -n "$SF_AGE" ]; }; then
+  printf 'stellarindex_data_freshness_absent_by_design{domain="sep41_supply",source="supply_flows"} 1\n' >> "$TMP"
+  printf 'stellarindex_data_freshness_absent_declared_but_present{domain="sep41_supply",source="supply_flows"} %s\n' \
+    "$([ "$SF_EMPTY" -eq 1 ] && echo 0 || echo 1)" >> "$TMP"
+fi
 if [ "$SF_EMPTY" -eq 1 ]; then
   # No rows at all: overdue only if the chain is older than the 3600 s threshold (CHAIN_AGE is
-  # digits or NULL; unmeasurable stays stale).
+  # digits or NULL; unmeasurable stays stale), and never when declared absent by design.
   case "${CHAIN_AGE:-NULL}" in
     NULL) sf_stale=1 ;;
     *) sf_stale=$([ "$CHAIN_AGE" -gt 3600 ] && echo 1 || echo 0) ;;
   esac
+  if [ "$SF_DECLARED" -eq 1 ]; then sf_stale=0; fi
   printf 'stellarindex_data_freshness_stale{domain="sep41_supply",source="supply_flows"} %s\n' "$sf_stale" >> "$TMP"
   printf 'stellarindex_data_freshness_empty{domain="sep41_supply",source="supply_flows"} 1\n' >> "$TMP"
 elif [ -n "$SF_AGE" ]; then
