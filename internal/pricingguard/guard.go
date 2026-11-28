@@ -55,6 +55,7 @@ func GuardServedVWAP1mConfidence(
 ) (served timescale.Vwap1mRow, lowConfidence, substituted bool) {
 	rows, err := store.RecentClosedVWAP1mCombined(ctx, pair, SampleFetch)
 	if err != nil && callerCancelled(ctx, logger, pair, err) {
+		countDegraded("latest", false, true)
 		return candidate, true, false
 	}
 	if err != nil {
@@ -96,6 +97,7 @@ func GuardServedVWAP1mAt(
 ) (served timescale.Vwap1mRow, ok bool) {
 	rows, err := store.ClosedVWAP1mCombinedBefore(ctx, pair, candidate.Bucket, SampleFetch)
 	if err != nil && callerCancelled(ctx, logger, pair, err) {
+		countDegraded("at", false, true)
 		return timescale.Vwap1mRow{}, false
 	}
 	if err != nil {
@@ -156,8 +158,8 @@ func selectGuardedVWAP1mAt(
 	return served, true, true, false
 }
 
-// callerCancelled reports a trailing-fetch failure on a request its caller abandoned: nothing is served, so it is not a
-// fail-open, and the guard answers unvalidated so no caller can keep the unchecked candidate. Our own deadline still counts.
+// callerCancelled reports a trailing-fetch failure on a cancelled context: the guard answers unvalidated rather than
+// failing open, so no caller can serve the unchecked candidate as validated. A deadline (ours or a caller's) still counts.
 func callerCancelled(ctx context.Context, logger *slog.Logger, pair canonical.Pair, err error) bool {
 	if !errors.Is(ctx.Err(), context.Canceled) {
 		return false

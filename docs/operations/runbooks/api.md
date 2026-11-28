@@ -721,7 +721,7 @@ journalctl -u stellarindex-api --since '30 min ago' --no-pager -o cat \
 
 ## stellarindex_pricingguard_failing_open
 
-**Trigger.** `sum by (path) (increase(stellarindex_pricingguard_trailing_fetch_failed_total[30m])) > 0` for 15m, P3. The served-price guard (`internal/pricingguard`) could not read its trailing baseline and served the candidate bucket unchecked. A request its caller abandoned is not counted. `path` is `latest` (`/v1/price`) or `at` (`/v1/price/at`).
+**Trigger.** `sum by (path) (increase(stellarindex_pricingguard_trailing_fetch_failed_total[30m])) > 0` for 15m, P3. The served-price guard (`internal/pricingguard`) could not read its trailing baseline and served the candidate bucket unchecked. A fetch on a cancelled context is not counted; the guard answers unvalidated there instead of failing open. `path` is `latest` (`/v1/price`) or `at` (`/v1/price/at`).
 
 **Check.** `journalctl -u stellarindex-api --since '-1h' | grep -i 'trailing'` for the read error; Postgres statement timeouts and pool saturation over the same window. **Likely causes.** Database load; a missing index or view after a migration. **Fix.** Relieve the database or restore the object. While it fires, treat an unusual served price as unchecked. **Escalate:** an anomaly or divergence alert firing in the same window.
 
