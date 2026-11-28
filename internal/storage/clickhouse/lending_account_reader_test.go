@@ -58,6 +58,11 @@ func TestAssembleAccountPositions_MapsIndexesAndSumsCollateral(t *testing.T) {
 		got.Supply[s1] != nil || got.Borrow[s0] != nil {
 		t.Fatalf("got %+v", got)
 	}
+	// "collateral" and "supply" land in their own maps; Supply is exactly their sum.
+	if got.Collateral[s0].String() != "18446744073709551616" || got.NonCollateral[s0].String() != "1" ||
+		got.Collateral[s1] != nil || got.NonCollateral[s1] != nil {
+		t.Fatalf("split = collateral %v, non-collateral %v", got.Collateral, got.NonCollateral)
+	}
 }
 
 // TestAssembleAccountPositions_AbsentArchivedAndBadIndex: a missing entry is a readable empty position; an archived entry or
