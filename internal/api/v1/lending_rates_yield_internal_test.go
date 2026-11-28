@@ -224,7 +224,8 @@ func TestRateYield_ThinEmissionPriceStaysOutOfNet(t *testing.T) {
 	s := rateYield(in, yieldReq, row, rv, data).Supply
 	if s.EmissionsAPR != nil || !ptrIs(s.EmissionsAPRReason, emissionPriceThin) || !ptrIs(s.EmissionsTokensPer1000USDYear, "3153.6000000") ||
 		!ptrIs(s.NetYield, "0.0608") || !s.NetLowerBound ||
-		!slices.Equal(s.NetExcluded, []LendingYieldExclusion{{"emissions", emissionPriceThin}}) || !s.Rankable {
+		!slices.Equal(s.NetExcluded, []LendingYieldExclusion{{"emissions", emissionPriceThin}}) || s.Rankable ||
+		!slices.Equal(s.RankableReasons, []string{string(blend.CaveatNetLowerBound)}) {
 		t.Errorf("thin supply = %+v", s)
 	}
 }

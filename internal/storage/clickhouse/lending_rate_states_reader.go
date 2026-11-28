@@ -20,6 +20,9 @@ type LendingRateState struct {
 	// BRate and DRate are at the row's protocol scale (1e12; Blend V1 1e9); LastTime is when they were last accrued.
 	BRate, DRate *big.Int
 	LastTime     time.Time
+	// BSupply and DSupply are the b- and d-token supplies, Protocol the row's (LendingBlendV1 rates are at 1e9).
+	BSupply, DSupply *big.Int
+	Protocol         string
 }
 
 // LendingRateStates is a reserve's ResData around a window [From, To] read with a base slack: Base is the state in force at
@@ -196,5 +199,6 @@ func decodeRateState(row stateRow) (*LendingRateState, bool) {
 		return nil, false
 	}
 	st.BRate, st.DRate, st.LastTime = rd.BRate, rd.DRate, time.Unix(int64(rd.LastTime), 0).UTC()
+	st.BSupply, st.DSupply, st.Protocol = rd.BSupply, rd.DSupply, row.protocol
 	return st, true
 }

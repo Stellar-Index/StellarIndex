@@ -95,6 +95,8 @@ var priceRouteCoverage = map[string]priceCoverage{
 	"GET /v1/lending/pools/{pool}/emissions":                lendingUncovered,
 	"GET /v1/lending/pools/{pool}/top-accounts":             lendingUncovered,
 	"GET /v1/lending/pools/{pool}/health":                   gated, // TestLendingHealth_ExcludedSourceWithholdsOraclePrice
+	"GET /v1/lending/yields/summary":                        lendingUncovered,
+	"GET /v1/lending/yields/history":                        gated, // the reserve USD walk now; the stored USD as of emissions_valued_at, re-valued by planExclusions
 	"GET /v1/aggregators":                                   uncovered("aggregator reference prices"),
 	"GET /v1/divergence":                                    uncovered("our price against references"),
 	"GET /v1/divergence/series":                             uncovered("our price against references"),
@@ -214,7 +216,7 @@ func TestPriceRouteCoverage_EveryRouteClassified(t *testing.T) {
 }
 
 // ungatedPriceRoutes ratchets the kill switch's known gaps: an operator exclusion does not reach these routes' figures.
-const ungatedPriceRoutes = 45
+const ungatedPriceRoutes = 46
 
 // operatorNoteName is how incident.ReadSideNote's NOT COVERED list names an ungated route whose path it does not spell out.
 var operatorNoteName = map[string]string{
@@ -244,6 +246,7 @@ var operatorNoteName = map[string]string{
 	"GET /v1/lending/pools/{pool}/auctions":         "/v1/lending/*",
 	"GET /v1/lending/pools/{pool}/emissions":        "/v1/lending/*",
 	"GET /v1/lending/pools/{pool}/top-accounts":     "/v1/lending/*",
+	"GET /v1/lending/yields/summary":                "/v1/lending/*",
 }
 
 // TestPriceRouteCoverage_OperatorNoteMatchesCensus: the operator who excludes a bad source is told which routes it does not

@@ -151,6 +151,8 @@ const (
 	CaveatBackstopHoldsLiabilities   Caveat = "backstop_holds_liabilities"
 	// CaveatValueUnknown is Rankable's own reason for a net yield with no value.
 	CaveatValueUnknown Caveat = "value_unknown"
+	// CaveatNetLowerBound is Rankable's reason for a net yield that leaves a component out.
+	CaveatNetLowerBound Caveat = "net_lower_bound"
 )
 
 // CollectabilityFacts is what the caller read about the reserve and its pool; a nil or unknown fact
@@ -189,11 +191,14 @@ func (f CollectabilityFacts) caveats() []Caveat {
 }
 
 // Rankable is the gate for any "earns most" ordering: a net yield ranks only with a value and no
-// caveat, else false with every reason. A lower bound ranks, since it never overstates.
+// caveat, else false with every reason. A lower bound never ranks: a floor may beat an exact figure it is ordered below.
 func Rankable(n NetYield) (bool, []Caveat) {
 	reasons := append([]Caveat(nil), n.Caveats...)
-	if n.Value == nil {
+	switch {
+	case n.Value == nil:
 		reasons = append(reasons, CaveatValueUnknown)
+	case n.LowerBound:
+		reasons = append(reasons, CaveatNetLowerBound)
 	}
 	return len(reasons) == 0, reasons
 }

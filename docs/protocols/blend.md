@@ -430,9 +430,49 @@ Each row's `yield` uses the realised rate as the base, over one `window` (24h, 7
 - **Ranking** needs `Rankable`, an `obtainable` row and the gates above. On V1 the realised rate is served, emissions are
   null (`blend_v1_emission_storage_unverified`) and no V1 net ranks, because its pool status is unknown. On BLNT the
   backstop's debt-carrying address is unverified, so `backstop_liabilities_unknown` keeps every BLNT net out of a ranking.
+  A net that leaves a component out (`net_lower_bound: true`) is a floor, not a figure: it never ranks, with the reason
+  `net_lower_bound`, so `/rates` `rankable` and the summary agree.
 - **Cost.** Each pool's inputs are cached per window and derived hour (one minute; 15 s after a failed or timed-out
   read; at most 3 entries per pool the reserves cache holds), read after the reserves in their own fan-out, and each fill
   takes at most 3 s: a slow lake nulls only the yield block, once per pool per 15 s. The history's extent is cached 30 s.
+
+### On `GET /v1/lending/yields/summary`
+
+The ranking table is `buildLendingRates`, the function `/rates` builds its rows with, split per side: the same rows,
+caches, window and reasons, so a summary side equals its `/rates` yield field for field. Only `rankable` sides are ranked,
+by the exact net yield before its 4 dp rounding, highest first; equal nets are ordered by pool id, then asset (each
+table is one side). Every other side is listed in `unrankable` with its
+reasons and counted per reason, never dropped and never ranked last. It adds no lake read of its own.
+
+### On `GET /v1/lending/yields/history`
+
+One reserve side, one point per complete UTC day (at most 1,998, default 90). The history's watermark hour is never read,
+so the series ends at the start of the day holding it (`served_through`).
+
+- **Realised.** Each day is a one-day window under the `/rates` rule: the base slack is 1 h, the base is the previous day's
+  last state if it closed in that hour, else the day's first state, and the end is the day's last state. A day with no pair
+  is null with the `/rates` reason. Another day's rate is never carried into it and nothing is interpolated.
+- **Utilisation.** Taken from the state in force at the day's close, read only from that day or its slack hour.
+- **Emissions.** Read from the rollup's stored `reserve_schedule` rows for the side. `emissions_apr` is the stored day's USD
+  × 365 ÷ the side's USD at the close (`emissions_basis`), with the side valued at that day's reserve price through the
+  history walk (at most 48 h old, never later). The rules match the `/protocols` emissions block:
+  - A stored day with no row is `0` tokens only while the `blend` (or `blnt`) writer is verified, and a `0.0000` APR only
+    over a valued side; over an empty, dust or unpriced side the APR is null with the side's reason.
+  - A day the rollup has not stored is `days_not_valued`.
+  - A stored refusal (for example `price_withheld` on a thin day) keeps the tokens and nulls the USD.
+- **Source exclusions.** The side's price is read now, under the exclusions in force now. The stored USD was valued under
+  those in force at `emissions_valued_at`; an exclusion created or lifted later re-values the days it covers on the rollup's
+  next cycle (`planExclusions`), and until then the day serves its earlier valuation.
+- **Known limit.** The denominator is the side at the close, not its average over the day. A day whose side changed a
+  lot reads high or low.
+- **Cost.** One request makes these reads, side by side and cached together for a minute (15 s when a read failed), each
+  bounded by 3 s; the response waits 0.5 s past that for them. A slow read nulls only its own figures with a timed-out
+  reason and the response is degraded.
+  - one lake query: per day, the first and last row of one ResData key (`LendingRateDays`);
+  - two Postgres reads: the coverage, and the days;
+  - one daily price walk.
+
+  Every request, cached or not, is charged one rate-limit token per 90 days of range started.
 
 ## Pool factories (trust roots)
 
