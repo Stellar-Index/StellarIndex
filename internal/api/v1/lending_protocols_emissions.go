@@ -430,7 +430,7 @@ func protocolEmissionsPools(protocol string, reads []protocolPoolRead) []emisPoo
 
 // readProtocolEmissions builds every protocol's emissions block from one coverage read, one GROUP BY and one verdict per
 // emission token, all within protocolRevenueBudget. A failed or timed-out read is named in the blocks and marks them
-// degraded; it never makes the rest of the build partial.
+// degraded, which makes the build partial: served, never cached as good.
 func (s *Server) readProtocolEmissions(ctx context.Context, reads []protocolPoolRead, blntListFailed bool) map[string]LendingProtocolEmissions {
 	ins := map[string]*protocolEmissionsInput{}
 	for _, pt := range lendingProtocols {

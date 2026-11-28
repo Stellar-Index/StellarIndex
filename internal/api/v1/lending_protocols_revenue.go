@@ -380,8 +380,8 @@ func protocolRevenuePools(protocol string, reads []protocolPoolRead) []revenuePo
 }
 
 // readProtocolRevenue builds every protocol's revenue block from one coverage read, one GROUP BY and one verdict per
-// asset, all within protocolRevenueBudget. A failed or timed-out read is named in the blocks and marks them degraded; it
-// never makes the rest of the build partial.
+// asset, all within protocolRevenueBudget. A failed or timed-out read is named in the blocks and marks them degraded,
+// which makes the build partial: served, never cached as good.
 func (s *Server) readProtocolRevenue(ctx context.Context, reads []protocolPoolRead, blntListFailed bool) map[string]LendingProtocolRevenue {
 	ins := map[string]*protocolRevenueInput{}
 	for _, pt := range lendingProtocols {
