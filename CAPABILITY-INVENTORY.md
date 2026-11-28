@@ -89,6 +89,7 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 - ClickHouse lake → `clickhouse.NewExplorerReader`, `NewSupplyReader`, `clickhouse.Open` (sink), `NewLiveSink`
 - A contract's current entries by exact key, each with its last-modified ledger → `ExplorerReader.ContractInstance` (WASM hash + storage in one read), `ContractPersistentEntry` (archived = error, never absent; removal ledger when removed); its current WASM hash alone → `ContractWasmHash`
 - A lending pool's own-oracle price (Blend `oracle-aggregator` v1/v2 over Reflector v7.1.0) → `oracleagg.ProgramForHash` gate, `DecodeV2Instance`/`DecodeV1`, `DecodeFeedState` (the feed's own last round, resolution, history mask), pure `oracleagg.LastPrice` over `Store.OracleFeedRounds` (keyed on the feed contract) cross-checked against that state; API glue `Server.PoolOraclePrices` (`internal/api/v1/lending_oracle_price.go`)
+- A lending pool's account health at one ledger → `deriveHealth` over the positions snapshot plus `PoolOraclePrices` and `ExplorerReader.LiveAuctionUsers` (`internal/api/v1/lending_health_derive.go`); a ceiling on a V2 reserve's rates after unaccrued interest → `blend.AccrualCeiling` (`internal/sources/blend/health_accrual.go`)
 - Redis client from config → `redisclient.Build(cfg)`, `redisclient.Mode(cfg)` ⚠ (not in AGENTS.md; handles sentinel vs single; installs the command-error metrics hook — never construct a go-redis client directly)
 
 ## Ingest / decode — `ledgerstream`, `dispatcher`, `pipeline`, `projector`

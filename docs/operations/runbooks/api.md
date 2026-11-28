@@ -1089,6 +1089,14 @@ A deploy during a merge can fail the first load (absorbed by `for: 30m`). **Esca
 
 **Fix.** A new reserve layout means updating the Blend `ResData` decoder for that WASM version. A corrupt lake row means re-deriving that ledger range. **Escalate:** none.
 
+## stellarindex_lending_health_fill_failing
+
+**Trigger.** `sum by (instance, pool) (rate(stellarindex_lending_health_fill_failures_total[15m])) > 0` for 30 min, ticket. `GET /v1/lending/pools/{pool}/health` has kept answering that pool with an error because its positions snapshot could not be read. The route is off by default; with it off the counter never moves.
+
+**Check.** The API's `lending health failed` error lines carry the pool and the cause. A `lending reserves deadline exceeded` warning with `stage=lending health` means the snapshot read ran out of time (a 503) rather than failing. Then check the ClickHouse lake read of that pool's positions; a failed auctions read does not count here (it is served as `auctions_unread`).
+
+**Fix.** A lake outage or a missing table clears once ClickHouse answers again. A read that times out on every request means the pool's position set outgrew the handler budget. **Escalate:** none.
+
 ## stellarindex_tls_cert_expiring_soon
 
 **Trigger.** `for: 1h`, P2, three arms. An expired cert fails every request; 14 days leaves time to renew by hand.

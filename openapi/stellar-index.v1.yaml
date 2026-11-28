@@ -6301,6 +6301,231 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /lending/pools/{pool}/health:
+    get:
+      operationId: getLendingPoolHealth
+      tags: [protocols]
+      summary: Lending pool — account health on the pool's own oracle.
+      description: |
+        Every account's health in one pool, computed on read on the price
+        the pool contract itself liquidates on: its own oracle-aggregator,
+        reproduced by the same reader that audits it (`basis.kind:
+        pool_oracle`). Off unless the deployment sets `[lending_health]
+        enabled`; until then 404 `lending-health-not-enabled`.
+
+        One ledger. The oracle is reproduced at `basis.ledger` first; the
+        pool's instance, Positions, ResData, ResConfig and Auction entries
+        are read after it, and an account whose position, held reserve
+        (rates or config) or auction entry changed after that ledger, or
+        whose auction was removed after it, is `unpriced` with reason
+        `state_newer`, never valued on a mix of ledgers; an instance
+        changed after it makes every account `state_newer`. Reserve config
+        is only the applied ResConfig ledger entry: a reserve without a
+        readable one, or whose `index` is not its ResList slot, is
+        `config_unread`. Every present Auction entry counts as live,
+        whatever its TTL: expiry is not judged, so an expired auction can
+        keep an account `in_auction` (never `liquidatable`).
+
+        Values. `collateral_base` and `liabilities_base` are the contract's
+        effective amounts in the oracle's base, as integers at the oracle's
+        decimals (c_factor applied and rounded down; l_factor applied and
+        rounded up). `hf` is their ratio rounded down to 4 dp, on stored
+        rates. A reserve whose price is a verdict (`basis.reserves[].verdict`)
+        values nothing: an account holding it as collateral or debt has
+        `hf: null`, class `unpriced` and its verdict as `reason`, and is
+        counted in `summary.unpriced`. A price reproduced from a Reflector
+        round the operator excluded is `source_excluded`. BLNT pools are not
+        valued (`health_formula_unverified`).
+
+        Classes. `liquidatable` only when the version's health gate admits a
+        user-liquidation auction, the account has raw collateral, no
+        user-liquidation auction is live for it, it is neither the pool nor
+        its backstop, and every price it needs is at most 24 h old.
+        Otherwise: `in_auction`, `bad_debt` (debt and no collateral
+        position, as the contract's bad-debt check), `liquidation_exempt`
+        (the pool or its backstop), `healthy`, or `indeterminate` with a
+        reason: `accrual_pending` when the class differs between stored
+        rates and the rates the stored borrow rate accrues to by the ledger
+        (the contract accrues before it checks; `accrual` says how long the
+        stored rates trail), `accrual_unbounded` on a V1 pool,
+        `collateral_value_zero` when collateral is held but values to zero,
+        `auctions_unread` when the live auctions could not be read,
+        `pool_instance_unread` when the pool instance (and so its backstop)
+        could not be read, `backstop_unread` when the instance has no
+        readable Backstop; either answer is also `Cache-Control: no-store`.
+
+        Totals and `bands` (HF bands by exact rational comparison; the
+        backstop is not in any band) cover priced accounts with debt.
+        `summary.lower_bound` is true, with `summary.excluded` naming each
+        reason, whenever an account is unpriced, indeterminate for an
+        unread input, interest is unaccrued (`accrual_pending`: the totals
+        are on stored rates, so debt is understated), or the positions read
+        was truncated, unreadable or did not reconcile. A truncated read
+        serves `accounts: []`. `accounts` lists accounts with debt (and
+        `state_newer` ones) worst first (exact comparison, ties by
+        address), unpriced ones last; page with `pagination.next`. The view
+        is computed once per refresh at `basis.ledger`, read fresh from the
+        lake when the view is built. The cursor carries that ledger and a
+        sort key: across a refresh it still pages by key, but pages can then
+        come from different ledgers, and `view_changed` is true on the first
+        page served from the newer one. A response behind a failed read on
+        our side is `Cache-Control: no-store`.
+      parameters:
+        - { name: pool, in: path, required: true, description: Pool contract C-strkey., schema: { type: string } }
+        - { name: limit, in: query, required: false, description: Accounts per page., schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: cursor, in: query, required: false, description: "Opaque `pagination.next` of the previous page.", schema: { type: string } }
+      responses:
+        "200":
+          description: The pool's account health at one ledger.
+          content:
+            application/json:
+              example:
+                data:
+                  pool: CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD
+                  protocol: blend
+                  version: v2
+                  basis:
+                    kind: pool_oracle
+                    oracle: CCVTVW2CVA7JLH4ROQGP3CU4T3EXVCK66AZGSM4MUQPXAI4QHCZPOATS
+                    adapter_wasm_hash: 41df04894bf2d8291492326f7a6ab9c90a90cc9828e31990ce8aeeab42680bfd
+                    adapter_version: oracle-aggregator v2.0.0
+                    ledger: 66000000
+                    close_time: '2026-11-28T12:00:00Z'
+                    reserves:
+                    - { asset: CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA, price: '2650000', decimals: 7, timestamp: '2026-11-28T11:55:00Z', quote: 'fiat:USD', verdict: null }
+                    - { asset: CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75, price: null, decimals: null, timestamp: null, quote: null, verdict: oracle_feed_incomplete }
+                  accrual: { reproduced: false, pending_seconds_max: 3600 }
+                  summary:
+                    accounts_total: 3
+                    accounts_with_debt: 3
+                    no_debt: 0
+                    healthy: 1
+                    liquidatable: 1
+                    bad_debt: 0
+                    in_auction: 0
+                    indeterminate: 0
+                    liquidation_exempt: 0
+                    unpriced: { oracle_feed_incomplete: 1 }
+                    collateral_base: '24000'
+                    liabilities_base: '15000'
+                    lower_bound: true
+                    excluded: [{ reason: oracle_feed_incomplete, accounts: 1 }]
+                  bands:
+                  - { from: '0', to: '1.00', accounts: 1, liabilities_base: '12000' }
+                  - { from: '1.00', to: '1.05', accounts: 0, liabilities_base: '0' }
+                  - { from: '1.05', to: '1.10', accounts: 0, liabilities_base: '0' }
+                  - { from: '1.10', to: '1.25', accounts: 0, liabilities_base: '0' }
+                  - { from: '1.25', to: '1.50', accounts: 0, liabilities_base: '0' }
+                  - { from: '1.50', to: '2.00', accounts: 0, liabilities_base: '0' }
+                  - { from: '2.00', to: null, accounts: 1, liabilities_base: '3000' }
+                  accounts:
+                  - { account: GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7, hf: '0.8333', class: liquidatable, reason: null, collateral_base: '10000', liabilities_base: '12000', in_auction: false, pool_or_backstop: false, last_modified_ledger: 65999000 }
+                  note: "Health is computed on the pool's own oracle (basis.kind pool_oracle), reproduced at basis.ledger."
+                as_of: '2026-11-28T12:00:05Z'
+                pagination: { next: 'h.10000.12000.GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7' }
+                flags:
+                  stale: false
+                  reduced_redundancy: false
+                  triangulated: false
+                  divergence_warning: false
+                  divergence_checked: false
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          pool: { type: string }
+                          protocol: { type: string, enum: [blend, blnt] }
+                          version: { type: [string, "null"], enum: [v1, v2, null], description: "Blend pool version; null for BLNT." }
+                          basis:
+                            type: object
+                            properties:
+                              kind: { type: string, enum: [pool_oracle] }
+                              oracle: { type: [string, "null"] }
+                              adapter_wasm_hash: { type: [string, "null"] }
+                              adapter_version: { type: [string, "null"] }
+                              ledger: { type: integer, format: int64, description: "The evaluation ledger every entry is judged against; 0 when no oracle read ran." }
+                              close_time: { type: [string, "null"], format: date-time }
+                              reserves:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    asset: { type: string }
+                                    price: { type: [string, "null"], description: "Raw lastprice integer at `decimals`; null when `verdict` is set." }
+                                    decimals: { type: [integer, "null"] }
+                                    timestamp: { type: [string, "null"], format: date-time }
+                                    quote: { type: [string, "null"], description: "The adapter's base, verbatim (fiat USD or the USDC SAC); never normalised." }
+                                    verdict: { type: [string, "null"], description: "Why the oracle's price was not reproduced (oracle_* verdicts)." }
+                                  required: [asset, price, decimals, timestamp, quote, verdict]
+                            required: [kind, oracle, adapter_wasm_hash, adapter_version, ledger, close_time, reserves]
+                          accrual:
+                            type: object
+                            properties:
+                              reproduced: { type: boolean, description: "False whenever a reserve's stored rates trail the ledger: hf and the bases are on stored rates." }
+                              pending_seconds_max: { type: integer, format: int64 }
+                            required: [reproduced, pending_seconds_max]
+                          summary:
+                            type: object
+                            properties:
+                              accounts_total: { type: integer, description: "Every Positions entry read: no_debt + accounts_with_debt + unpriced.state_newer." }
+                              accounts_with_debt: { type: integer, description: "Accounts with debt at the ledger: the six classes plus unpriced, less unpriced.state_newer." }
+                              no_debt: { type: integer, description: "Accounts with no debt at the ledger; state_newer accounts are in neither this nor accounts_with_debt." }
+                              healthy: { type: integer }
+                              liquidatable: { type: integer }
+                              bad_debt: { type: integer }
+                              in_auction: { type: integer }
+                              indeterminate: { type: integer }
+                              liquidation_exempt: { type: integer }
+                              unpriced: { type: object, additionalProperties: { type: integer }, description: "Accounts with no health factor, by reason: accounts with debt, except state_newer, which counts every account whose state at the ledger is unknown, with or without debt." }
+                              collateral_base: { type: string, description: "Effective collateral of priced accounts with debt, oracle base integer." }
+                              liabilities_base: { type: string, description: "Effective liabilities of priced accounts with debt, oracle base integer." }
+                              lower_bound: { type: boolean }
+                              excluded:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    reason: { type: string }
+                                    accounts: { type: integer, description: "Accounts it covers; 0 for a pool-wide reason." }
+                                  required: [reason, accounts]
+                            required: [accounts_total, accounts_with_debt, no_debt, healthy, liquidatable, bad_debt, in_auction, indeterminate, liquidation_exempt, unpriced, collateral_base, liabilities_base, lower_bound, excluded]
+                          bands:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                from: { type: string }
+                                to: { type: [string, "null"] }
+                                accounts: { type: integer }
+                                liabilities_base: { type: string }
+                              required: [from, to, accounts, liabilities_base]
+                          accounts:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                account: { type: string }
+                                hf: { type: [string, "null"] }
+                                class: { type: string, enum: [healthy, liquidatable, bad_debt, in_auction, indeterminate, liquidation_exempt, unpriced] }
+                                reason: { type: [string, "null"] }
+                                collateral_base: { type: [string, "null"] }
+                                liabilities_base: { type: [string, "null"] }
+                                in_auction: { type: boolean }
+                                pool_or_backstop: { type: boolean }
+                                last_modified_ledger: { type: integer, format: int64 }
+                              required: [account, hf, class, reason, collateral_base, liabilities_base, in_auction, pool_or_backstop, last_modified_ledger]
+                          view_changed: { type: boolean, description: "True when the request's cursor was minted on a view at another ledger than `basis.ledger`: this page continues by sort key on the newer view." }
+                          note: { type: string }
+                        required: [pool, protocol, version, basis, accrual, summary, bands, accounts, note]
+                    required: [data]
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /mev:
     get:
       operationId: listMevEvents

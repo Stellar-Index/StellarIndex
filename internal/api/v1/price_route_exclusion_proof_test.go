@@ -23,6 +23,7 @@ var gatedRouteExclusionProof = map[string][]func(*testing.T){
 	"GET /v1/oracle/x_last_price":                    {TestPriceSourceExclusion_SEP40FrozenHeldValue},
 	"GET /v1/lending/pools/{pool}/liquidations":      {TestLendingPoolLiquidations_ExcludedSourceDoesNotValueFill},
 	"GET /v1/lending/pools/{pool}/bad-debt":          {TestLendingPoolBadDebt_ExcludedSourceDoesNotValueEvent},
+	"GET /v1/lending/pools/{pool}/health":            {v1.LendingHealthExcludedSourceProof},
 	"GET /v1/rwa/premium":                            {TestRWAPremium_ASourceExcludedDayIsWithheldAndFlagged},
 	"GET /v1/lending/pools/{pool}/history":           {TestLendingHistory_ExcludedSourceDoesNotValueBucket},
 	"GET /v1/lending/pools/{pool}/revenue":           {TestLendingPoolRevenue_ExcludedSourceDoesNotValueHour},

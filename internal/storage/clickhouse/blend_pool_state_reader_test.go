@@ -148,7 +148,14 @@ func TestBlendReserveKeys_CoversInstanceAndEveryResolvableAsset(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := []string{blendTestInstanceKeyPersistent, blendTestInstanceKeyTemporary, blendTestResDataKey}
+	cfgKey, err := poolDataKeyXDR(mustContractID(t, blendTestPool), "ResConfig", mustContractID(t, blendTestAssetSAC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{blendTestInstanceKeyPersistent, blendTestInstanceKeyTemporary, blendTestResDataKey, cfgKey}
+	if refByKey[cfgKey] != (keyRef{asset: blendTestAssetSAC, kind: "ResConfig"}) {
+		t.Errorf("ResConfig key maps to %+v", refByKey[cfgKey])
+	}
 	if !reflect.DeepEqual(keys, want) {
 		t.Fatalf("keys =\n  %v\nwant\n  %v", keys, want)
 	}
@@ -247,8 +254,8 @@ func TestBlendPoolReserves_QueryShape(t *testing.T) {
 	if !ok {
 		t.Fatalf("arg 0 is %T, want []string of key_xdr", args[0])
 	}
-	if len(keys) != 3 {
-		t.Errorf("bound %d keys, want 3 (two instance durabilities + one ResData)", len(keys))
+	if len(keys) != 4 {
+		t.Errorf("bound %d keys, want 4 (two instance durabilities + one ResData + one ResConfig)", len(keys))
 	}
 }
 
@@ -259,10 +266,11 @@ func TestScanBlendReserveParts_IgnoresUnrequestedKeys(t *testing.T) {
 	rows := &stubRows{data: [][]any{
 		{"some-other-key", "AAAA"},
 	}}
-	byAsset, bstop, matched, _, err := scanReserveParts(rows, refByKey, blendModel(blend.PoolV2).decode)
+	parts, err := scanReserveParts(rows, refByKey, blendModel(blend.PoolV2).decode)
 	if err != nil {
 		t.Fatalf("scanReserveParts: %v", err)
 	}
+	byAsset, bstop, matched := parts.data, parts.inst, parts.matched
 	if len(byAsset) != 0 {
 		t.Errorf("unrequested key produced %v, want nothing", byAsset)
 	}
@@ -291,10 +299,11 @@ func TestScanBlendReserveParts_MatchedTracksOnlyReportedEntries(t *testing.T) {
 		{blendTestResDataKey, resDataEntryFixture(t)},
 		{"resdata-undecodable", "!!!not-base64!!!"},
 	}}
-	byAsset, _, matched, _, err := scanReserveParts(rows, refByKey, blendModel(blend.PoolV2).decode)
+	parts, err := scanReserveParts(rows, refByKey, blendModel(blend.PoolV2).decode)
 	if err != nil {
 		t.Fatalf("scanReserveParts: %v", err)
 	}
+	byAsset, matched := parts.data, parts.matched
 	if len(byAsset) != 1 {
 		t.Fatalf("byAsset = %v, want only the decodable reserve", byAsset)
 	}
@@ -310,10 +319,11 @@ func TestScanBlendReserveParts_MatchedTracksOnlyReportedEntries(t *testing.T) {
 func TestScanBlendReserveParts_UndecodableEntryIsSkippedNotFatal(t *testing.T) {
 	refByKey := map[string]keyRef{blendTestResDataKey: {asset: blendTestAssetSAC, kind: "ResData"}}
 	rows := &stubRows{data: [][]any{{blendTestResDataKey, "!!!not-base64!!!"}}}
-	byAsset, _, _, undecoded, err := scanReserveParts(rows, refByKey, blendModel(blend.PoolV2).decode)
+	parts, err := scanReserveParts(rows, refByKey, blendModel(blend.PoolV2).decode)
 	if err != nil {
 		t.Fatalf("one undecodable entry aborted the pool read: %v", err)
 	}
+	byAsset, undecoded := parts.data, parts.undecoded
 	if len(byAsset) != 0 {
 		t.Errorf("byAsset = %v, want the reserve reported absent", byAsset)
 	}
@@ -321,6 +331,30 @@ func TestScanBlendReserveParts_UndecodableEntryIsSkippedNotFatal(t *testing.T) {
 	// (TestBlendPoolReserves_ArchivedUndecodableEntryIsArchived).
 	if !reflect.DeepEqual(undecoded, []string{blendTestResDataKey}) {
 		t.Errorf("undecoded = %v, want the reserve's key named as a decode failure", undecoded)
+	}
+}
+
+// TestScanBlendReserveParts_ResConfigIsStrict: the ResConfig entry is read with its ledger, and one carrying a field Blend's
+// ReserveConfig does not define is left out rather than decoded around.
+func TestScanBlendReserveParts_ResConfigIsStrict(t *testing.T) {
+	good := histResConfig(t, 9_000_000)
+	val := mustValue(t, good)
+	extra := append(**val.Map, xdr.ScMapEntry{Key: testSym("z_unknown"), Val: testU32(1)})
+	extraMap := &extra
+	bad := histEntry(t, xdr.ScVal{Type: xdr.ScValTypeScvMap, Map: &extraMap})
+	refs := map[string]keyRef{"cfg-a": {asset: "A", kind: "ResConfig"}, "cfg-b": {asset: "B", kind: "ResConfig"}}
+	parts, err := scanReserveParts(&stubRows{data: [][]any{{"cfg-a", good}, {"cfg-b", bad}}}, refs, blendModel(blend.PoolV2).decode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, ok := parts.configs["A"]; !ok || c.cfg.CFactor != 9_000_000 || c.cfg.LFactor != 9_500_000 {
+		t.Errorf("config A = %+v (found %v), want c_factor 9000000 l_factor 9500000", c, ok)
+	}
+	if _, ok := parts.configs["B"]; ok {
+		t.Error("a ResConfig with an undefined field was decoded")
+	}
+	if !reflect.DeepEqual(parts.matched, []string{"cfg-a"}) {
+		t.Errorf("matched = %v, want only the decoded config", parts.matched)
 	}
 }
 
@@ -368,27 +402,34 @@ func TestBlendPoolReserves_ArchivedUndecodableEntryIsArchived(t *testing.T) {
 func TestScanBlendReserveParts_TruncatedStreamIsAnError(t *testing.T) {
 	truncated := errors.New("stream truncated")
 	rows := &stubRows{streamErr: truncated}
-	if _, _, _, _, err := scanReserveParts(rows, nil, blendModel(blend.PoolV2).decode); !errors.Is(err, truncated) {
+	if _, err := scanReserveParts(rows, nil, blendModel(blend.PoolV2).decode); !errors.Is(err, truncated) {
 		t.Fatalf("err = %v, want it to wrap %v", err, truncated)
 	}
 }
 
-// blendDropFixture is the (dataByAsset, refByKey, matched) triple
-// dropArchivedBlendReserves operates on: a two-reserve pool whose instance
-// entry also came back.
-func blendDropFixture() (map[string]*blend.ReserveData, map[string]keyRef, []string) {
+// blendDropFixture is the scan dropArchivedBlendReserves operates on: a two-reserve pool whose instance entry and ResConfig
+// entries also came back.
+func blendDropFixture() (reserveParts, map[string]keyRef) {
 	const (
 		keyA = "resdata-key-a"
 		keyB = "resdata-key-b"
+		cfgA = "resconfig-key-a"
+		cfgB = "resconfig-key-b"
 		inst = "instance-key"
 	)
-	data := map[string]*blend.ReserveData{"assetA": {}, "assetB": {}}
+	parts := reserveParts{
+		data:    map[string]*blend.ReserveData{"assetA": {}, "assetB": {}},
+		configs: map[string]lakeReserveConfig{"assetA": {}, "assetB": {}},
+		matched: []string{inst, keyA, keyB, cfgA, cfgB},
+	}
 	refs := map[string]keyRef{
 		keyA: {asset: "assetA", kind: "ResData"},
 		keyB: {asset: "assetB", kind: "ResData"},
+		cfgA: {asset: "assetA", kind: "ResConfig"},
+		cfgB: {asset: "assetB", kind: "ResConfig"},
 		inst: {kind: "Instance"},
 	}
-	return data, refs, []string{inst, keyA, keyB}
+	return parts, refs
 }
 
 // fixedTTLCache is a verdict cache wired to a canned answer, so the drop
@@ -407,14 +448,22 @@ func fixedTTLCache(verdicts map[string]TTLLiveness) *ttlLivenessCache {
 // TestDropArchivedBlendReserves_DropsOnlyPositivelyArchived pins fail-open: a reserve is dropped only
 // on a positively lapsed TTL; TTLUnknown keeps it, as under-reporting liquidity is as wrong as phantom.
 func TestDropArchivedBlendReserves_DropsOnlyPositivelyArchived(t *testing.T) {
-	data, refs, matched := blendDropFixture()
+	parts, refs := blendDropFixture()
+	data := parts.data
 	cache := fixedTTLCache(map[string]TTLLiveness{
-		"resdata-key-a": TTLArchived,
-		"resdata-key-b": TTLUnknown, // unresolved — must be KEPT
-		"instance-key":  TTLLive,
+		"resdata-key-a":   TTLArchived,
+		"resdata-key-b":   TTLUnknown, // unresolved — must be KEPT
+		"resconfig-key-b": TTLArchived,
+		"instance-key":    TTLLive,
 	})
-	if _, _, err := dropArchivedBlendReserves(t.Context(), cache, data, refs, matched, nil); err != nil {
+	if _, _, err := dropArchivedBlendReserves(t.Context(), cache, parts, refs); err != nil {
 		t.Fatalf("dropArchivedBlendReserves: %v", err)
+	}
+	if _, present := parts.configs["assetB"]; present {
+		t.Error("assetB's archived ResConfig survived: an evicted config would value positions as current")
+	}
+	if _, present := parts.configs["assetA"]; !present {
+		t.Error("assetA's ResConfig was dropped with no archived verdict of its own")
 	}
 	if _, present := data["assetA"]; present {
 		t.Error("assetA survived a positively-ARCHIVED verdict — its last-known reserves would be priced as current liquidity")
@@ -428,13 +477,14 @@ func TestDropArchivedBlendReserves_DropsOnlyPositivelyArchived(t *testing.T) {
 // contract itself is no longer live ledger state, so no reserve under it can
 // be current liquidity, whatever the individual ResData TTLs say.
 func TestDropArchivedBlendReserves_ArchivedInstanceSinksThePool(t *testing.T) {
-	data, refs, matched := blendDropFixture()
+	parts, refs := blendDropFixture()
+	data := parts.data
 	cache := fixedTTLCache(map[string]TTLLiveness{
 		"instance-key":  TTLArchived,
 		"resdata-key-a": TTLLive, // individually live, but the POOL is dead
 		"resdata-key-b": TTLLive,
 	})
-	archived, _, err := dropArchivedBlendReserves(t.Context(), cache, data, refs, matched, nil)
+	archived, _, err := dropArchivedBlendReserves(t.Context(), cache, parts, refs)
 	if err != nil || !archived {
 		t.Fatalf("dropArchivedBlendReserves: archived=%v err=%v, want the instance reported archived", archived, err)
 	}
@@ -447,8 +497,9 @@ func TestDropArchivedBlendReserves_ArchivedInstanceSinksThePool(t *testing.T) {
 // without a verdict cache (every test-constructed ExplorerReader) must not
 // silently blank every pool. Nil degrades to TTLUnknown, i.e. keep.
 func TestDropArchivedBlendReserves_NilCacheKeepsEverything(t *testing.T) {
-	data, refs, matched := blendDropFixture()
-	if _, _, err := dropArchivedBlendReserves(t.Context(), nil, data, refs, matched, nil); err != nil {
+	parts, refs := blendDropFixture()
+	data := parts.data
+	if _, _, err := dropArchivedBlendReserves(t.Context(), nil, parts, refs); err != nil {
 		t.Fatalf("dropArchivedBlendReserves(nil cache): %v", err)
 	}
 	if len(data) != 2 {

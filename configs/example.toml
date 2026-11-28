@@ -930,6 +930,14 @@ enabled              = false
 enabled              = false
 
 # ──────────────────────────────────────────────────────────────────
+# Lending pool health (GET /v1/lending/pools/{pool}/health): health
+# factors on the pool's own oracle, computed on read. Off by default;
+# when off the route answers 404.
+# ──────────────────────────────────────────────────────────────────
+[lending_health]
+enabled              = false
+
+# ──────────────────────────────────────────────────────────────────
 # HashDB — ADR-0016 drift detector. The indexer's live LCM read loop
 # appends sha256(LCM) per ledger; a periodic sweep re-reads a recent
 # window from the same bucket and compares, catching upstream

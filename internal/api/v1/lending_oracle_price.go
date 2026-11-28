@@ -50,6 +50,7 @@ var errLendingOracleUnwired = errors.New("pool-oracle reader not wired")
 type LendingOraclePool struct {
 	ID, Oracle string
 	Reserves   []string
+	Ledger     uint32 // the evaluation ledger, read fresh by the caller; 0 takes the cached lake watermark
 }
 
 // LendingOraclePrice is one reserve's reproduced lastprice, or the verdict that replaces it (never a substitute). The
@@ -90,7 +91,10 @@ func (s *Server) PoolOraclePrices(ctx context.Context, pool LendingOraclePool) (
 	if !lok || !fok {
 		return fail(errLendingOracleUnwired)
 	}
-	ledger, _, ok := s.lakeWatermark(ctx)
+	ledger, ok := pool.Ledger, pool.Ledger > 0
+	if !ok {
+		ledger, _, ok = s.lakeWatermark(ctx)
+	}
 	if !ok {
 		return fail(errors.New("no lake watermark"))
 	}

@@ -26,11 +26,15 @@ const (
 type LendingAuctionUser struct {
 	AuctionType uint32
 	User        string
+	Ledger      uint32 // the entry's last-modified ledger
 }
 
-// LendingPoolAuctions is the set of live Auction keys one pool holds in the lake.
+// LendingPoolAuctions is the set of Auction keys one pool holds in the lake.
 type LendingPoolAuctions struct {
+	// Auctions are the present entries, counted live whatever their TTL (see assemblePoolAuctions).
 	Auctions []LendingAuctionUser
+	// Gone lists removed auctions (filled or deleted); Ledger is the removal.
+	Gone []LendingAuctionUser
 	// Unrecognised counts keys under the Auction prefix whose shape is not AuctionKey{auct_type, user}: left out, never
 	// guessed at.
 	Unrecognised int
@@ -38,8 +42,15 @@ type LendingPoolAuctions struct {
 	Truncated bool
 }
 
-// LiveAuctionUsers reads every current Auction(AuctionKey) key of one pool as a primary-key prefix range, like
-// LendingPoolPositions. Only the key is read: an archived entry is still the pool's auction (restorable), so it is included.
+// poolAuctionsQuery is poolPositionsQuery keeping removed rows, whose ledger_seq is the removal ledger.
+const poolAuctionsQuery = `SELECT key_xdr, entry_xdr, ledger_seq
+	FROM stellar.ledger_entries_current FINAL
+	WHERE entry_type = 'contract_data' AND startsWith(key_xdr, ?)
+	LIMIT ?
+	SETTINGS max_threads = 4, max_memory_usage = 8000000000, optimize_move_to_prewhere_if_final = 0`
+
+// LiveAuctionUsers reads every current Auction(AuctionKey) key of one pool, removed ones included, as a primary-key prefix
+// range, like LendingPoolPositions.
 func (r *ExplorerReader) LiveAuctionUsers(ctx context.Context, pool string) (LendingPoolAuctions, error) {
 	poolID, err := contractIDFromStrkey(pool)
 	if err != nil {
@@ -49,7 +60,7 @@ func (r *ExplorerReader) LiveAuctionUsers(ctx context.Context, pool string) (Len
 	if err != nil {
 		return LendingPoolAuctions{}, err
 	}
-	ce, n, err := r.scanContractData(ctx, poolPositionsQuery, prefix, lendingPoolAuctionsLimit+1)
+	ce, n, err := r.scanContractData(ctx, poolAuctionsQuery, prefix, lendingPoolAuctionsLimit+1)
 	if err != nil {
 		return LendingPoolAuctions{}, err
 	}
@@ -58,32 +69,32 @@ func (r *ExplorerReader) LiveAuctionUsers(ctx context.Context, pool string) (Len
 	return out, nil
 }
 
+// assemblePoolAuctions sorts the read keys into live (a present entry, decodable or not) and removed. Expiry is not
+// judged: the shared TTL verdicts are a cached snapshot keyed by LedgerKey, not by entry version, taken at a later tip
+// than the evaluation ledger, so they can call a re-created auction, or one live at that ledger, gone.
 func assemblePoolAuctions(ce contractEntries) LendingPoolAuctions {
-	out := LendingPoolAuctions{Auctions: []LendingAuctionUser{}}
-	seen := map[string]bool{}
-	add := func(k string) {
-		if seen[k] {
-			return
+	out := LendingPoolAuctions{Auctions: []LendingAuctionUser{}, Gone: []LendingAuctionUser{}}
+	for k, ledger := range ce.ledger {
+		a, ok := auctionKeyUser(k)
+		if !ok {
+			out.Unrecognised++
+			continue
 		}
-		seen[k] = true
-		if a, ok := auctionKeyUser(k); ok {
+		a.Ledger = ledger
+		if _, present := ce.vals[k]; present || ce.archived[k] {
 			out.Auctions = append(out.Auctions, a)
 		} else {
-			out.Unrecognised++
+			out.Gone = append(out.Gone, a)
 		}
 	}
-	for k := range ce.vals {
-		add(k)
+	for _, s := range [][]LendingAuctionUser{out.Auctions, out.Gone} {
+		sort.Slice(s, func(i, j int) bool {
+			if s[i].User != s[j].User {
+				return s[i].User < s[j].User
+			}
+			return s[i].AuctionType < s[j].AuctionType
+		})
 	}
-	for k := range ce.archived {
-		add(k)
-	}
-	sort.Slice(out.Auctions, func(i, j int) bool {
-		if out.Auctions[i].User != out.Auctions[j].User {
-			return out.Auctions[i].User < out.Auctions[j].User
-		}
-		return out.Auctions[i].AuctionType < out.Auctions[j].AuctionType
-	})
 	return out
 }
 
