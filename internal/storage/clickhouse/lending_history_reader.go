@@ -130,14 +130,17 @@ const lendingHistoryRangeQuery = `SELECT key_xdr, protocol, ledger_seq, intra_le
 
 // lendingHistorySeedQuery is each key's last row at or before from: the state in force when the window opens. The same
 // watermark-hour bound as lendingHistoryRangeQuery applies.
-const lendingHistorySeedQuery = `SELECT key_xdr, protocol, ledger_seq, intra_ledger_seq, close_time, entry_xdr FROM (
+const lendingHistorySeedQuery = lendingSeedSelect + `
+	SETTINGS optimize_move_to_prewhere_if_final = 0`
+
+// lendingSeedSelect takes contract, keys, at, the watermark hour and at again.
+const lendingSeedSelect = `SELECT key_xdr, protocol, ledger_seq, intra_ledger_seq, close_time, entry_xdr FROM (
 		SELECT key_xdr, protocol, hour, ledger_seq, intra_ledger_seq, close_time, entry_xdr
 		FROM stellar.lending_state_hourly FINAL
 		WHERE contract_id = ? AND key_xdr IN (?) AND hour <= toDateTime(?, 'UTC') AND hour < toDateTime(?, 'UTC')
 	) WHERE close_time <= toDateTime(?, 'UTC')
 	ORDER BY key_xdr, hour DESC
-	LIMIT 1 BY key_xdr
-	SETTINGS optimize_move_to_prewhere_if_final = 0`
+	LIMIT 1 BY key_xdr`
 
 // lendingHistoryKeyRowsQuery counts a key's distinct served hours; only zero is read, and versions of one hour count once.
 const lendingHistoryKeyRowsQuery = `SELECT uniqExact(hour) FROM stellar.lending_state_hourly

@@ -113,7 +113,8 @@ func newRatesFixture(t *testing.T) ratesFixture {
 }
 
 type ratesBody struct {
-	Data v1.LendingRatesView `json:"data"`
+	Data  v1.LendingRatesView `json:"data"`
+	Flags v1.Flags            `json:"flags"`
 }
 
 func getRates(t *testing.T, base, query string) (ratesBody, *http.Response) {

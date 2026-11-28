@@ -391,10 +391,10 @@ named by `apy_convention`. Which one the API serves for a model rate is decided 
 
 - **Emissions APR**, as `/v1/lending/pools/{pool}/emissions` serves it: `eps·31536000 / 10^(7+d) · P ÷ USD(side)`,
   where the side is the supplied underlying for a supply stream and the borrowed one for a borrow stream, `d` and `P`
-  the emission token's decimals and price; exact until 4 dp (`lending_emissions_usd.go:40`, `:159-190`). A thin,
-  unverified or missing price gives no APR (`:44-64`), nor does an unread, unpriced, empty or sub-$1 side (`:28-36`).
+  the emission token's decimals and price; exact until 4 dp (`lending_emissions_usd.go:40`, `:169-217`). A thin,
+  unverified or missing price gives no APR (`:45-74`), nor does an unread, unpriced, empty or sub-$1 side (`:24-36`).
 - **Tokens per 1000 USD per year** is `eps·31536000 / 10^(7+d) · 1000 ÷ USD(side)`: free of the emission token's
-  price, so it stays true when that price is thin.
+  price, so it stays true when that price is thin (`:222`).
 - **Net yield** (`ComposeNetYield`), higher is better on both sides: supply = base + emissions; borrow = emissions −
   borrow rate. The base is a model or a realised rate.
 
@@ -405,6 +405,34 @@ named by `apy_convention`. Which one the API serves for a model rate is decided 
 | Base | Null; `excluded` names it | A base can be negative or is a cost: no bound either way |
 
 A missing component is never read as zero, and no thin-market price enters either figure.
+
+### On `GET /v1/lending/rates`
+
+Each row's `yield` uses the realised rate as the base, over one `window` (24h, 7d or 30d) for the whole response.
+
+- **The two states** come from `lending_state_hourly` (`LendingRateStates`, read from the base slack before the window
+  to the watermark's hour). The slack is an hour or a 24th of the window, whichever is longer (1h, 7h, 30h). The base is
+  the state in force at the window's start if it accrued within the slack, else the first state inside the window. An
+  older state is never the base: a reserve untouched for 59 days would otherwise average those days into a "7d" rate.
+  One bounded probe per key (newest row up to the slack, no entry read) tells `base_state_before_window` from
+  `no_base_state_in_window`. The span is the two states' `last_time` (`realised_span_seconds`). A span under half the
+  window does not rank.
+- **History lag.** `yield_history_through` is how far the history is derived. More than 2 hours behind the request, the
+  response is stale and nothing ranks (`rate_history_behind`).
+- **Emissions** are the side's current stream (`net_basis: realised_base_current_emissions`). `0.0000` only when the
+  stream list was read whole (`reserve_list_unread` and `emission_stream_undecodable` otherwise, which `/emissions` names
+  as `streams_incomplete_reason`).
+- **Known limit: the net pairs a past base with today's emission rate.** The realised base covers the span; the
+  emissions are the rate in force now. A rate changed inside the window is not detected: a stream's `last_time` is not
+  when its rate was set, since `update_emission_data` (`pool/src/emissions/distributor.rs`) moves it to the ledger time on
+  every accrual, so any user action on the reserve resets it. Every net that adds a stream carries the caveat
+  `emission_rate_is_current_not_window_average`; it informs and does not block ranking.
+- **Ranking** needs `Rankable`, an `obtainable` row and the gates above. On V1 the realised rate is served, emissions are
+  null (`blend_v1_emission_storage_unverified`) and no V1 net ranks, because its pool status is unknown. On BLNT the
+  backstop's debt-carrying address is unverified, so `backstop_liabilities_unknown` keeps every BLNT net out of a ranking.
+- **Cost.** Each pool's inputs are cached per window and derived hour (one minute; 15 s after a failed or timed-out
+  read; at most 3 entries per pool the reserves cache holds), read after the reserves in their own fan-out, and each fill
+  takes at most 3 s: a slow lake nulls only the yield block, once per pool per 15 s. The history's extent is cached 30 s.
 
 ## Pool factories (trust roots)
 

@@ -1930,6 +1930,12 @@ func resDataKeyB64(t *testing.T, pool, asset xdr.ContractId) string {
 // the ScMap blend.DecodeReserveData expects, carrying the given b_rate.
 func resDataEntryB64(t *testing.T, pool, asset xdr.ContractId, ledger uint32, bRate uint64) string {
 	t.Helper()
+	return resDataRatesEntryB64(t, pool, asset, ledger, bRate, 1_000_000_000_000, 0)
+}
+
+// resDataRatesEntryB64 is resDataEntryB64 with its d_rate and last_time (unix seconds) set too.
+func resDataRatesEntryB64(t *testing.T, pool, asset xdr.ContractId, ledger uint32, bRate, dRate, lastTime uint64) string {
+	t.Helper()
 	i128 := func(v uint64) xdr.ScVal {
 		return xdr.ScVal{Type: xdr.ScValTypeScvI128, I128: &xdr.Int128Parts{Hi: 0, Lo: xdr.Uint64(v)}}
 	}
@@ -1946,10 +1952,10 @@ func resDataEntryB64(t *testing.T, pool, asset xdr.ContractId, ledger uint32, bR
 		{Key: sym("b_rate"), Val: i128(bRate)},
 		{Key: sym("b_supply"), Val: i128(0)},
 		{Key: sym("backstop_credit"), Val: i128(0)},
-		{Key: sym("d_rate"), Val: i128(1_000_000_000_000)},
+		{Key: sym("d_rate"), Val: i128(dRate)},
 		{Key: sym("d_supply"), Val: i128(0)},
 		{Key: sym("ir_mod"), Val: i128(10_000_000)},
-		{Key: sym("last_time"), Val: u64(0)},
+		{Key: sym("last_time"), Val: u64(lastTime)},
 	}
 	val := xdr.ScVal{Type: xdr.ScValTypeScvMap, Map: &mp}
 	p := pool

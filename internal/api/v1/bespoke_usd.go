@@ -20,6 +20,7 @@ type kpiTokenPrice struct {
 	decimals int
 	stale    bool
 	reason   string
+	thin     bool // the token has a price, but a thin-market one: display only, so reason is set
 }
 
 // valueBespokeKPIs sets value_usd on every KPI the store tagged with a token amount, at the token's current price through the

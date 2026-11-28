@@ -51,6 +51,9 @@ type LendingEmissionsState struct {
 	ReserveList   []string      // ResList; nil when unread
 	Reserves      []ReserveEmission
 	Backstop      []BackstopEmission // nil when the pool names no backstop
+	// UndecodableTokenIDs are reserve token ids whose EmisData entry exists but failed to decode: their stream is unknown,
+	// not absent.
+	UndecodableTokenIDs []uint32
 }
 
 const (
@@ -189,16 +192,20 @@ func emissionStreamKeys(poolID xdr.ContractId, st LendingEmissionsState, tiered 
 	return refs, nil
 }
 
-// assembleEmissionStreams decodes the stream entries in token-id, then tier, order. An undecodable entry is skipped.
+// assembleEmissionStreams decodes the stream entries in token-id, then tier, order. An undecodable reserve entry is named
+// in UndecodableTokenIDs; an undecodable backstop entry is skipped.
 func assembleEmissionStreams(out *LendingEmissionsState, vals map[string]xdr.ScVal, archived map[string]bool, refs map[string]emisRef) {
 	out.Reserves = []ReserveEmission{}
 	backstop := map[string]BackstopEmission{}
 	for k, v := range vals {
+		ref := refs[k]
 		d, err := decodeEmissionData(v)
 		if err != nil {
+			if ref.kind == emisKindReserve {
+				out.UndecodableTokenIDs = append(out.UndecodableTokenIDs, ref.id)
+			}
 			continue
 		}
-		ref := refs[k]
 		switch ref.kind {
 		case emisKindReserve:
 			asset, side, _ := ReserveTokenSide(ref.id, out.ReserveList)
@@ -208,6 +215,7 @@ func assembleEmissionStreams(out *LendingEmissionsState, vals map[string]xdr.ScV
 		}
 	}
 	slices.SortFunc(out.Reserves, func(a, b ReserveEmission) int { return cmp.Compare(a.TokenID, b.TokenID) })
+	slices.Sort(out.UndecodableTokenIDs)
 	if out.Instance.Backstop == "" {
 		return
 	}
