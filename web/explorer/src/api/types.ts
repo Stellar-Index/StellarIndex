@@ -7539,7 +7539,7 @@ export interface components {
          *     null with `usd_reason` `not_valued`, never zero.
          */
         LendingProtocolEmissions: {
-            /** @description True when a read behind the block failed or ran past its budget (`price_read_failed`, `emissions_read_failed`, `emissions_timed_out`, `pool_list_read_failed`); the rest of the response is unaffected. */
+            /** @description True when a read behind the block failed or ran past its budget (`price_read_failed`, `emissions_read_failed`, `emissions_timed_out`, `pool_list_read_failed`, `history_verdict_unread`); the response is then also `degraded` and not cached as good. */
             degraded: boolean;
             /** @description C-strkey of the one emission token every summed row is in (BLND's or BLNT's SAC); null when the rows name none or several. */
             emission_token: string | null;
@@ -7656,16 +7656,16 @@ export interface components {
             /** @description True when tokens are left out of `amount` (a pool or its days not valued, a stream not served, rows of an older revision, or a stream the stored day itself bounds); a USD-only exclusion leaves it false. */
             amount_lower_bound: boolean;
             /**
-             * @description Why `amount` is null: as `usd_reason`, or `emission_tokens_differ` the rows are in different tokens, `emission_token_not_stored` a row names no token.
+             * @description Why `amount` is null: as `usd_reason`, or the block cannot name one emission token for its rows (`emission_token` is then null), which nulls every stream's `amount` while the USD is summed as usual: `emission_token_mixed` the rows are in different tokens, `emission_token_not_stored` a row names no token, `emission_token_decimals_unknown` a row names its token but not its decimals.
              * @enum {string|null}
              */
-            amount_reason: "not_valued" | "stream_unavailable" | "all_excluded" | "emission_tokens_differ" | "emission_token_not_stored" | "emissions_read_failed" | null;
+            amount_reason: "not_valued" | "stream_unavailable" | "all_excluded" | "emission_token_mixed" | "emission_token_not_stored" | "emission_token_decimals_unknown" | "emissions_read_failed" | null;
             /** @description True when some tokens summed are an approximate schedule's (BLNT's, rebuilt from events to dust); not a lower bound. */
             approximate: boolean;
         };
         /** @description What an emissions window leaves out and why. */
         LendingProtocolEmissionsExclusion: {
-            /** @description Pool contract C-strkey; null for `pool_list_read_failed`. */
+            /** @description Pool contract C-strkey; null for `pool_list_read_failed` and the writer verdicts, which judge every pool's stream. */
             pool: string | null;
             /** @description The stream left short; null when the reason covers all of the pool's streams. */
             stream: string | null;
@@ -7673,11 +7673,16 @@ export interface components {
              * @description Pool-level (`stream` null): `not_valued` the pool has no valued day at the current valuation revision;
              *     `days_not_valued` window days outside the pool's valued days (`count` days); `emissions_read_failed` the stored
              *     days could not be read; `emissions_timed_out` the block's reads ran past their budget. Protocol-level (`pool`
-             *     null): `pool_list_read_failed`. Stream-level: the reason `/emissions/history` gives for a stream it does not
-             *     serve (e.g. `backstop_claim_names_no_pool`); `valuation_stale` rows stored at an older valuation revision, left
-             *     out until re-valued; a stored row's `usd_reason` (e.g. `no_price_within_bound`, `reads_disagree`,
-             *     `emission_token_unverified`, `withheld`), its USD left out and its tokens kept; `withheld` or
-             *     `price_read_failed` the refusal the emission token's walk gives now, judged over its latest stored day with USD;
+             *     null): `pool_list_read_failed`; and per stream, the stream's writer verdict judged now, as
+             *     `/emissions/history` judges it: `history_unverified` (the writer's projection is not verified back to its first
+             *     ledger), `history_verdict_stale` or `history_verdict_unread`. While a writer is not verified a stored day with
+             *     no row is not proven empty, so the stream is a floor. Stream-level: the reason `/emissions/history` gives for a
+             *     stream it does not serve (e.g. `backstop_claim_names_no_pool`); `valuation_stale` rows stored at an older
+             *     valuation revision, left out until re-valued; a stored row's `usd_reason` (e.g. `no_price_within_bound`,
+             *     `reads_disagree`), its USD left out and its tokens kept; the refusal of the emission token judged now:
+             *     `emission_token_unverified` it is not the protocol token's verified SAC (`emission_token_unread` when the row
+             *     names none), `withheld` or `price_read_failed` the
+             *     refusal the token's walk gives over its latest stored day with USD;
              *     a reason the stored day's stream was bounded by (e.g. `amount_unread`, `writer_behind_lake`); `price_missing`
              *     hours with tokens but no price (`count` hours). Otherwise `count` is stored rows (one per stream line and day).
              */

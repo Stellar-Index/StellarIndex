@@ -127,9 +127,19 @@ Stream-level entries carry a `stream` and give:
 - the stored day's own stream exclusions;
 - `price_missing` hours.
 
-The emission token's read-time verdict is applied the way the revenue block applies a reserve's. `lower_bound` marks a
-floor for `amount_usd` and `amount_lower_bound` one for `amount`. Until the rollup is enabled every stream is null with
-`usd_reason: not_valued`.
+Three checks are made when the block is built, not only when a day was stored:
+- **The writer verdict.** Each stream's writer verdict is judged the way `/emissions/history` judges it. A stored day
+  with no row is an exact zero only while that writer is verified back to its first ledger. Otherwise the stream is a
+  floor, named `history_unverified`, `history_verdict_stale` or `history_verdict_unread` with `pool` null.
+- **The token's identity.** The emission token must be the protocol token's verified SAC, or its stored USD is refused
+  as `emission_token_unverified`.
+- **The token's price.** The token's price walk can refuse it (`withheld`, `price_read_failed`), the way the revenue
+  block refuses a reserve.
+
+If the rows are not all in one named token with known decimals, every `amount` is null with `amount_reason` saying why.
+`lower_bound` marks a floor for `amount_usd` and `amount_lower_bound` one for `amount`. A degraded block makes the
+response degraded and uncached; the revenue block's degraded does not. Until the rollup is enabled every stream is null
+with `usd_reason: not_valued`.
 
 ## Bad debt: `GET /v1/lending/pools/{pool}/bad-debt`
 

@@ -6,8 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stellar/go-stellar-sdk/network"
+
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
 // emissionsStore is the Postgres side of the emissions block: a coverage map and the groups it returns for any spans.
@@ -43,8 +46,11 @@ func emisCov(pool string, days int) timescale.LendingEmissionsUSDCoverage {
 	}
 }
 
+// emisBLND is BLND's SAC on the public network, the token the identity gate accepts for Blend.
+var emisBLND, _ = xdrjson.SACContractID(blndAssetID, network.PublicNetworkPassphrase)
+
 func emisGroup(pool, stream string, bucket int, amount, usd string) timescale.LendingEmissionsUSDBucketSum {
-	token, decimals := "CBLND", 7
+	token, decimals := emisBLND, 7
 	g := timescale.LendingEmissionsUSDBucketSum{
 		Pool: pool, Stream: stream, Bucket: bucket, Current: true, EmissionToken: &token, EmissionTokenDecimals: &decimals,
 		Excluded: []string{}, Amount: amount, Rows: 1,
@@ -60,10 +66,19 @@ func reasoned(g timescale.LendingEmissionsUSDBucketSum, reason string) timescale
 	return g
 }
 
+// emissionsServer serves store with the writers' verdicts c and the public network, so the identity gate can pass.
+func emissionsServer(t *testing.T, store v1.ProtocolStatsReader, c v1.CompletenessReader) *v1.Server {
+	t.Helper()
+	srv := newProtocolsServer(t, protocolsCase{clean: true, revenue: store, completeness: c}).srv
+	srv.NetworkPassphrase = network.PublicNetworkPassphrase
+	return srv
+}
+
+var emisVerified = verifiedHistory("blend", "blend_backstop", "blnt")
+
 func blendEmissions(t *testing.T, store *emissionsStore) v1.LendingProtocolEmissions {
 	t.Helper()
-	f := newProtocolsServer(t, protocolsCase{clean: true, revenue: store})
-	stats, _ := getProtocols(t, f.srv)
+	stats, _ := getProtocols(t, emissionsServer(t, store, emisVerified))
 	return stats[0].Emissions
 }
 
@@ -134,7 +149,7 @@ func TestLendingProtocols_EmissionsCoveredExact(t *testing.T) {
 	if bc.AmountUSD != nil || strOr(bc.USDReason) != "stream_unavailable" || !bc.LowerBound || excludedAs(em.AllTime, a, "backstop_claim_names_no_pool") == nil {
 		t.Fatalf("backstop_claims = %+v, excluded %+v; want null, stream_unavailable, named per pool", bc, em.AllTime.Excluded)
 	}
-	if strOr(em.EmissionToken) != "CBLND" || em.EmissionTokenDecimals == nil || *em.EmissionTokenDecimals != 7 || em.Degraded {
+	if strOr(em.EmissionToken) != emisBLND || em.EmissionTokenDecimals == nil || *em.EmissionTokenDecimals != 7 || em.Degraded {
 		t.Fatalf("token %s degraded %v", strOr(em.EmissionToken), em.Degraded)
 	}
 	if strOr(em.AllTime.FromDay) != "2026-08-13" || strOr(em.Day.FromDay) != "2026-11-20" || strOr(em.Week.FromDay) != "2026-11-14" {
@@ -224,17 +239,107 @@ func TestLendingProtocols_EmissionsReasonedRowsNamed(t *testing.T) {
 	}
 }
 
-// A failed sums read names every pool and degrades the block, not the build: the response stays cacheable.
+// A failed sums read names every pool and degrades the block, and the response is not cached as good.
 func TestLendingProtocols_EmissionsReadFailureDegrades(t *testing.T) {
 	f0 := newProtocolsServer(t, protocolsCase{clean: true})
 	a := f0.activePool
 	store := &emissionsStore{covs: map[string]timescale.LendingEmissionsUSDCoverage{a: emisCov(a, 100)}, failSum: true}
-	f := newProtocolsServer(t, protocolsCase{clean: true, revenue: store})
-	stats, resp := getProtocols(t, f.srv)
-	assertProtocolsNoStore(t, resp, false)
+	stats, resp := getProtocols(t, emissionsServer(t, store, emisVerified))
+	assertProtocolsNoStore(t, resp, true)
 	em := stats[0].Emissions
 	pc := em.AllTime.Streams.PoolClaims
 	if !em.Degraded || pc.AmountUSD != nil || strOr(pc.USDReason) != "not_valued" || excludedAs(em.AllTime, a, "emissions_read_failed") == nil {
 		t.Fatalf("failed read served %+v excluded %+v degraded %v", pc, em.AllTime.Excluded, em.Degraded)
+	}
+}
+
+// A covered day with no stored row is an exact zero only while the stream's writer is verified back to its first ledger
+// now; unverified, stale (whatever it was when the day was stored) or unread, the stream is a lower bound naming why.
+func TestLendingProtocols_EmissionsHistoryVerdictBoundsEmptyDays(t *testing.T) {
+	f0 := newProtocolsServer(t, protocolsCase{clean: true})
+	a, b := f0.activePool, f0.frozenPool
+	store := &emissionsStore{covs: map[string]timescale.LendingEmissionsUSDCoverage{a: emisCov(a, 100), b: emisCov(b, 100)}}
+	stale := verifiedHistory("blend", "blend_backstop")
+	stale.snaps[0].ComputedAt = time.Now().Add(-30 * 24 * time.Hour)
+	for name, c := range map[string]struct {
+		reader         v1.CompletenessReader
+		reason         string
+		degraded, cold bool
+	}{
+		"verified":   {reader: emisVerified},
+		"unverified": {reason: "history_unverified"},
+		"stale":      {reader: stale, reason: "history_verdict_stale"},
+		"unread":     {reader: &stubCompletenessReader{err: errors.New("pg down")}, reason: "history_verdict_unread", degraded: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stats, resp := getProtocols(t, emissionsServer(t, store, c.reader))
+			em := stats[0].Emissions
+			pc := em.Day.Streams.PoolClaims
+			if strOr(pc.AmountUSD) != "0.00" || pc.LowerBound != (c.reason != "") || pc.AmountLowerBound != (c.reason != "") || em.Degraded != c.degraded {
+				t.Fatalf("1d pool_claims = %+v degraded %v; want 0.00, lower bound %v", pc, em.Degraded, c.reason != "")
+			}
+			if c.reason == "" {
+				return
+			}
+			named := false
+			for _, e := range em.Day.Excluded {
+				named = named || (e.Pool == nil && strOr(e.Stream) == "pool_claims" && e.Reason == c.reason)
+			}
+			if !named {
+				t.Fatalf("1d excluded %+v; want pool_claims named %s", em.Day.Excluded, c.reason)
+			}
+			assertProtocolsNoStore(t, resp, c.degraded)
+		})
+	}
+}
+
+// Stored USD in a token that is not the protocol token's verified SAC is refused at read time, as /emissions/history
+// refuses it, while its tokens are still counted; a token walk that cannot be read is price_read_failed and degraded.
+func TestLendingProtocols_EmissionsReadTimeRefusals(t *testing.T) {
+	f0 := newProtocolsServer(t, protocolsCase{clean: true})
+	a, b := f0.activePool, f0.frozenPool
+	foreign := emisGroup(a, "pool_claims", 0, "10", "5")
+	other := mkCStrkey(t, 9)
+	foreign.EmissionToken = &other
+	walked := emisGroup(b, "reserve_schedule", 0, "3", "3")
+	walked.LastValuedDay = emisThrough // this fixture has no price history, so the BLND day walk fails
+	store := &emissionsStore{
+		covs: map[string]timescale.LendingEmissionsUSDCoverage{a: emisCov(a, 100), b: emisCov(b, 100)},
+		sums: []timescale.LendingEmissionsUSDBucketSum{foreign, walked},
+	}
+	em := blendEmissions(t, store)
+	pc, rs := em.Day.Streams.PoolClaims, em.Day.Streams.ReserveSchedule
+	if pc.AmountUSD != nil || strOr(pc.USDReason) != "all_excluded" || excludedAs(em.Day, a, "emission_token_unverified") == nil {
+		t.Fatalf("pool_claims = %+v excluded %+v; want the foreign token's USD refused", pc, em.Day.Excluded)
+	}
+	if rs.AmountUSD != nil || excludedAs(em.Day, b, "price_read_failed") == nil || !em.Degraded {
+		t.Fatalf("reserve_schedule = %+v excluded %+v degraded %v; want price_read_failed", rs, em.Day.Excluded, em.Degraded)
+	}
+	if pc.Amount != nil || strOr(pc.AmountReason) != "emission_token_mixed" || em.EmissionToken != nil {
+		t.Fatalf("pool_claims amount %s (%s), token %s; want null: two tokens", strOr(pc.Amount), strOr(pc.AmountReason), strOr(em.EmissionToken))
+	}
+}
+
+// The block never sums base units it cannot name one token for: a row with no token, or no decimals, nulls every amount
+// with its reason while the USD is summed as usual.
+func TestLendingProtocols_EmissionsAmountNeedsOneToken(t *testing.T) {
+	f0 := newProtocolsServer(t, protocolsCase{clean: true})
+	a, b := f0.activePool, f0.frozenPool
+	noDecimals := emisGroup(b, "pool_claims", 0, "4", "1")
+	noDecimals.EmissionTokenDecimals = nil
+	noToken := emisGroup(b, "pool_claims", 0, "4", "1")
+	noToken.EmissionToken = nil
+	for reason, g := range map[string]timescale.LendingEmissionsUSDBucketSum{"emission_token_decimals_unknown": noDecimals, "emission_token_not_stored": noToken} {
+		t.Run(reason, func(t *testing.T) {
+			store := &emissionsStore{
+				covs: map[string]timescale.LendingEmissionsUSDCoverage{a: emisCov(a, 100), b: emisCov(b, 100)},
+				sums: []timescale.LendingEmissionsUSDBucketSum{emisGroup(a, "reserve_schedule", 0, "2", "2"), g},
+			}
+			em := blendEmissions(t, store)
+			rs := em.Day.Streams.ReserveSchedule
+			if rs.Amount != nil || strOr(rs.AmountReason) != reason || strOr(rs.AmountUSD) != "2.00" || em.EmissionToken != nil {
+				t.Fatalf("reserve_schedule = %+v token %s; want amount null (%s), USD 2.00", rs, strOr(em.EmissionToken), reason)
+			}
+		})
 	}
 }

@@ -306,12 +306,10 @@ func emisRollupOverZone(t *testing.T, loc *time.Location, d0 time.Time, writer u
 		t.Fatal(err)
 	}
 	served := 0
-	var servedRows []timescale.LendingEmissionsUSDDay
 	check := func(stream, line string, at v1.WireTime, amount string, usd *string, priced, unpriced int) {
 		served++
 		k := stream + " " + line + " " + time.Time(at).UTC().Format(time.DateOnly)
 		r, ok := stored[k]
-		servedRows = append(servedRows, r)
 		switch {
 		case !ok:
 			t.Errorf("/emissions/history serves %s; no row stored for it", k)
@@ -343,5 +341,5 @@ func emisRollupOverZone(t *testing.T, loc *time.Location, d0 time.Time, writer u
 	if written != len(stored) {
 		t.Errorf("cycles wrote %d rows; %d stored", written, len(stored))
 	}
-	checkProtocolEmissions(t, ctx, ts.URL, token, day(3), yesterday, servedRows)
+	checkProtocolEmissions(t, ctx, ts.URL, pool, token, day(3), yesterday)
 }

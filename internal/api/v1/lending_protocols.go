@@ -200,6 +200,9 @@ func (s *Server) buildLendingProtocols(ctx context.Context) (lendingProtocolsBui
 		out = append(out, st)
 	}
 	failed := flags.Degraded
+	for _, e := range emissions {
+		failed = failed || e.Degraded
+	}
 	flags.Degraded = failed || lowerBound
 	b := lendingProtocolsBuild{stats: out, flags: flags, asOf: vintage.asOf()}
 	if failed {

@@ -22,11 +22,13 @@ var _ lendingEmissionsUSDWindowReader = (*timescale.Store)(nil)
 // The emissions block's reasons beside not_valued, days_not_valued, valuation_stale, price_missing, all_excluded and the
 // stored rows' own usd_reason and exclusions, which mean here what they mean on the revenue block and /emissions/history.
 const (
-	protocolEmissionsReadFailed  = "emissions_read_failed"     // the stored days could not be read
-	protocolEmissionsTimedOut    = "emissions_timed_out"       // the block's reads ran past protocolRevenueBudget
-	protocolEmissionsUnavailable = "stream_unavailable"        // usd_reason: no valued pool serves the stream
-	protocolEmissionsTokenMixed  = "emission_tokens_differ"    // amount_reason: base units of different tokens
-	protocolEmissionsTokenUnread = "emission_token_not_stored" // amount_reason: a summed row names no emission token
+	protocolEmissionsReadFailed  = "emissions_read_failed" // the stored days could not be read
+	protocolEmissionsTimedOut    = "emissions_timed_out"   // the block's reads ran past protocolRevenueBudget
+	protocolEmissionsUnavailable = "stream_unavailable"    // usd_reason: no valued pool serves the stream
+	// amount_reason when the block cannot name one emission token for its rows: no amount is summed across tokens.
+	protocolEmissionsTokenMixed    = "emission_token_mixed"            // rows are in different tokens
+	protocolEmissionsTokenUnread   = "emission_token_not_stored"       // a row names no emission token
+	protocolEmissionsDecimalsUnset = "emission_token_decimals_unknown" // a row names its token but not its decimals
 )
 
 // protocolEmissionStreams are the stored streams the block sums, in wire order. pool_claims_reserve is left out: its
@@ -104,6 +106,8 @@ type protocolEmissionsInput struct {
 	covs       map[string]timescale.LendingEmissionsUSDCoverage
 	sums       []timescale.LendingEmissionsUSDBucketSum
 	verdicts   map[string]string // emission token → why a read-time verdict refuses it now
+	// history is each stream's writer verdict now, as /emissions/history judges it; a stream absent is unverified.
+	history map[string]historyVerdict
 }
 
 // emissionsCovered is a pool's coverage when it holds at least one day at the current valuation revision: coverage
@@ -130,7 +134,6 @@ type emisStreamAcc struct {
 	usdLeft, amtOut bool // a row was left out of amount_usd, of amount
 	usdLB, amountLB bool
 	approx          bool
-	tokens          map[string]bool
 }
 
 func emisAdd(acc **big.Rat, s *string) bool {
@@ -148,7 +151,8 @@ func emisAdd(acc **big.Rat, s *string) bool {
 	return true
 }
 
-func (a *emisStreamAcc) wire(covered int) LendingProtocolEmissionAmounts {
+// wire renders the stream; tokenReason is why the block cannot name one emission token, which nulls every amount.
+func (a *emisStreamAcc) wire(covered int, tokenReason string) LendingProtocolEmissionAmounts {
 	out := LendingProtocolEmissionAmounts{LowerBound: a.usdLB, AmountLowerBound: a.amountLB, Approximate: a.approx}
 	switch {
 	case covered == 0:
@@ -165,10 +169,8 @@ func (a *emisStreamAcc) wire(covered int) LendingProtocolEmissionAmounts {
 		out.AmountUSD = strRef(ratString(ratOrZero(a.usd), 2))
 	}
 	switch {
-	case a.tokens[""]:
-		out.AmountReason = strRef(protocolEmissionsTokenUnread)
-	case len(a.tokens) > 1:
-		out.AmountReason = strRef(protocolEmissionsTokenMixed)
+	case tokenReason != "":
+		out.AmountReason = strRef(tokenReason)
 	case a.amount == nil && a.amtOut:
 		out.AmountReason = strRef(protocolRevenueAllExcluded)
 	default:
@@ -252,6 +254,25 @@ func (f *emisWindowFold) pools(in protocolEmissionsInput, from, through time.Tim
 	}
 }
 
+// judge bounds each served stream whose writer is not verified back to its first ledger now, as /emissions/history
+// does: a day stored with no row is only a day with nothing while the writer's history is verified.
+func (f *emisWindowFold) judge(history map[string]historyVerdict) {
+	for _, s := range protocolEmissionStreams {
+		if f.streams[s].serving == 0 {
+			continue
+		}
+		switch history[s] {
+		case historyVerified:
+		case historyVerdictStale:
+			f.exclude("", s, earningsReasonHistoryVerdictStale, nil, true)
+		case historyVerdictUnread:
+			f.exclude("", s, earningsReasonHistoryVerdictUnread, nil, true)
+		default:
+			f.exclude("", s, earningsReasonHistoryUnverified, nil, true)
+		}
+	}
+}
+
 // group folds one stored group in: its tokens unless another revision stored them, its USD unless a reason, now or
 // when stored, refuses it.
 func (f *emisWindowFold) group(g timescale.LendingEmissionsUSDBucketSum, verdict string) {
@@ -275,7 +296,6 @@ func (f *emisWindowFold) group(g timescale.LendingEmissionsUSDBucketSum, verdict
 		a.usdLeft, a.amtOut = true, true
 		return
 	}
-	a.tokens[emisTokenKey(g)] = true
 	a.approx = a.approx || g.Approximate
 	f.groupUSD(a, g, verdict)
 }
@@ -300,70 +320,76 @@ func (f *emisWindowFold) groupUSD(a *emisStreamAcc, g timescale.LendingEmissions
 	}
 }
 
-// emisTokenKey is the token and decimals a group's base units are in; "" when it names none.
-func emisTokenKey(g timescale.LendingEmissionsUSDBucketSum) string {
-	if g.EmissionToken == nil || g.EmissionTokenDecimals == nil {
-		return ""
-	}
-	return *g.EmissionToken + "\x00" + strconv.Itoa(*g.EmissionTokenDecimals)
-}
-
 func foldProtocolEmissions(in protocolEmissionsInput) LendingProtocolEmissions {
 	floor, through, ok := protocolEmissionsSpan(in)
 	var out LendingProtocolEmissions
+	var tokenReason string
+	out.EmissionToken, out.EmissionTokenDecimals, tokenReason = protocolEmissionToken(in)
 	for i, w := range [...]*LendingProtocolEmissionsWindow{&out.Day, &out.Week, &out.Month, &out.AllTime} {
-		*w = foldEmissionsWindow(in, protocolWindowFrom(i, floor, through), through, ok, i)
+		*w = foldEmissionsWindow(in, protocolWindowFrom(i, floor, through), through, ok, i, tokenReason)
 	}
 	for _, e := range out.AllTime.Excluded { // all_time holds every pool and group the others do
 		switch e.Reason {
-		case exclusionPriceReadFailed, protocolEmissionsReadFailed, protocolEmissionsTimedOut, exclusionPoolListFailed:
+		case exclusionPriceReadFailed, protocolEmissionsReadFailed, protocolEmissionsTimedOut, exclusionPoolListFailed,
+			earningsReasonHistoryVerdictUnread:
 			out.Degraded = true
 		}
 	}
-	out.EmissionToken, out.EmissionTokenDecimals = protocolEmissionToken(in)
 	return out
 }
 
-// protocolEmissionToken is the one emission token the block's rows are in, or nil when they name none or several.
-func protocolEmissionToken(in protocolEmissionsInput) (*string, *int) {
+// protocolEmissionToken is the one emission token the block's current rows are in, or why there is not one.
+func protocolEmissionToken(in protocolEmissionsInput) (*string, *int, string) {
 	var token *string
 	var decimals *int
-	seen := ""
+	seen, mixed := "", false
 	for _, g := range in.sums {
-		k := emisTokenKey(g)
 		switch {
 		case !g.Current:
 			continue
-		case k == "" || (seen != "" && k != seen):
-			return nil, nil
+		case g.EmissionToken == nil:
+			return nil, nil, protocolEmissionsTokenUnread
+		case g.EmissionTokenDecimals == nil:
+			return nil, nil, protocolEmissionsDecimalsUnset
 		}
+		k := *g.EmissionToken + "\x00" + strconv.Itoa(*g.EmissionTokenDecimals)
+		mixed = mixed || (seen != "" && k != seen)
 		seen, token, decimals = k, g.EmissionToken, g.EmissionTokenDecimals
 	}
-	return token, decimals
+	if mixed {
+		return nil, nil, protocolEmissionsTokenMixed
+	}
+	return token, decimals, ""
 }
 
 // foldEmissionsWindow sums the window [from, through] holding buckets 0..maxBucket.
-func foldEmissionsWindow(in protocolEmissionsInput, from, through time.Time, ok bool, maxBucket int) LendingProtocolEmissionsWindow {
+func foldEmissionsWindow(in protocolEmissionsInput, from, through time.Time, ok bool, maxBucket int, tokenReason string) LendingProtocolEmissionsWindow {
 	f := &emisWindowFold{w: LendingProtocolEmissionsWindow{Excluded: []LendingProtocolEmissionsExclusion{}}, streams: map[string]*emisStreamAcc{}, named: map[[3]string]int{}}
 	for _, s := range protocolEmissionStreams {
-		f.streams[s] = &emisStreamAcc{tokens: map[string]bool{}}
+		f.streams[s] = &emisStreamAcc{}
 	}
 	if ok {
 		f.w.FromDay, f.w.ThroughDay = strRef(from.Format(time.DateOnly)), strRef(through.Format(time.DateOnly))
 	}
 	f.pools(in, from, through)
+	f.judge(in.history)
 	for _, g := range emisWindowGroups(in, maxBucket) {
-		verdict := ""
-		if g.EmissionToken != nil {
-			verdict = in.verdicts[*g.EmissionToken]
-		}
-		f.group(g, verdict)
+		f.group(g, in.verdicts[strOrNone(g.EmissionToken)])
 	}
-	s := &f.w.Streams
-	s.ReserveSchedule, s.PoolClaims = f.streams[emisRowSchedule].wire(f.covered), f.streams[emisRowPoolClaims].wire(f.covered)
-	s.BackstopAllocBackstop, s.BackstopAllocPool = f.streams[emisRowAllocBackstop].wire(f.covered), f.streams[emisRowAllocPool].wire(f.covered)
-	s.BackstopClaims = f.streams[emisRowTierClaims].wire(f.covered)
+	s, wire := &f.w.Streams, func(stream string) LendingProtocolEmissionAmounts {
+		return f.streams[stream].wire(f.covered, tokenReason)
+	}
+	s.ReserveSchedule, s.PoolClaims, s.BackstopClaims = wire(emisRowSchedule), wire(emisRowPoolClaims), wire(emisRowTierClaims)
+	s.BackstopAllocBackstop, s.BackstopAllocPool = wire(emisRowAllocBackstop), wire(emisRowAllocPool)
 	return f.w
+}
+
+// strOrNone is s, or "" for nil: a group naming no token is judged as the token "".
+func strOrNone(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // emisWindowGroups are the groups of buckets 0..maxBucket of valued pools, in pool then stream order, so exclusions
@@ -464,33 +490,44 @@ func (s *Server) fillProtocolEmissions(ctx context.Context, ins map[string]*prot
 			in.sums = append(in.sums, g)
 		}
 	}
-	verdicts := s.emissionsVerdicts(ctx, sums)
-	for _, in := range ins {
-		in.verdicts = verdicts
+	history := s.projectionHistoryVerdicts(ctx, emissionsVerdictSources...)
+	for p, in := range ins {
+		in.verdicts = s.emissionsVerdicts(ctx, p, in.sums)
+		poolSrc, bstopSrc := emissionsWriterSources(p == blnt.SourceName)
+		in.history = map[string]historyVerdict{
+			emisRowSchedule: history[poolSrc], emisRowPoolClaims: history[poolSrc], emisRowAllocBackstop: history[bstopSrc],
+			emisRowAllocPool: history[bstopSrc], emisRowTierClaims: history[bstopSrc],
+		}
 	}
 	return false
 }
 
-// emissionsVerdicts is each emission token's read-time refusal (withheld or price_read_failed), through the walk
-// /emissions/history values with: one walk per token, of its latest stored day with USD.
-func (s *Server) emissionsVerdicts(ctx context.Context, sums []timescale.LendingEmissionsUSDBucketSum) map[string]string {
+// emissionsVerdicts is each emission token's read-time refusal of its stored USD, as /emissions/history refuses it now:
+// the token identity gate (not the protocol token's verified SAC), then the walk's verdict (withheld or
+// price_read_failed), one walk per token over its latest stored day with USD.
+func (s *Server) emissionsVerdicts(ctx context.Context, protocol string, sums []timescale.LendingEmissionsUSDBucketSum) map[string]string {
 	last := map[string]time.Time{}
 	var tokens []string
 	for _, g := range sums {
-		if g.EmissionToken == nil || g.LastValuedDay.IsZero() || !g.Current {
+		if g.AmountUSD == nil || !g.Current {
 			continue
 		}
-		d, seen := last[*g.EmissionToken]
+		t := strOrNone(g.EmissionToken)
+		d, seen := last[t]
 		if !seen {
-			tokens = append(tokens, *g.EmissionToken)
+			tokens = append(tokens, t)
 		}
 		if !seen || g.LastValuedDay.After(d) {
-			last[*g.EmissionToken] = g.LastValuedDay
+			last[t] = g.LastValuedDay
 		}
 	}
 	reasons := make([]string, len(tokens))
 	forEachBounded(s.logger, len(tokens), readFanoutConcurrency, func(i int) {
-		reasons[i] = usdReadRefusal(s.revenueDayRead(ctx, tokens[i], last[tokens[i]], 0)) // distinct indices
+		if _, why := s.emissionTokenIdentity(protocol, tokens[i]); why != "" {
+			reasons[i] = why
+		} else if d := last[tokens[i]]; !d.IsZero() {
+			reasons[i] = usdReadRefusal(s.revenueDayRead(ctx, tokens[i], d, 0)) // distinct indices
+		}
 	})
 	out := map[string]string{}
 	for i, t := range tokens {
