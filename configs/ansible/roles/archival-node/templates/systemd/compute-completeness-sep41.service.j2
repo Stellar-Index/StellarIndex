@@ -34,6 +34,8 @@ EnvironmentFile=-/etc/default/stellarindex
 
 Environment=CONFIG_PATH=/etc/stellarindex.toml
 Environment=CH_ADDR=127.0.0.1:9300
+# Same declaration as compute-completeness.service: without it this re-proof rewrites a declared verdict red.
+Environment="COMPLETENESS_ABSENT_BY_DESIGN={{ stellarindex_sources_absent_by_design | reject('search', '/') | join(',') }}"
 
 # 75 = run-heavy-job.sh skipped this fire (per-job lock held): not a
 # failure, but ExecMainStatus=75 keeps it distinct from a run.

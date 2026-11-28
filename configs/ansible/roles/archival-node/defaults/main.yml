@@ -650,14 +650,23 @@ stellarindex_enabled_sources:
 # /v1/coverage, the permanently-red row that teaches everyone to ignore the board.
 stellarindex_sources_not_yet_enabled: {}
 
-# Sources this NETWORK has none of, as "<domain>/<source>" exactly as the
-# data-freshness gauges label them. An empty declared source does not read
-# stale; one that holds rows raises
-# stellarindex_data_source_absent_declared_but_present and keeps its normal staleness rule. Known names: sep1/issuers,
-# supply/asset_supply_history, sep41_supply/supply_flows; any other name
-# fails data-freshness.service and voids the list. Empty on pubnet, where an
-# empty one of these is a fault. Futurenet after a reset:
-#   stellarindex_sources_absent_by_design: [sep1/issuers, sep41_supply/supply_flows]
+# Sources this NETWORK has none of. Two kinds share the list:
+# - "<domain>/<source>", exactly as the data-freshness gauges label them: an
+#   empty declared source does not read stale. Known names: sep1/issuers,
+#   supply/asset_supply_history, sep41_supply/supply_flows; any other such
+#   name fails data-freshness.service and voids its half of the list.
+# - a bare completeness source, and only one whose expected side needs no
+#   contract identity: today just sdex. compute-completeness accepts its
+#   empty projection only if a lake read over its whole [genesis, tip]
+#   finds no row and the raw tables that read joins are whole; it re-reads
+#   that range every run, so never declare a busy source. Any other bare
+#   name (unknown, or identity-gated like soroswap) fails EVERY
+#   compute-completeness run on the host, and its prior verdicts stand;
+#   a name valid on one network's config can be invalid on another.
+# A declared source that holds rows keeps its normal verdict and raises
+# stellarindex_data_source_absent_declared_but_present. Empty on pubnet,
+# where an empty one of these is a fault. Futurenet after a reset:
+#   stellarindex_sources_absent_by_design: [sep1/issuers, sep41_supply/supply_flows, sdex]
 # Runbook: docs/operations/runbooks/data-freshness.md#absent-by-design-sources
 stellarindex_sources_absent_by_design: []
 

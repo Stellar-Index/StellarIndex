@@ -134,6 +134,89 @@ func TestLendingPoolPositions_TruncationCountsLiveRowsOnly(t *testing.T) {
 	}
 }
 
+func positionsI128(n uint64) xdr.ScVal {
+	v := xdr.Int128Parts{Hi: 0, Lo: xdr.Uint64(n)}
+	return xdr.ScVal{Type: xdr.ScValTypeScvI128, I128: &v}
+}
+
+func positionsIndexMap(kv map[uint32]uint64) xdr.ScVal {
+	m := xdr.ScMap{}
+	for i := uint32(0); i < 4; i++ {
+		if n, ok := kv[i]; ok {
+			idx := xdr.Uint32(i)
+			m = append(m, xdr.ScMapEntry{Key: xdr.ScVal{Type: xdr.ScValTypeScvU32, U32: &idx}, Val: positionsI128(n)})
+		}
+	}
+	mp := &m
+	return xdr.ScVal{Type: xdr.ScValTypeScvMap, Map: &mp}
+}
+
+// TestLendingPoolPositions_SplitsCollateralFromSupply: a stored Positions entry reads back with its collateral and
+// non-collateral b-tokens apart and Supply as their exact sum, on the pool-wide and the per-account read.
+func TestLendingPoolPositions_SplitsCollateralFromSupply(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+	raw := dialClickHouse(t, ctx, "stellar")
+	pool, reserve, holder := xdr.ContractId{0xA7, 0x51, 0x0D}, xdr.ContractId{0x01}, xdr.ContractId{0xB1}
+	const ledger = uint32(91_000_002)
+	at := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+
+	resList := positionsSym("ResList")
+	listVec := &xdr.ScVec{positionsContractVal(reserve)}
+	listVal := xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &listVec}
+	posVec := &xdr.ScVec{positionsSym("Positions"), positionsContractVal(holder)}
+	posKey := xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &posVec}
+	posMap := xdr.ScMap{
+		{Key: positionsSym("collateral"), Val: positionsIndexMap(map[uint32]uint64{0: 5})},
+		{Key: positionsSym("liabilities"), Val: positionsIndexMap(map[uint32]uint64{0: 1})},
+		{Key: positionsSym("supply"), Val: positionsIndexMap(map[uint32]uint64{0: 2})},
+	}
+	posMapRef := &posMap
+	posVal := xdr.ScVal{Type: xdr.ScValTypeScvMap, Map: &posMapRef}
+
+	b, err := raw.PrepareBatch(ctx, `INSERT INTO stellar.ledger_entries_current
+		(entry_type, key_xdr, account_id, asset, balance, change_type, ledger_seq, close_time, entry_xdr)`)
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	for _, e := range []struct{ key, val xdr.ScVal }{{resList, listVal}, {posKey, posVal}} {
+		if err := b.Append("contract_data", lendingKeyB64(t, pool, e.key), "", "", int64(0), "updated", ledger, at,
+			positionsEntryB64(t, pool, e.key, e.val, ledger)); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+	if err := b.Send(); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	er, err := chstore.NewExplorerReader(ctx, addr)
+	if err != nil {
+		t.Fatalf("NewExplorerReader: %v", err)
+	}
+	t.Cleanup(func() { _ = er.Close() })
+	asset, account := positionsStrkey(t, reserve), positionsStrkey(t, holder)
+
+	pp, err := er.LendingPoolPositions(ctx, positionsStrkey(t, pool))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pp.Accounts) != 1 || pp.Accounts[0].Account != account {
+		t.Fatalf("pool positions = %+v", pp)
+	}
+	p := pp.Accounts[0]
+	if p.Supply[asset].String() != "7" || p.Collateral[asset].String() != "5" || p.NonCollateral[asset].String() != "2" || p.Borrow[asset].String() != "1" {
+		t.Fatalf("pool read: supply=%v collateral=%v non-collateral=%v borrow=%v", p.Supply, p.Collateral, p.NonCollateral, p.Borrow)
+	}
+	ap, err := er.LendingAccountPositions(ctx, positionsStrkey(t, pool), account)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ap.Readable || ap.Supply[asset].String() != "7" || ap.Collateral[asset].String() != "5" || ap.NonCollateral[asset].String() != "2" {
+		t.Fatalf("account read: %+v", ap)
+	}
+}
+
 func positionsStrkey(t *testing.T, id xdr.ContractId) string {
 	t.Helper()
 	addr := xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &id}
