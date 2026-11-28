@@ -228,6 +228,11 @@
   when: clickhouse_config_tasks_enabled | default(false) | bool
   tags: [clickhouse, clickhouse-exporter, observability]
 
+- name: "ClickHouse system log retention (TTL + renamed-leftover cleanup)"
+  ansible.builtin.import_tasks: 25-clickhouse-system-log-ttl.yml
+  when: clickhouse_config_tasks_enabled | default(false) | bool
+  tags: [clickhouse, clickhouse-system-log-ttl]
+
 - name: "ClickHouse Tier-1 lake self-healer (ch-live-catchup)"
   ansible.builtin.import_tasks: 24-clickhouse-live-catchup.yml
   when: clickhouse_config_tasks_enabled | default(false) | bool

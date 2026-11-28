@@ -543,6 +543,31 @@ clickhouse_drop_guard_enabled: true
 clickhouse_max_table_size_to_drop: 53687091200       # 50 GiB — ClickHouse default
 clickhouse_max_partition_size_to_drop: 53687091200   # 50 GiB — ClickHouse default
 
+# ───── ClickHouse system log retention ─────────────────────────────────
+# The server's own system.*_log tables ship with no TTL and grow until the pool
+# fills (measured on r1: query_log 21.8 GiB in 5 days, trace_log 10.5 GiB in 2,
+# processors_profile_log 49 GiB before a hand drop). Rendered to
+# config.d/si-system-log-ttl.xml as `event_date + INTERVAL N DAY DELETE`; the
+# keys are ALSO the allowlist for the leftover-table cleanup (tasks/25-...).
+# Takes effect at the next clickhouse-server restart; the role does not restart.
+# Lookback readers (runbooks, the serving-profile `default`-user check) need
+# <= 1 day. Do not add a log the server does not already create: a section's
+# presence enables that log.
+clickhouse_system_log_ttl_enabled: true
+clickhouse_system_log_retention_days:
+  query_log: 14                    # slow-query forensics; runbooks look back hours
+  part_log: 30                     # merge / part history for incident review
+  text_log: 7                      # server log mirror; journald holds the rest
+  trace_log: 3                     # sampling-profiler stacks, large and short-lived
+  processors_profile_log: 1        # per-processor profile, 49 GiB unbounded; nothing reads it
+  query_views_log: 7
+  metric_log: 7
+  asynchronous_metric_log: 7
+  query_metric_log: 7
+  background_schedule_pool_log: 7
+  error_log: 30                    # tiny (one row per error code per interval)
+  crash_log: 30                    # near-empty; kept long so a crash is still there
+
 # ───── ClickHouse Prometheus endpoint ──────────────────────────────────
 # ClickHouse serves its own /metrics; no exporter. The stock config.xml ships the
 # <prometheus> block inside an XML comment, so a default install publishes NOTHING
