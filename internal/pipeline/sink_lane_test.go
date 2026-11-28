@@ -91,6 +91,7 @@ func TestExternalLaneDrainsWhileOnChainLaneRetries(t *testing.T) {
 func TestRunSinkLane_RetryBufferLossReachesShutdownLoss(t *testing.T) {
 	store := &fakeTradeStore{} // stays unhealthy
 	buf := newExternalRetryBuffer(store, discardLogger(), 0)
+	buf.shutdownBudget = 50 * time.Millisecond
 	for i := 0; i < 3; i++ {
 		buf.enqueue(mkTrade("kraken", 0))
 	}
@@ -109,11 +110,12 @@ func TestRunSinkLane_RetryBufferLossReachesShutdownLoss(t *testing.T) {
 }
 
 // A worker still running after cancellation can hand the retry buffer a trade (an infra fault on a flush the racy
-// select ran after the cancel) once the buffer's final pass has already run. That trade must still be named in the
+// select ran after the cancel). With the store still down at the end of the budget that trade must be named in the
 // lane's loss, not left in a ring nothing drains.
 func TestRunSinkLane_RetryBufferLateEnqueueIsALoss(t *testing.T) {
 	store := &fakeTradeStore{} // stays unhealthy
 	buf := newExternalRetryBuffer(store, discardLogger(), 0)
+	buf.shutdownBudget = 50 * time.Millisecond
 	entered, release := make(chan struct{}), make(chan struct{})
 	ep := func(context.Context, consumer.Event, bool) error {
 		close(entered)

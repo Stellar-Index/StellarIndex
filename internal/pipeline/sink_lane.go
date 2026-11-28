@@ -71,16 +71,18 @@ func (writeTimeoutError) Temporary() bool { return true }
 func runSinkLane(ctx context.Context, logger *slog.Logger, ep eventPersister, tw tradeWriter, in <-chan consumer.Event, mode SinkMode, workers int, extBuf *externalRetryBuffer) ShutdownLoss {
 	lt := &lossTracker{}
 	var bufWG sync.WaitGroup
-	var bufCancel context.CancelFunc
+	bufCancel := context.CancelFunc(func() {})
+	cancelledAt := make(chan time.Time, 1)
+	stopLatch := context.AfterFunc(ctx, func() { cancelledAt <- time.Now() })
 	if extBuf != nil {
-		// Its own cancel as well as ctx's: a backfill's ctx is never cancelled, so run() would spin and bufWG.Wait() hang.
-		// On a live shutdown the final pass runs alongside the workers' drain, so both fit ShutdownDeadline.
+		// Not cancelled by ctx: the retrier keeps going through the workers' drain, and its final pass must wait for
+		// the last worker, which can still hand it rows after the cancel.
 		var bufCtx context.Context
-		bufCtx, bufCancel = context.WithCancel(ctx)
+		bufCtx, bufCancel = context.WithCancel(context.WithoutCancel(ctx))
 		bufWG.Add(1)
 		go func() {
 			defer bufWG.Done()
-			extBuf.run(bufCtx, lt)
+			extBuf.run(bufCtx)
 		}()
 	}
 
@@ -93,13 +95,16 @@ func runSinkLane(ctx context.Context, logger *slog.Logger, ep eventPersister, tw
 		}(i)
 	}
 	wg.Wait()
-	if bufCancel != nil {
-		bufCancel()
-	}
+	bufCancel()
 	bufWG.Wait()
+	// The budget runs from the cancellation, as the workers' drain does; a lane whose input closed uncancelled
+	// (backfill) starts it now.
+	stoppedAt := time.Now()
+	if !stopLatch() {
+		stoppedAt = <-cancelledAt
+	}
 	if extBuf != nil {
-		// A worker still flushing after the cancel can enqueue once the final pass has run; nothing drains the ring now.
-		extBuf.abandonRemaining(lt)
+		extBuf.finalDrain(stoppedAt.Add(extBuf.shutdownBudget), lt)
 	}
 	return lt.snapshot()
 }
