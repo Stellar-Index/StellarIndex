@@ -52,10 +52,11 @@ type LendingProtocolStats struct {
 	// BackstopLowerBound covers the backstop sums: a backstop exclusion leaves a pool's deposits out of them.
 	BackstopLowerBound bool `json:"backstop_lower_bound"`
 	// BackstopTotalUSD sums the valued backstop[] tokens_usd; BackstopUSDLowerBound when an entry or a pool's backstop is left out.
-	BackstopTotalUSD      *string                 `json:"backstop_total_usd"`
-	BackstopUSDLowerBound bool                    `json:"backstop_usd_lower_bound"`
-	Excluded              []LendingStatsExclusion `json:"excluded"`
-	Revenue               LendingProtocolRevenue  `json:"revenue"`
+	BackstopTotalUSD      *string                  `json:"backstop_total_usd"`
+	BackstopUSDLowerBound bool                     `json:"backstop_usd_lower_bound"`
+	Excluded              []LendingStatsExclusion  `json:"excluded"`
+	Revenue               LendingProtocolRevenue   `json:"revenue"`
+	Emissions             LendingProtocolEmissions `json:"emissions"`
 }
 
 // LendingProtocolToken is the protocol token's price, supply and market cap as /v1/assets/{id} serves them.
@@ -172,9 +173,12 @@ func (s *Server) buildLendingProtocols(ctx context.Context) (lendingProtocolsBui
 	})
 	out := make([]LendingProtocolStats, 0, len(lendingProtocols))
 	lowerBound := false
-	revenue := s.readProtocolRevenue(ctx, reads, blntListFailed)
+	revenue, emissions := s.readProtocolRevenue(ctx, reads, blntListFailed), s.readProtocolEmissions(ctx, reads, blntListFailed)
 	for _, pt := range lendingProtocols {
-		st := LendingProtocolStats{Protocol: pt.protocol, Backstop: []LendingProtocolBackstop{}, Excluded: []LendingStatsExclusion{}, Revenue: revenue[pt.protocol]}
+		st := LendingProtocolStats{
+			Protocol: pt.protocol, Backstop: []LendingProtocolBackstop{}, Excluded: []LendingStatsExclusion{},
+			Revenue: revenue[pt.protocol], Emissions: emissions[pt.protocol],
+		}
 		var reason string
 		st.Token, reason = s.readProtocolToken(ctx, pt.ticker, &flags)
 		if reason != "" {
@@ -195,13 +199,23 @@ func (s *Server) buildLendingProtocols(ctx context.Context) (lendingProtocolsBui
 		lowerBound = lowerBound || st.LowerBound
 		out = append(out, st)
 	}
-	failed := flags.Degraded
+	failed := flags.Degraded || protocolBlocksDegraded(revenue, emissions)
 	flags.Degraded = failed || lowerBound
 	b := lendingProtocolsBuild{stats: out, flags: flags, asOf: vintage.asOf()}
 	if failed {
 		return b, &lendingProtocolsPartial{build: b}
 	}
 	return b, nil
+}
+
+// protocolBlocksDegraded reports a failed read behind any revenue or emissions block, so the build is never cached as good.
+func protocolBlocksDegraded(revenue map[string]LendingProtocolRevenue, emissions map[string]LendingProtocolEmissions) bool {
+	for _, pt := range lendingProtocols {
+		if revenue[pt.protocol].Degraded || emissions[pt.protocol].Degraded {
+			return true
+		}
+	}
+	return false
 }
 
 // readProtocolPool reads one pool through the reserves cache and, when that succeeds, its backstop balances.

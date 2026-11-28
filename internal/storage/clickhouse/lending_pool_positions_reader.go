@@ -18,9 +18,12 @@ const LendingPoolPositionsLimit = 50_000
 // LendingPoolPosition is one account's current Positions entry in a pool, by reserve asset.
 type LendingPoolPosition struct {
 	Account string
-	Supply  map[string]*big.Int // b-tokens, collateral and non-collateral summed
-	Borrow  map[string]*big.Int // d-tokens
-	Ledger  uint32              // the entry's last-modified ledger
+	Supply  map[string]*big.Int // b-tokens: Collateral + NonCollateral, per reserve
+	// Collateral is the b-tokens counted toward borrowing power; NonCollateral the rest of Supply.
+	Collateral    map[string]*big.Int
+	NonCollateral map[string]*big.Int
+	Borrow        map[string]*big.Int // d-tokens
+	Ledger        uint32              // the entry's last-modified ledger
 }
 
 // LendingPoolPositions is every current Positions entry of one pool the lake holds, in account order. Archived entries are
@@ -137,12 +140,14 @@ func assemblePoolPositions(ce contractEntries, listVal xdr.ScVal, listOK bool) L
 		if !ok {
 			continue
 		}
-		p := LendingAccountPositions{Supply: map[string]*big.Int{}, Borrow: map[string]*big.Int{}}
+		p := emptyAccountPositions()
 		if decodePositions(v, list, &p) != nil {
 			out.Unreadable++
 			continue
 		}
-		out.Accounts = append(out.Accounts, LendingPoolPosition{Account: account, Supply: p.Supply, Borrow: p.Borrow, Ledger: ce.ledger[k]})
+		out.Accounts = append(out.Accounts, LendingPoolPosition{
+			Account: account, Supply: p.Supply, Collateral: p.Collateral, NonCollateral: p.NonCollateral, Borrow: p.Borrow, Ledger: ce.ledger[k],
+		})
 	}
 	sort.Slice(out.Accounts, func(i, j int) bool { return out.Accounts[i].Account < out.Accounts[j].Account })
 	return out

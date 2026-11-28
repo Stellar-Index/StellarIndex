@@ -575,6 +575,7 @@ lane_d() { # everything else
     echo "=== Ansible ClickHouse system-log TTL self-test ===" && ./scripts/ci/ansible-clickhouse-system-log-ttl-test.sh
     echo "=== Ansible prometheus port var self-test ===" && ./scripts/ci/ansible-prometheus-port-var-test.sh
     echo "=== Ansible local prometheus rules self-test ===" && ./scripts/ci/ansible-local-prometheus-rules-test.sh
+    echo "=== Ansible absent-by-design list split self-test ===" && ./scripts/ci/ansible-absent-by-design-split-test.sh
     echo "=== Ansible patroni etcd TLS self-test ===" && ./scripts/ci/ansible-patroni-etcd-tls-test.sh
     echo "=== Patroni credential quoting self-test ===" && ./scripts/ci/lint-patroni-basic-auth-quoting-test.sh
     echo "=== Ansible node-exporter-collectors install self-test ===" && ./scripts/ci/ansible-node-exporter-collectors-install-test.sh

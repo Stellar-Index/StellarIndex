@@ -2347,6 +2347,11 @@ jobs:
         # a file with absent()-style or page rules misfires on a test net.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-local-prometheus-rules-test.sh
+      - name: absent-by-design list split render test
+        # One inventory list feeds data-freshness (domain/source names) and
+        # compute-completeness (bare names); each rejects the other's names.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-absent-by-design-split-test.sh
       - name: patroni etcd TLS render test
         # etcd and Patroni's etcd3 client must render https with mutual cert
         # auth by default, and the config tasks must refuse missing PEM

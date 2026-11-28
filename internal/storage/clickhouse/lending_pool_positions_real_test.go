@@ -139,11 +139,29 @@ func TestPoolPositions_RealEntries(t *testing.T) {
 			if b := amountOrEmpty(p.Borrow[asset]); b != w.borrow[i] {
 				t.Errorf("%s: reserve %d borrow = %q, want %q", e.Protocol, i, b, w.borrow[i])
 			}
+			// Every stored entry has supply:{}, so all its supply is collateral and none is non-collateral.
+			if c := amountOrEmpty(p.Collateral[asset]); c != w.supply[i] {
+				t.Errorf("%s: reserve %d collateral = %q, want %q", e.Protocol, i, c, w.supply[i])
+			}
+			if nc := amountOrEmpty(p.NonCollateral[asset]); nc != "" {
+				t.Errorf("%s: reserve %d non-collateral = %q, want none", e.Protocol, i, nc)
+			}
+			sum := new(big.Int).Add(orZero(p.Collateral[asset]), orZero(p.NonCollateral[asset]))
+			if got := orZero(p.Supply[asset]); got.Cmp(sum) != 0 {
+				t.Errorf("%s: reserve %d supply %s != collateral + non-collateral %s", e.Protocol, i, got, sum)
+			}
 		}
 	}
 	if len(want) != 0 {
 		t.Fatalf("no real fixture for %v", want)
 	}
+}
+
+func orZero(v *big.Int) *big.Int {
+	if v == nil {
+		return new(big.Int)
+	}
+	return v
 }
 
 func amountOrEmpty(v *big.Int) string {

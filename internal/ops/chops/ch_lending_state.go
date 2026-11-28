@@ -167,7 +167,7 @@ func (r lendingRun) statePass(ctx context.Context) error {
 	hb.Start()
 	err = r.exec(ctx, hb)
 	hb.Stop(err == nil)
-	return err
+	return errors.Join(err, hb.FinalWriteErr())
 }
 
 // heldSharedOnly reports whether path's holders are all shared (interest runs): a shared lock is granted beside them.

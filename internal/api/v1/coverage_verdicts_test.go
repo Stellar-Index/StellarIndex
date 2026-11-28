@@ -229,6 +229,41 @@ func TestHandleCoverageVerdicts_PublishesProjectionFloor(t *testing.T) {
 	}
 }
 
+// absent_by_design comes from the stored verdict alone: set on the row whose claim rests on the declaration, absent on the other.
+func TestHandleCoverageVerdicts_AbsentByDesignFromStoredVerdict(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	srv := v1.New(v1.Options{
+		CompletenessReader: &stubCompletenessReader{snaps: []timescale.CompletenessSnapshot{
+			{
+				Source: "blend", Genesis: 2, Tip: 26_107, Watermark: 26_107, CoveragePct: 1, Complete: true, LakeComplete: true,
+				SubstrateOK: true, RecognitionOK: true, ProjectionOK: true, ComputedAt: now,
+			},
+			{
+				Source: "sdex", Genesis: 2, Tip: 26_107, Watermark: 26_107, CoveragePct: 1, Complete: true, LakeComplete: true,
+				SubstrateOK: true, RecognitionOK: true, ProjectionOK: true, AbsentByDesign: true, ComputedAt: now,
+			},
+		}},
+	})
+	ts := httpTestServer(t, srv)
+	resp := mustGet(t, ts.URL+"/v1/coverage")
+	var env struct {
+		Data struct {
+			Sources []map[string]any `json:"sources"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	got := map[string]any{}
+	for _, row := range env.Data.Sources {
+		v, ok := row["absent_by_design"]
+		got[row["source"].(string)] = map[bool]any{true: v, false: "omitted"}[ok]
+	}
+	if got["sdex"] != true || got["blend"] != "omitted" {
+		t.Fatalf("absent_by_design by source = %v, want sdex true and blend omitted", got)
+	}
+}
+
 // A verdict with no recorded floor must omit the key rather than publish 0: "verified from ledger 0" is a stronger claim than
 // "verified from genesis". Absent means unknown.
 func TestHandleCoverageVerdicts_OmitsUnrecordedProjectionFloor(t *testing.T) {

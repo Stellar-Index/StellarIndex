@@ -56,9 +56,10 @@ groups:
           summary: "{{ $labels.domain }}/{{ $labels.source }} is declared absent by design but holds rows"
           description: |
             stellarindex_data_freshness_absent_declared_but_present{domain="{{ $labels.domain }}",source="{{ $labels.source }}"} = 1
-            — {{ $labels.instance }} lists {{ $labels.domain }}/{{ $labels.source }} in
-            stellarindex_sources_absent_by_design, but the source has data. It is judged
-            by its normal staleness rule meanwhile. Remove it from the host's list.
+            — {{ $labels.instance }} declares {{ $labels.domain }}/{{ $labels.source }} in
+            stellarindex_sources_absent_by_design (domain "completeness": listed by its bare
+            source name), but the source has data. It keeps its normal staleness rule or
+            completeness verdict meanwhile. Remove it from the host's list.
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_data_source_absent_declared_but_present
 

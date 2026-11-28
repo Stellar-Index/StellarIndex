@@ -189,6 +189,10 @@ Do NOT `kill` the process to clear the alert (a unit with `Restart=` comes back,
 
 The textfile persists after the process dies, deliberately. The next run overwrites it. To clear without a re-run (abandoning the window), delete `/var/lib/node_exporter/textfile_collector/ops_job_<job>.prom` and record why, since the range is then knowingly un-backfilled.
 
+## Running an ops job by hand
+
+Run it as the service user: `sudo -u stellarindex stellarindex-ops <job> …` (through `run-heavy-job.sh` for heavy jobs). The textfile directory is sticky, so a heartbeat file a root run created cannot be replaced by the timer's `stellarindex` user: the rename fails with `WARNING heartbeat write to … failed` on stderr and the lending jobs exit non-zero, but the gauges stay frozen until `textfile_producer_stale`. Fix a root-owned `ops_job_<job>.prom` by deleting it as root; the next timer run recreates it.
+
 ## Do NOT
 
 - Treat `no_progress` as "just slow" without checking the cursor: a slow window still advances `progress_cursor` between scrapes.
