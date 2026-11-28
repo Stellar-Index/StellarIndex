@@ -13,11 +13,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/cometlp"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/wasmaudit"
 )
 
 // lendingJob names the -lending-only run's lock, heartbeat and log lines.
@@ -39,15 +42,19 @@ type lendingRun struct {
 	printPrefixes       bool
 	prove               bool
 	interest            interestFlags
+	contracts           []string // -lending-contract: a scoped re-derive
 }
 
 // start validates the mode flags, then runs.
 func (r lendingRun) start(lendingOnly bool, gate *opsutil.WriteGate) error {
 	if !lendingOnly {
-		return fmt.Errorf("-print-prefixes, -prove and -interest-* apply to -lending-only")
+		return fmt.Errorf("-print-prefixes, -prove, -lending-contract and -interest-* apply to -lending-only")
 	}
 	if r.printPrefixes && r.prove {
 		return fmt.Errorf("-print-prefixes and -prove are separate reads; run one at a time")
+	}
+	if err := r.checkScoped(); err != nil {
+		return err
 	}
 	if err := r.interest.check(r); err != nil {
 		return err
@@ -121,6 +128,8 @@ func (r lendingRun) run() error {
 		return r.proveLendingInterest(ctx, os.Stdout, os.Stderr)
 	case r.prove:
 		return r.proveLendingState(ctx, os.Stdout)
+	case len(r.contracts) > 0:
+		return r.scopedPass(ctx)
 	case r.dryRun:
 		if !r.interestOnly() {
 			if err := r.exec(ctx, nil); err != nil {
@@ -306,8 +315,11 @@ func printLendingPrefixes(ctx context.Context, chAddr string, out io.Writer) err
 	}
 	for _, c := range reg {
 		role := "pool"
-		if c.Backstop {
+		switch {
+		case c.Backstop:
 			role = "backstop"
+		case c.Protocol == clickhouse.LendingComet:
+			role = "lp-pool"
 		}
 		if _, err := fmt.Fprintf(out, "contract %s %s %s\n", c.ID, c.Protocol, role); err != nil {
 			return err
@@ -348,11 +360,12 @@ func (r lendingRun) proveLendingState(ctx context.Context, out io.Writer) error 
 	if err := p.report(out, wm); err != nil {
 		return err
 	}
-	if p.mismatched > 0 {
-		return fmt.Errorf("%s: %d of %d keys disagree with the lake at %d", lendingJob, p.mismatched, p.keys, wm)
-	}
+	// Missing keys first: an unwalked contract also disagrees with the lake, and the key check names the remedy.
 	if err := proveLendingKeys(ctx, r.chAddr, reg, ps, out); err != nil {
 		return err
+	}
+	if p.mismatched > 0 {
+		return fmt.Errorf("%s: %d of %d keys disagree with the lake at %d", lendingJob, p.mismatched, p.keys, wm)
 	}
 	if err := r.proveLendingCounts(ctx, ps, wm, out); err != nil {
 		return err
@@ -540,40 +553,64 @@ func (r lendingRun) foldLendingChanges(ctx context.Context, pend []lendingPendin
 	}
 }
 
-// proveLendingKeys fails a registered pool missing a ResData, ResConfig or instance key in the table, or a backstop
-// with no balance key, unless the current table holds no reserve (balance) for it either: that contract is empty.
+// proveLendingKeys fails a registered pool missing a ResData, ResConfig or instance key in the table, a Comet LP pool
+// missing an AllRecordData, TotalShares or instance key, or a backstop with no balance key, unless the current table
+// holds no reserve (records, balance) for it either: that contract is empty.
 func proveLendingKeys(ctx context.Context, chAddr string, reg []clickhouse.LendingContract, ps []clickhouse.LendingPrefix, out io.Writer) error {
 	counts, err := clickhouse.LendingKeyCounts(ctx, chAddr, ps)
 	if err != nil {
 		return err
 	}
-	type kc struct{ table, current uint64 }
-	by := map[string]kc{}
+	by := map[string]lendingKeyCount{}
 	for _, k := range counts {
-		by[k.Contract+"/"+k.Key] = kc{k.Table, k.Current}
+		by[k.Contract+"/"+k.Key] = lendingKeyCount{k.Table, k.Current}
 	}
 	var failed []string
 	for _, c := range reg {
-		need, live := []string{"ResData", "ResConfig", "Instance"}, by[c.ID+"/ResData"].current
-		if c.Backstop {
-			need, live = []string{"PoolBalance"}, by[c.ID+"/PoolBalance"].current+by[c.ID+"/TierPoolBalance"].current
-		}
-		if live == 0 {
-			if _, err := fmt.Fprintf(out, "lending_state: %s %s is empty (no live reserve or balance key)\n", c.Protocol, c.ID); err != nil {
+		note, fails := lendingContractKeys(c, by)
+		if note != "" {
+			if _, err := fmt.Fprintf(out, "lending_state: %s %s %s\n", c.Protocol, c.ID, note); err != nil {
 				return err
 			}
-			continue
 		}
-		for _, k := range need {
-			if by[c.ID+"/"+k].table == 0 && (k != "PoolBalance" || by[c.ID+"/TierPoolBalance"].table == 0) {
-				failed = append(failed, fmt.Sprintf("%s %s has no %s key in lending_state_hourly", c.Protocol, c.ID, k))
-			}
-		}
+		failed = append(failed, fails...)
 	}
 	if len(failed) > 0 {
 		return fmt.Errorf("%s: %q", lendingJob, failed)
 	}
 	return nil
+}
+
+type lendingKeyCount struct{ table, current uint64 }
+
+const lendingUnwalked = "is not walked yet (no Instance row): run the scoped walk in deploy/clickhouse/lending_state.sql"
+
+// lendingContractKeys is one contract's key check: a note to print for an empty or unwalked contract, and its failures.
+func lendingContractKeys(c clickhouse.LendingContract, by map[string]lendingKeyCount) (string, []string) {
+	need, live := []string{"ResData", "ResConfig", "Instance"}, by[c.ID+"/ResData"].current
+	switch {
+	case c.Backstop:
+		need, live = []string{"PoolBalance"}, by[c.ID+"/PoolBalance"].current+by[c.ID+"/TierPoolBalance"].current
+	case c.Protocol == clickhouse.LendingComet:
+		need, live = []string{cometlp.KeyAllRecordData, cometlp.KeyTotalShares, "Instance"}, by[c.ID+"/"+cometlp.KeyAllRecordData].current
+	}
+	// Every Comet pool writes its instance at creation, so no instance row means the history never walked it.
+	unwalked := c.Protocol == clickhouse.LendingComet && by[c.ID+"/Instance"].table == 0
+	switch {
+	case live == 0 && unwalked:
+		return lendingUnwalked, nil
+	case live == 0:
+		return "is empty (no live reserve or balance key)", nil
+	case unwalked:
+		return "", []string{fmt.Sprintf("%s %s %s", c.Protocol, c.ID, lendingUnwalked)}
+	}
+	var failed []string
+	for _, k := range need {
+		if by[c.ID+"/"+k].table == 0 && (k != "PoolBalance" || by[c.ID+"/TierPoolBalance"].table == 0) {
+			failed = append(failed, fmt.Sprintf("%s %s has no %s key in lending_state_hourly", c.Protocol, c.ID, k))
+		}
+	}
+	return "", failed
 }
 
 // proveLendingCounts runs the per-contract row-count proof over partition-aligned windows of [-from, -to].
@@ -684,7 +721,11 @@ func lendingRegistry(ctx context.Context, addr string, thru uint32) ([]clickhous
 			return nil, fmt.Errorf("lending registry through %d: %w", thru, err)
 		}
 	}
-	out := make([]clickhouse.LendingContract, 0, len(pools)+len(lendingBackstops))
+	cps, err := lendingCometPools()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]clickhouse.LendingContract, 0, len(pools)+len(lendingBackstops)+len(cps))
 	for _, c := range pools {
 		out = append(out, c)
 	}
@@ -692,7 +733,29 @@ func lendingRegistry(ctx context.Context, addr string, thru uint32) ([]clickhous
 	if err := checkLendingRegistry(out, thru); err != nil {
 		return nil, err
 	}
-	return append(out, lendingBackstops...), nil
+	return append(append(out, lendingBackstops...), cps...), nil
+}
+
+// lendingCometPools are the Comet pools whose LP shares the backstops hold: the curated set, each refused unless the
+// audited-WASM manifest attests its one WASM hash for comet.
+func lendingCometPools() ([]clickhouse.LendingContract, error) {
+	m, err := wasmaudit.Load()
+	if err != nil {
+		return nil, err
+	}
+	var out []clickhouse.LendingContract
+	for _, id := range comet.MainnetGatedSet() {
+		h, ok := cometlp.AuditedPoolWASM(id)
+		if e, in := m[h]; !ok || !in || !e.Covers(comet.SourceName) {
+			return nil, fmt.Errorf("lending registry: comet pool %s has no audited WASM (hash %q)", id, h)
+		}
+		d, ok := cometlp.PoolDeployed(id)
+		if !ok {
+			return nil, fmt.Errorf("lending registry: comet pool %s has no creation ledger", id)
+		}
+		out = append(out, clickhouse.LendingContract{ID: id, Protocol: clickhouse.LendingComet, Deployed: d})
+	}
+	return out, nil
 }
 
 // lendingPoolFromDeploy decodes one factory `deploy` event into the pool it announced.

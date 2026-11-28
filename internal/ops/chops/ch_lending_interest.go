@@ -371,11 +371,11 @@ func (r lendingRun) interestPoolPlan(ctx context.Context, wm uint32) (interestPl
 	return plan, nil
 }
 
-// lendingPools drops the backstops: interest accrues on pools.
+// lendingPools drops the backstops and the Comet LP pools: interest accrues on lending pools.
 func lendingPools(reg []clickhouse.LendingContract) []clickhouse.LendingContract {
 	var out []clickhouse.LendingContract
 	for _, c := range reg {
-		if !c.Backstop {
+		if !c.Backstop && c.Protocol != clickhouse.LendingComet {
 			out = append(out, c)
 		}
 	}

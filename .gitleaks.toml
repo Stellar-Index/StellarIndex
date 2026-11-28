@@ -55,6 +55,7 @@ paths = [
   '''_test\.go$''',
   '''^docs/operations/wasm-audits/[^/]+\.md$''',
   '''^test/fixtures/blnt_storage/[^/]+\.json$''',
+  '''^test/fixtures/comet_storage/[^/]+\.json$''',
 ]
 regexes = [
   '''^AAAA[A-Za-z0-9+/]{12,}={0,2}$''',

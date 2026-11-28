@@ -164,6 +164,49 @@ the original 13-contract list; no factory known). It was audited via
 `stellar contract fetch --id`. The Comet V1.1 lineage was added from the exact released artifact,
 deployment-record, and interface evidence.
 
+## Storage layout (LP valuation)
+
+Read from the upstream source of both releases (CometDEX/comet-contracts-v1 `v1.0.0` =
+`ef4cbfad0a35202ad267c14d163d2f362995a8d3`, `v1.1.0` = `b3a2d827ed6c158341f8e67ea91eb3b0395d3871`;
+`storage_types.rs`, `metadata.rs` and `balance.rs` are byte-identical between them) and checked against the three
+pools' entries at the lake tip (`test/fixtures/comet_storage/`). A unit variant of `DataKey` is keyed
+`Vec[Symbol(<Variant>)]`.
+
+| datum | key | durability | value | written by |
+| --- | --- | --- | --- | --- |
+| per-token record | `Vec[Symbol("AllRecordData")]` | persistent | `Map<Address, {balance: i128, weight: i128, scalar: i128, index: u32}>` | init, every join/exit/swap/deposit/withdraw, v1.0 `gulp` |
+| LP supply | `Vec[Symbol("TotalShares")]` | persistent | `i128`, 7 decimals | mint/burn of LP shares |
+| swap fee, controller, freeze | `SwapFee`, `Controller`, `Freeze` inside the instance | instance | `i128` at 1e7, `Address`, `bool` (absent = false) | init, `set_controller`, `set_freeze_status` |
+
+- `weight` is at 1e7 scale and `init` asserts the weights sum to 1e7, so they are already normalised. Weights, fee,
+  tokens and scalars cannot change after init. `scalar` = 10^(18 − decimals): 10^11 for every curated token.
+- No total-weight key exists. `PublicSwap`, `Finalize` and `Factory` are declared but never written.
+- v1.0 (`8abc2891…`) has a permissionless `gulp` that sets a record to the token balance and emits no event, and it
+  accepts self-pair swaps. v1.1 (`d735c339…`) has neither. A record can therefore change with no POOL event, so only
+  entry history, never an event replay, reproduces the balances.
+
+The lending-state writer (`deploy/clickhouse/lending_state.sql`) captures the three pools' `AllRecordData`, `TotalShares` and
+instance entries into `stellar.lending_state_hourly` (protocol `comet`) as exact keys. LP holder `Balance` keys and the
+token contracts' balances are not captured. `internal/cometlp` decodes them strictly (an unknown field or key is an
+error) and refuses a contract outside the curated set or an instance whose WASM is not the pool's audited hash.
+
+**Valuation** (`internal/cometlp`, integers of 1e-7 quote token or USD, every division rounded down):
+
+- Floor: the quote leg `exit_pool` pays for B shares, with the contract's own two floors (`c_math.rs`
+  `calc_exit_ratio` and `calc_exit_withdrawal_amount`, the same in both releases): `ratio = ⌊B·1e18/S⌋`,
+  `out = ⌊b_q·ratio/1e18⌋`. It is never above the real redemption, and at most `⌊b_q·B/S⌋`. `exit_pool` reverts
+  (`ErrMathApprox`) when any leg's output is 0, so a floor of 0 means the shares cannot be exited at that state. It is
+  a lower bound of the sampled state, not of fair value: one swap moves an hour's sample at a cost of about
+  `2·fee·Δ`.
+- Implied `⌊b_q·B·1e7/(S·w_q)⌋`: the quote leg divided by its weight. It carries no information beyond the floor.
+- In USD the floor and implied use a lower bound of the quote price (`min(1, P)` for a dollar stablecoin); the marked
+  value and the divergence check below use the market price. A missing or non-positive quote price is `unpriced`.
+- Marked `⌊(b_q·P_q + b_x·P_x)·B/S⌋`, served only while `w_x·|ρ − 1| ≤ 2/100` with `ρ = P_x/(p_pool·P_q)`; otherwise
+  implied, `approximate`, `pool_off_market`. `P_x` must exclude this pool's trades.
+- Frozen: floor only (`pool_frozen`). A positive value below one unit is `0` with `lp_value_below_precision`, which is
+  the drained Blend pool's case (0.4351707 USDC against 1.86e20 LP).
+- Daily: the lower median (sorted element `⌊(n − 1)/2⌋`) of the hour-close values.
+
 ## Per-hash review findings
 
 Rows are per unique WASM hash, so deployments sharing the same hash are grouped.
