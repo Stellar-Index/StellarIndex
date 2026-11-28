@@ -199,16 +199,23 @@ func (s *Server) buildLendingProtocols(ctx context.Context) (lendingProtocolsBui
 		lowerBound = lowerBound || st.LowerBound
 		out = append(out, st)
 	}
-	failed := flags.Degraded
-	for _, e := range emissions {
-		failed = failed || e.Degraded
-	}
+	failed := flags.Degraded || protocolBlocksDegraded(revenue, emissions)
 	flags.Degraded = failed || lowerBound
 	b := lendingProtocolsBuild{stats: out, flags: flags, asOf: vintage.asOf()}
 	if failed {
 		return b, &lendingProtocolsPartial{build: b}
 	}
 	return b, nil
+}
+
+// protocolBlocksDegraded reports a failed read behind any revenue or emissions block, so the build is never cached as good.
+func protocolBlocksDegraded(revenue map[string]LendingProtocolRevenue, emissions map[string]LendingProtocolEmissions) bool {
+	for _, pt := range lendingProtocols {
+		if revenue[pt.protocol].Degraded || emissions[pt.protocol].Degraded {
+			return true
+		}
+	}
+	return false
 }
 
 // readProtocolPool reads one pool through the reserves cache and, when that succeeds, its backstop balances.

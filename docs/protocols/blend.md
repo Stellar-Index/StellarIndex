@@ -95,7 +95,8 @@ of its pools is named.
 | `revenue_timed_out` | The block's reads ran past their 5 s budget; the block is null and the rest of the response is served. | — |
 | `pool_list_read_failed` | The protocol's pool list could not be read (`pool` is null). | — |
 
-A read failure or timeout sets the block's `degraded`; it does not stop the rest of the response being cached.
+A read failure or timeout sets the block's `degraded`, which makes the response degraded and uncached
+(`Cache-Control: no-store`); a settled exclusion (`withheld`, `valuation_stale`, `days_not_valued`) does not.
 
 The verdicts are applied when the block is built, not only when a day is stored, and they are the ones the revenue
 endpoint applies: each token with stored days is walked once, through the same price walk, over its latest stored day
@@ -138,7 +139,7 @@ Three checks are made when the block is built, not only when a day was stored:
 
 If the rows are not all in one named token with known decimals, every `amount` is null with `amount_reason` saying why.
 `lower_bound` marks a floor for `amount_usd` and `amount_lower_bound` one for `amount`. A degraded block makes the
-response degraded and uncached; the revenue block's degraded does not. Until the rollup is enabled every stream is null
+response degraded and uncached, as the revenue block's does. Until the rollup is enabled every stream is null
 with `usd_reason: not_valued`.
 
 ## Bad debt: `GET /v1/lending/pools/{pool}/bad-debt`
