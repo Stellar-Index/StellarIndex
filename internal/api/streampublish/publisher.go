@@ -175,6 +175,10 @@ func (p *Publisher) tickOnce(ctx context.Context, pair canonical.Pair, topic str
 			"err", err, "pair", pair.String())
 		return
 	}
+	// A read that raced shutdown may be the guard's unvalidated answer to a cancelled context; publish nothing.
+	if ctx.Err() != nil {
+		return
+	}
 	publish, skipped := p.shouldPublish(topic, snap.ObservedAt.Time())
 	if !publish {
 		return

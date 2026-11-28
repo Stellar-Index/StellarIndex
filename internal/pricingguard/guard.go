@@ -17,6 +17,7 @@ package pricingguard
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"math/big"
 	"time"
@@ -53,6 +54,10 @@ func GuardServedVWAP1mConfidence(
 	candidate timescale.Vwap1mRow,
 ) (served timescale.Vwap1mRow, lowConfidence, substituted bool) {
 	rows, err := store.RecentClosedVWAP1mCombined(ctx, pair, SampleFetch)
+	if err != nil && callerCancelled(ctx, logger, pair, err) {
+		countDegraded("latest", false, true)
+		return candidate, true, false
+	}
 	if err != nil {
 		obs.PricingGuardTrailingFetchFailedTotal.WithLabelValues("latest").Inc()
 		if logger != nil {
@@ -91,6 +96,10 @@ func GuardServedVWAP1mAt(
 	maxStaleness time.Duration,
 ) (served timescale.Vwap1mRow, ok bool) {
 	rows, err := store.ClosedVWAP1mCombinedBefore(ctx, pair, candidate.Bucket, SampleFetch)
+	if err != nil && callerCancelled(ctx, logger, pair, err) {
+		countDegraded("at", false, true)
+		return timescale.Vwap1mRow{}, false
+	}
 	if err != nil {
 		obs.PricingGuardTrailingFetchFailedTotal.WithLabelValues("at").Inc()
 		if logger != nil {
@@ -147,6 +156,18 @@ func selectGuardedVWAP1mAt(
 		return timescale.Vwap1mRow{}, false, true, false
 	}
 	return served, true, true, false
+}
+
+// callerCancelled reports a trailing-fetch failure on a cancelled context: the guard answers unvalidated rather than
+// failing open, so no caller can serve the unchecked candidate as validated. A deadline (ours or a caller's) still counts.
+func callerCancelled(ctx context.Context, logger *slog.Logger, pair canonical.Pair, err error) bool {
+	if !errors.Is(ctx.Err(), context.Canceled) {
+		return false
+	}
+	if logger != nil {
+		logger.Debug("served-vwap guard: trailing fetch abandoned by caller", "pair", pair.String(), "err", err)
+	}
+	return true
 }
 
 // countDegraded records a guard decision that did not serve the current

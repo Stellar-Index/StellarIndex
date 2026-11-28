@@ -1385,7 +1385,7 @@ Fires once per thin-market verdict served flagged because the request opted in w
 
 Counter, label `path` (`latest` | `at`).
 
-Fires once per serving-sanity guard trailing-baseline fetch that errored. The guard fails OPEN, serving the candidate unguarded. Correlate with the timescale readyz probe, as `stellarindex_ratelimit_fail_open_total` does with redis.
+Fires once per serving-sanity guard trailing-baseline fetch that errored. The guard fails OPEN, serving the candidate unguarded. A fetch whose context was cancelled is not counted: the guard does not fail open there, it answers unvalidated (counted on `stellarindex_pricingguard_degraded_total{reason="unvalidated"}`). A deadline (ours or a caller's) is counted. Correlate with the timescale readyz probe, as `stellarindex_ratelimit_fail_open_total` does with redis.
 
 ### `stellarindex_pricingguard_degraded_total`
 

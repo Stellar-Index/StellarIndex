@@ -3,6 +3,7 @@ package pricingguard
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -383,6 +384,58 @@ func TestGuardServedVWAP1mConfidence_TrailingFetchErrorIncrementsMetric(t *testi
 	after := testutil.ToFloat64(obs.PricingGuardTrailingFetchFailedTotal.WithLabelValues("latest"))
 	if after != before+1 {
 		t.Fatalf("PricingGuardTrailingFetchFailedTotal{path=latest} = %v, want %v (before %v + one fail-open fetch error)", after, before+1, before)
+	}
+}
+
+// A fetch failed by a cancelled context is answered unvalidated, not failed open, so it is not a fail-open; any other
+// error, a deadline (ours or a caller's) included, fails open and counts.
+func TestGuardServedVWAP1m_CancelledFetchIsUnvalidatedNotFailOpen(t *testing.T) {
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	expired, cancelExpired := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancelExpired()
+	cases := []struct {
+		name     string
+		ctx      context.Context
+		err      error
+		countsAs float64
+	}{
+		{"caller cancelled", cancelled, context.Canceled, 0},
+		{"caller cancelled, wrapped store error", cancelled, fmt.Errorf("timescale: RecentClosedVWAP1mCombined: %w", context.Canceled), 0},
+		{"live request, store error", context.Background(), errors.New("boom"), 1},
+		{"live context, store deadline", context.Background(), context.DeadlineExceeded, 1},
+		{"context deadline expired", expired, context.DeadlineExceeded, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := fakeTrailing{err: tc.err}
+			candidate := mkRow(0, "100.0")
+
+			latest := obs.PricingGuardTrailingFetchFailedTotal.WithLabelValues("latest")
+			unvalidated := obs.PricingGuardDegradedTotal.WithLabelValues("latest", "unvalidated")
+			before, beforeUnvalidated := testutil.ToFloat64(latest), testutil.ToFloat64(unvalidated)
+			served, lowConfidence, substituted := GuardServedVWAP1mConfidence(tc.ctx, store, nil, testPair(t), candidate)
+			if got := testutil.ToFloat64(latest) - before; got != tc.countsAs {
+				t.Fatalf("latest fail-open counter delta = %v, want %v", got, tc.countsAs)
+			}
+			if got := testutil.ToFloat64(unvalidated) - beforeUnvalidated; got != 1-tc.countsAs {
+				t.Fatalf("latest unvalidated counter delta = %v, want %v", got, 1-tc.countsAs)
+			}
+			if served.VWAP != candidate.VWAP || substituted || lowConfidence != (tc.countsAs == 0) {
+				t.Fatalf("latest: served=%+v lowConfidence=%v substituted=%v; an abandoned read must be unvalidated, a live one fail open",
+					served, lowConfidence, substituted)
+			}
+
+			at := obs.PricingGuardTrailingFetchFailedTotal.WithLabelValues("at")
+			before = testutil.ToFloat64(at)
+			_, ok := GuardServedVWAP1mAt(tc.ctx, store, nil, testPair(t), candidate, time.Now(), time.Hour)
+			if got := testutil.ToFloat64(at) - before; got != tc.countsAs {
+				t.Fatalf("at fail-open counter delta = %v, want %v", got, tc.countsAs)
+			}
+			if ok != (tc.countsAs == 1) {
+				t.Fatalf("at: ok=%v; an abandoned read must not serve, a live one fails open", ok)
+			}
+		})
 	}
 }
 

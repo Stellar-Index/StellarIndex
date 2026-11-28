@@ -275,6 +275,52 @@ func TestPublisher_ReaderErrorContinues(t *testing.T) {
 	}
 }
 
+// cancellingReader cancels the publisher's run mid-read and still returns a snapshot, as the price guard answers a read its
+// context abandoned.
+type cancellingReader struct {
+	cancel context.CancelFunc
+	calls  chan struct{}
+}
+
+func (r cancellingReader) LatestPrice(context.Context, canonical.Asset, canonical.Asset) (v1.PriceSnapshot, []string, bool, error) {
+	r.cancel()
+	r.calls <- struct{}{}
+	return v1.PriceSnapshot{
+		AssetID: "native", Quote: "fiat:USD", Price: "0.07",
+		ObservedAt: v1.WireTime(time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)),
+	}, nil, true, nil
+}
+
+// TestPublisher_ShutdownMidTickPublishesNothing: a snapshot read while the publisher shut down is not published.
+func TestPublisher_ShutdownMidTickPublishesNothing(t *testing.T) {
+	hub := streaming.NewHub(0)
+	asset := mustParse(t, "native")
+	quote := mustParse(t, "fiat:USD")
+	topic := v1.PriceStreamTopic(asset, quote, 60)
+	ch, cancel, err := hub.Subscribe([]string{topic}, "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer cancel()
+
+	ctx, cancelRun := context.WithCancel(context.Background())
+	defer cancelRun()
+	reader := cancellingReader{cancel: cancelRun, calls: make(chan struct{}, 8)}
+	pub := streampublish.New(hub, reader, time.Second, nil, streampublish.Options{})
+	go func() { _ = pub.Run(ctx, []canonical.Pair{{Base: asset, Quote: quote}}) }()
+
+	select {
+	case <-reader.calls:
+	case <-time.After(3 * time.Second):
+		t.Fatal("publisher never read a price")
+	}
+	select {
+	case ev := <-ch:
+		t.Fatalf("published during shutdown: %+v", ev)
+	case <-time.After(500 * time.Millisecond):
+	}
+}
+
 // TestPublisher_NoPairsBlocksUntilCancel: empty Pairs must not busy-spin or panic; Run blocks on ctx and returns ctx.Err() on
 // cancel.
 func TestPublisher_NoPairsBlocksUntilCancel(t *testing.T) {
