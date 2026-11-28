@@ -57,11 +57,13 @@ Subcommands:
                           transition. Resumes from its sponsorship_events
                           watermark and never writes past the entry_index
                           watermark. Without -write it counts events.
-  ch-entry-history -lending-only -ch-addr ADDR [-from N] [-to N] [-floor-ledger N] [-lock-file PATH] [-heartbeat PATH] [-print-prefixes | -prove [-interest]] [-interest-init | -interest-only | -interest-pool C...] [-interest-max-windows N] [-interest-max-unordered N] [-interest-max-versions N] [-write]
+  ch-entry-history -lending-only -ch-addr ADDR [-from N] [-to N] [-floor-ledger N] [-lock-file PATH] [-heartbeat PATH] [-print-prefixes | -prove [-interest] | -lending-contract C,...] [-interest-init | -interest-only | -interest-pool C...] [-interest-max-windows N] [-interest-max-unordered N] [-interest-max-versions N] [-write]
                           Derive stellar.lending_state_hourly: the verbatim
                           last change per hour of every Blend and BLNT pool
-                          ResData / ResConfig / instance and backstop
-                          PoolBalance / TierPoolBalance key. Resumes from its
+                          ResData / ResConfig / instance, backstop
+                          PoolBalance / TierPoolBalance key, and Comet LP
+                          pool AllRecordData / TotalShares / instance key
+                          (protocol comet). Resumes from its
                           lending_state watermark (the Blend factory genesis
                           on first run) in partition-aligned windows.
                           -print-prefixes lists the registry and key

@@ -11,6 +11,8 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/stellar/go-stellar-sdk/xdr"
+
+	"github.com/Stellar-Index/StellarIndex/internal/cometlp"
 )
 
 // Lending protocols as stellar.lending_state_hourly records them; the protocol fixes how a reader scales the rates.
@@ -18,6 +20,9 @@ const (
 	LendingBlendV1 = "blend_v1"
 	LendingBlendV2 = "blend_v2"
 	LendingBLNT    = "blnt"
+	// LendingComet is a Comet pool whose LP shares a backstop holds: its records, LP supply and instance are captured
+	// for valuing those shares. It is not a lending pool, so no interest accrues on it.
+	LendingComet = "comet"
 )
 
 // LendingContract is one pool or backstop whose storage the lending derive captures.
@@ -37,7 +42,8 @@ type LendingPrefix struct {
 }
 
 // LendingPrefixes builds the key_xdr prefixes for a registry: per pool ResData, ResConfig and the instance (exact
-// keys), plus ProtocolFees (exact) on BLNT pools; per backstop PoolBalance, plus TierPoolBalance on the BLNT backstop.
+// keys), plus ProtocolFees (exact) on BLNT pools; per backstop PoolBalance, plus TierPoolBalance on the BLNT backstop;
+// per Comet LP pool AllRecordData, TotalShares and the instance, all exact.
 func LendingPrefixes(reg []LendingContract) ([]LendingPrefix, error) {
 	var out []LendingPrefix
 	for _, c := range reg {
@@ -62,6 +68,8 @@ func lendingKeys(c LendingContract) []lendingKey {
 		return []lendingKey{{"PoolBalance", xdr.ScValTypeScvAddress}, {"TierPoolBalance", xdr.ScValTypeScvMap}}
 	case c.Backstop:
 		return []lendingKey{{"PoolBalance", xdr.ScValTypeScvAddress}}
+	case c.Protocol == LendingComet:
+		return nil // unit keys only: a Balance prefix would capture every LP holder
 	}
 	return []lendingKey{{"ResData", xdr.ScValTypeScvAddress}, {"ResConfig", xdr.ScValTypeScvAddress}}
 }
@@ -89,13 +97,20 @@ func lendingContractPrefixes(c LendingContract) ([]LendingPrefix, error) {
 	for _, k := range inst {
 		out = append(out, LendingPrefix{Prefix: k, Contract: c.ID, Protocol: c.Protocol, Key: "Instance"})
 	}
-	if c.Protocol == LendingBLNT {
+	var units []string
+	switch c.Protocol {
+	case LendingBLNT:
 		// BLNT keeps protocol-fee credit outside ReserveData, in the unit-variant key PoolDataKey::ProtocolFees.
-		fees, err := lendingUnitKey(id, "ProtocolFees")
+		units = []string{"ProtocolFees"}
+	case LendingComet:
+		units = []string{cometlp.KeyAllRecordData, cometlp.KeyTotalShares}
+	}
+	for _, sym := range units {
+		k, err := lendingUnitKey(id, sym)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, LendingPrefix{Prefix: fees, Contract: c.ID, Protocol: c.Protocol, Key: "ProtocolFees"})
+		out = append(out, LendingPrefix{Prefix: k, Contract: c.ID, Protocol: c.Protocol, Key: sym})
 	}
 	return out, nil
 }

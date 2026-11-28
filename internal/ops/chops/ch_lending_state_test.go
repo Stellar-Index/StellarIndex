@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
@@ -28,6 +30,27 @@ func TestCheckLendingRegistry_RefusesAMissingKnownPool(t *testing.T) {
 	wrong := clickhouse.LendingContract{ID: blnt.MainnetYieldBlentPool, Protocol: clickhouse.LendingBlendV2}
 	if err := checkLendingRegistry([]clickhouse.LendingContract{fixed, wrong}, 70_000_000); err == nil {
 		t.Fatal("yield pool under blend_v2 accepted")
+	}
+}
+
+// The curated Comet pools enter the registry as LP pools with their creation ledgers, and never reach the interest pass.
+func TestLendingCometPools_AreCapturedNotAccrued(t *testing.T) {
+	cps, err := lendingCometPools()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cps) != len(comet.MainnetGatedSet()) {
+		t.Fatalf("comet pools = %v, want the curated set", cps)
+	}
+	for _, c := range cps {
+		if c.Protocol != clickhouse.LendingComet || c.Backstop || c.Deployed < blend.FactoryGenesisLedger {
+			t.Errorf("comet pool %+v", c)
+		}
+	}
+	fixed := clickhouse.LendingContract{ID: blnt.MainnetFixedPool, Protocol: clickhouse.LendingBLNT}
+	got := lendingPools(slices.Concat([]clickhouse.LendingContract{fixed}, lendingBackstops, cps))
+	if len(got) != 1 || got[0].ID != fixed.ID {
+		t.Errorf("interest pools = %v, want only the lending pool", got)
 	}
 }
 
