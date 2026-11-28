@@ -26,6 +26,9 @@ EnvironmentFile=-/etc/default/stellarindex
 # Defaults. Operators override via /etc/default/compute-completeness.
 Environment=CONFIG_PATH=/etc/stellarindex.toml
 Environment=CH_ADDR=127.0.0.1:9300
+# The names in stellarindex_sources_absent_by_design without a "/" (completeness sources);
+# compute-completeness rejects one it does not know. The "<domain>/<source>" names are data-freshness's.
+Environment="COMPLETENESS_ABSENT_BY_DESIGN={{ stellarindex_sources_absent_by_design | reject('search', '/') | join(',') }}"
 
 # 75 = run-heavy-job.sh skipped this fire (a lock was held): not a
 # failure, but ExecMainStatus=75 keeps it distinct from a run.

@@ -92,7 +92,12 @@ func TestLendingProtocols_RevenueFromStoredDays(t *testing.T) {
 		},
 	}
 	f := newProtocolsServer(t, protocolsCase{clean: true, revenue: store, v1Pool: func(f ratesFixture) string { return f.frozenPool }})
-	stats, _ := getProtocols(t, f.srv)
+	stats, healthy := getProtocols(t, f.srv)
+	assertProtocolsNoStore(t, healthy, false)
+	getProtocols(t, f.srv)
+	if n := store.reads.Load(); n != 1 {
+		t.Fatalf("%d revenue reads over two healthy requests; want the cached build's one", n)
+	}
 	blend, blnt := stats[0].Revenue, stats[1].Revenue
 	if strOr(blend.Day.InterestAccruedUSD) != "1.25" || strOr(blend.Week.InterestAccruedUSD) != "3.75" || strOr(blend.AllTime.InterestAccruedUSD) != "13.75" {
 		t.Fatalf("blend 1d/7d/all = %s/%s/%s; want 1.25/3.75/13.75", strOr(blend.Day.InterestAccruedUSD),
@@ -108,11 +113,16 @@ func TestLendingProtocols_RevenueFromStoredDays(t *testing.T) {
 		t.Fatalf("uncovered BLNT 1d = %+v; want null, not_valued", blnt.Day)
 	}
 
-	// A revenue-only failure is named and degrades the block, not the build: the response stays cacheable.
+	// A failed revenue read is named, degrades the block and the build, and is not stored: the next request rebuilds.
 	store.failSum = true
+	store.reads.Store(0)
 	failed := newProtocolsServer(t, protocolsCase{clean: true, revenue: store})
 	stats, resp := getProtocols(t, failed.srv)
-	assertProtocolsNoStore(t, resp, false)
+	assertProtocolsNoStore(t, resp, true)
+	getProtocols(t, failed.srv)
+	if n := store.reads.Load(); n != 2 {
+		t.Fatalf("%d revenue reads over two failing requests; want a rebuild each (2)", n)
+	}
 	w := stats[0].Revenue.AllTime
 	if w.InterestAccruedUSD != nil || len(w.Excluded) == 0 || w.Excluded[0].Reason != "revenue_read_failed" || !stats[0].Revenue.Degraded {
 		t.Fatalf("failed read served %+v degraded %v", w, stats[0].Revenue.Degraded)
@@ -120,8 +130,8 @@ func TestLendingProtocols_RevenueFromStoredDays(t *testing.T) {
 }
 
 // One asset whose verdict cannot be read (this fixture has no price history, so its day walk fails) is named
-// price_read_failed and summed nowhere; the build is still cached, so a persistent failure is not re-read per request.
-func TestLendingProtocols_RevenueVerdictFailureIsCached(t *testing.T) {
+// price_read_failed and summed nowhere; a failed read is never cached as a settled answer, so the build is not stored.
+func TestLendingProtocols_RevenueVerdictFailureIsNotCached(t *testing.T) {
 	through := time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
 	f0 := newProtocolsServer(t, protocolsCase{clean: true})
 	failing := revenueGroup(f0.activePool, f0.xlmSAC, 0, "1.25")
@@ -134,7 +144,7 @@ func TestLendingProtocols_RevenueVerdictFailureIsCached(t *testing.T) {
 	}
 	f := newProtocolsServer(t, protocolsCase{clean: true, revenue: store})
 	stats, resp := getProtocols(t, f.srv)
-	assertProtocolsNoStore(t, resp, false)
+	assertProtocolsNoStore(t, resp, true)
 	blend := stats[0].Revenue
 	named := false
 	for _, e := range blend.Day.Excluded {
@@ -145,7 +155,7 @@ func TestLendingProtocols_RevenueVerdictFailureIsCached(t *testing.T) {
 			strOr(blend.Day.InterestAccruedUSD), blend.Day.Excluded, blend.Degraded)
 	}
 	getProtocols(t, f.srv)
-	if n := store.reads.Load(); n != 1 {
-		t.Fatalf("%d revenue reads over two requests; want the cached build's one", n)
+	if n := store.reads.Load(); n != 2 {
+		t.Fatalf("%d revenue reads over two requests; want a rebuild each (2)", n)
 	}
 }

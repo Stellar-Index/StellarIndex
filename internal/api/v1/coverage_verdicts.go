@@ -43,6 +43,9 @@ type CoverageVerdictView struct {
 	// ProjectionEvidencedAt is when one run last reconciled the whole served range cleanly. Unlike
 	// ComputedAt, it does not advance on a run that only carried the claim. null = no evidence.
 	ProjectionEvidencedAt *WireTime `json:"projection_evidenced_at"`
+	// AbsentByDesign is read from the stored verdict: ProjectionOK rests on the host declaring this network has none of the
+	// source and a lake read over [GenesisLedger, TipLedger] finding none. Omitted otherwise.
+	AbsentByDesign bool `json:"absent_by_design,omitempty"`
 	// CoveragePct is watermark progress vs tip as a FRACTION in [0,1], not 100: completeness.Watermark's
 	// (Ledger-Genesis+1)/(Tip-Genesis+1), clamped.
 	CoveragePct float64 `json:"coverage_pct"`
@@ -262,6 +265,7 @@ func (s *Server) handleCoverageVerdicts(w http.ResponseWriter, r *http.Request) 
 			ProjectionVerifiedFrom:   sn.ProjectionVerifiedFrom,
 			ProjectionReconciledFrom: sn.ProjectionReconciledFrom,
 			ProjectionEvidencedAt:    wireTimeOrNil(sn.ProjectionEvidencedAt),
+			AbsentByDesign:           sn.AbsentByDesign,
 			CoveragePct:              sn.CoveragePct,
 			FirstProblemLedger:       sn.FirstProblem,
 			Detail:                   sn.Detail,

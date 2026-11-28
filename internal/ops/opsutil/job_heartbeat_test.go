@@ -469,3 +469,82 @@ func TestJobHeartbeatPublishesObservedByteProgressSeparately(t *testing.T) {
 		t.Errorf("progress_total = %s, want 1234", got)
 	}
 }
+
+// captureStderr runs fn with os.Stderr redirected and returns what it wrote.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = orig }()
+	fn()
+	_ = w.Close()
+	var b strings.Builder
+	buf := make([]byte, 4096)
+	for {
+		n, rerr := r.Read(buf)
+		b.Write(buf[:n])
+		if rerr != nil {
+			return b.String()
+		}
+	}
+}
+
+// TestJobHeartbeatWriteFailureIsVisible: a heartbeat that cannot be written (the timer's user cannot replace a root-owned
+// file) must say so once and hand Stop's failure to the caller, never finish silently.
+func TestJobHeartbeatWriteFailureIsVisible(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing-dir", "ops_job_x.prom")
+	hb := opsutil.NewJobHeartbeat("x", path, nil)
+	out := captureStderr(t, func() {
+		hb.Start()
+		for i := range 5 {
+			hb.Progress(uint64(i), uint64(i))
+		}
+		hb.Stop(true)
+	})
+	if n := strings.Count(out, "heartbeat write to "+path+" failed"); n != 1 {
+		t.Fatalf("want exactly one write-failure line naming the path, got %d:\n%s", n, out)
+	}
+	if err := hb.FinalWriteErr(); err == nil || !strings.Contains(err.Error(), path) {
+		t.Fatalf("FinalWriteErr = %v, want an error naming %s", err, path)
+	}
+}
+
+// TestJobHeartbeatLockFailureIsVisible: a lock file that cannot be opened is reported, and the write still proceeds.
+func TestJobHeartbeatLockFailureIsVisible(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ops_job_x.prom")
+	if err := os.Mkdir(path+".lock", 0o750); err != nil {
+		t.Fatal(err)
+	}
+	hb := opsutil.NewJobHeartbeat("x", path, nil)
+	out := captureStderr(t, func() {
+		hb = opsutil.NewJobHeartbeat("x", path, nil)
+		hb.Start()
+		hb.Stop(true)
+	})
+	if !strings.Contains(out, path+".lock unusable") {
+		t.Fatalf("lock failure not reported:\n%s", out)
+	}
+	if err := hb.FinalWriteErr(); err != nil {
+		t.Fatalf("write must still succeed unlocked: %v", err)
+	}
+}
+
+func TestJobHeartbeatHealthyWriteIsQuiet(t *testing.T) {
+	hb := opsutil.NewJobHeartbeat("x", filepath.Join(t.TempDir(), "ops_job_x.prom"), nil)
+	out := captureStderr(t, func() {
+		hb.Start()
+		hb.Stop(true)
+	})
+	if out != "" || hb.FinalWriteErr() != nil {
+		t.Fatalf("healthy heartbeat must be silent, got %q / %v", out, hb.FinalWriteErr())
+	}
+	var inert *opsutil.JobHeartbeat
+	if inert.FinalWriteErr() != nil {
+		t.Fatal("nil heartbeat must report no error")
+	}
+}

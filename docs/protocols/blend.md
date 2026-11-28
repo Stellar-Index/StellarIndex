@@ -95,7 +95,8 @@ of its pools is named.
 | `revenue_timed_out` | The block's reads ran past their 5 s budget; the block is null and the rest of the response is served. | — |
 | `pool_list_read_failed` | The protocol's pool list could not be read (`pool` is null). | — |
 
-A read failure or timeout sets the block's `degraded`; it does not stop the rest of the response being cached.
+A read failure or timeout sets the block's `degraded`, which makes the response degraded and uncached
+(`Cache-Control: no-store`); a settled exclusion (`withheld`, `valuation_stale`, `days_not_valued`) does not.
 
 The verdicts are applied when the block is built, not only when a day is stored, and they are the ones the revenue
 endpoint applies: each token with stored days is walked once, through the same price walk, over its latest stored day
@@ -107,6 +108,39 @@ and one `GROUP BY` over the daily table on its primary key.
 **Before the rollup has run.** With no stored days, every amount is null with `usd_reason: not_valued` and every pool is
 named, never `"0.00"`. When something is valued but every day carrying an amount was left out, the amounts are null with
 `usd_reason: all_excluded`.
+
+## Protocol emissions: `emissions` on `GET /v1/lending/protocols`
+
+Each protocol (Blend and BLNT alike) carries an `emissions` block over the same windows, ending on its own `through_day`
+by the revenue block's rule. It sums the stored days of `lending_emissions_usd_daily`, which the emissions rollup writes
+as `/emissions/history?interval=1d` serves them. Each window has one entry per stored stream: `reserve_schedule`,
+`pool_claims`, `backstop_alloc_backstop`, `backstop_alloc_pool` and `backstop_claims`. Each entry gives `amount_usd`
+(the exact sum, rounded to cents once) and `amount` (exact base units of `emission_token`). The streams are layers of
+the same tokens, so they are never added together and the block has no all-streams total. The per-reserve claim lines
+are part of `pool_claims` and are not summed again.
+
+Exclusions use the revenue block's pool-level reasons (`not_valued`, `days_not_valued`, `pool_list_read_failed`), plus
+`emissions_read_failed` and `emissions_timed_out`. Coverage stored at an older valuation revision counts as no coverage.
+Stream-level entries carry a `stream` and give:
+- a stream the pool does not serve, with the reason `/emissions/history` gives;
+- rows at an older revision (`valuation_stale`), left out entirely;
+- a stored `usd_reason` (for example `no_price_within_bound`), which leaves the USD out but keeps the tokens;
+- the stored day's own stream exclusions;
+- `price_missing` hours.
+
+Three checks are made when the block is built, not only when a day was stored:
+- **The writer verdict.** Each stream's writer verdict is judged the way `/emissions/history` judges it. A stored day
+  with no row is an exact zero only while that writer is verified back to its first ledger. Otherwise the stream is a
+  floor, named `history_unverified`, `history_verdict_stale` or `history_verdict_unread` with `pool` null.
+- **The token's identity.** The emission token must be the protocol token's verified SAC, or its stored USD is refused
+  as `emission_token_unverified`.
+- **The token's price.** The token's price walk can refuse it (`withheld`, `price_read_failed`), the way the revenue
+  block refuses a reserve.
+
+If the rows are not all in one named token with known decimals, every `amount` is null with `amount_reason` saying why.
+`lower_bound` marks a floor for `amount_usd` and `amount_lower_bound` one for `amount`. A degraded block makes the
+response degraded and uncached, as the revenue block's does. Until the rollup is enabled every stream is null
+with `usd_reason: not_valued`.
 
 ## Bad debt: `GET /v1/lending/pools/{pool}/bad-debt`
 

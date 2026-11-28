@@ -18,8 +18,9 @@ EnvironmentFile=-/etc/default/stellarindex
 # The script runs stellarindex-ops cagg-history, which is the batch tier (ops_batch identity).
 EnvironmentFile=-/etc/default/stellarindex-ops
 Environment=TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/data_freshness.prom
-# stellarindex_sources_absent_by_design; the script rejects a name it does not know.
-Environment="DATA_FRESHNESS_ABSENT_BY_DESIGN={{ stellarindex_sources_absent_by_design | join(' ') }}"
+# The "<domain>/<source>" names in stellarindex_sources_absent_by_design; the script rejects one it
+# does not know. Names without a "/" are compute-completeness's and go to its units instead.
+Environment="DATA_FRESHNESS_ABSENT_BY_DESIGN={{ stellarindex_sources_absent_by_design | select('search', '/') | join(' ') }}"
 
 ExecStart=/usr/local/sbin/data-freshness.sh
 
