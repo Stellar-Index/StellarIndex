@@ -1422,10 +1422,20 @@ func TestSep1IdentityHistoryAndFreshness(t *testing.T) {
          WHERE g_strkey = $1`, g); err != nil {
 		t.Fatalf("age payload: %v", err)
 	}
-	samples := runFreshnessDomainQueries(t, ctx, db, "NULL")
+	samples := runFreshnessDomainQueries(t, ctx, db, "NULL", "")
 	key := `stellarindex_data_freshness_stale{domain="sep1",source="issuers"}`
 	if v := samples[key]; v != "1" {
 		t.Errorf("%s = %q, want 1 — no payload fetched in 40 days, yet a failing refresh read as fresh", key, v)
+	}
+	// A declaration that this network has no SEP-1 issuers is contradicted by the payload:
+	// it must not excuse the staleness, and it must say so.
+	declared := runFreshnessDomainQueries(t, ctx, db, "NULL", "sep1/issuers")
+	if v := declared[key]; v != "1" {
+		t.Errorf("declared absent but present: %s = %q, want 1 — the declaration excused a stale source that has data", key, v)
+	}
+	present := `stellarindex_data_freshness_absent_declared_but_present{domain="sep1",source="issuers"}`
+	if v := declared[present]; v != "1" {
+		t.Errorf("%s = %q, want 1 — a declaration contradicted by data must raise its own signal", present, v)
 	}
 }
 
