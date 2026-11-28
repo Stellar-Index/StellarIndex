@@ -1339,6 +1339,19 @@ groups:
       # - `galexie_archive_upstream`: weekly, written only on a completed run;
       #   stellarindex_galexie_archive_upstream_check_stale (galexie-archive.yml)
       #   owns it.
+      # - `ops_job_ch_entry_history_lending_interest_prove_full`: weekly (Sat),
+      #   stellarindex_lending_interest_proof_stale (ingestion.yml, 8d) owns it.
+      #
+      # Every role timer that fires less often than daily is declared below
+      # (scripts/ci/lint-long-cadence-textfiles.sh): its textfile must be
+      # excluded above and owned by a cadence-aware alert, or write none.
+      # long-cadence compute-completeness-sdex.timer: none -
+      # long-cadence compute-completeness-sep41.timer: none -
+      # long-cadence galexie-archive-trim.timer: none -
+      # long-cadence galexie-mirror-verify.timer: galexie_archive_upstream stellarindex_galexie_archive_upstream_check_stale
+      # long-cadence lending-interest-prove-full.timer: ops_job_ch_entry_history_lending_interest_prove_full stellarindex_lending_interest_proof_stale
+      # long-cadence restore-drill.timer: restore_drill stellarindex_restore_drill_textfile_stale
+      # long-cadence restore-drill-offsite.timer: restore_drill stellarindex_restore_drill_textfile_stale
       #
       # Lock-gated producers (the `unless` clause is the one list) wait behind
       # the host-wide heavy lock, so a long heavy job legitimately freezes their
@@ -1350,7 +1363,7 @@ groups:
         expr: |
           (
             time() - node_textfile_mtime_seconds{
-              file!~".*/ops_job_.*\\.pid[0-9]+\\.prom$|.*/ops_job_(backfill|ch_backfill|usd_volume_restamp|tag_tx_index|supply_seed_sac_balances|supply_seed_claimable_balances|projected_rebuild_[a-z0-9_]+)\\.prom$|.*/restore_drill.*\\.prom$|.*/verify_archive_tier_d\\.prom$|.*/alertmanager_receivers\\.prom$|.*/heavy_job_.*\\.prom$|.*/ch_lake_backup\\.prom$|.*/galexie_archive_upstream\\.prom$"
+              file!~".*/ops_job_.*\\.pid[0-9]+\\.prom$|.*/ops_job_(backfill|ch_backfill|usd_volume_restamp|tag_tx_index|supply_seed_sac_balances|supply_seed_claimable_balances|projected_rebuild_[a-z0-9_]+)\\.prom$|.*/restore_drill.*\\.prom$|.*/verify_archive_tier_d\\.prom$|.*/alertmanager_receivers\\.prom$|.*/heavy_job_.*\\.prom$|.*/ch_lake_backup\\.prom$|.*/galexie_archive_upstream\\.prom$|.*/ops_job_ch_entry_history_lending_interest_prove_full\\.prom$"
             } > 86400
           )
           unless on (instance, file) (

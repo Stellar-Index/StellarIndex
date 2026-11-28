@@ -1,0 +1,74 @@
+# promtool unit tests: the weekly lending-interest-prove-full textfile against the
+# textfile_producer_stale catch-all (24h) and its own 8-day alert, in the R1 rule tree.
+#
+#   promtool test rules deploy/monitoring/rule-tests/storage-textfile-stale-weekly-r1_test.yml
+#
+# 10m evaluation steps (see storage-textfile-stale-exclusions_test.yml); keep
+# every eval_time a multiple of 10m.
+
+rule_files:
+  - ../../../configs/prometheus/rules.r1/storage.yml
+  - ../../../configs/prometheus/rules.r1/ingestion.yml
+
+evaluation_interval: 10m
+
+tests:
+  # Both files were last written at t=0 (unix 0); time() at eval_time is the age.
+  - interval: 1m
+    name: r1 catch-all stays silent on the weekly prove-full file but fires on a daily producer 3 days old
+    input_series:
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_ch_entry_history_lending_interest_prove_full.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x4400'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_ch_entry_history_lending_interest_prove.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x4400'
+    alert_rule_test:
+      - eval_time: 72h
+        alertname: stellarindex_textfile_producer_stale
+        exp_alerts:
+          - exp_labels:
+              file: /var/lib/node_exporter/textfile_collector/ops_job_ch_entry_history_lending_interest_prove.prom
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-stale.md#stellarindex_textfile_producer_stale
+              summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/ops_job_ch_entry_history_lending_interest_prove.prom has not been refreshed in 24h+ on r1:9100"
+              description: |
+                node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/ops_job_ch_entry_history_lending_interest_prove.prom
+                for 24+ hours. Its producing timer/cron has likely died; check
+                scripts/ci/textfile-producers.manifest for which script owns
+                this file and `systemctl status` its unit. This is a catch-all:
+                most producers should have fired their own, tighter alert long
+                before this one does.
+
+  - interval: 1m
+    name: r1 prove-full own alert fires 9 days after its last finish
+    input_series:
+      - series: 'stellarindex_ops_job_last_finish_unix{job="node_exporter",instance="r1:9100",ops_job="ch-entry-history-lending-interest-prove-full"}'
+        values: '0x13000'
+    alert_rule_test:
+      - eval_time: 72h
+        alertname: stellarindex_lending_interest_proof_stale
+        exp_alerts: []
+      - eval_time: 216h
+        alertname: stellarindex_lending_interest_proof_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+              job: node_exporter
+              instance: r1:9100
+              ops_job: ch-entry-history-lending-interest-prove-full
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#lending-interest-proof-stale
+              summary: "a lending interest proof has not finished on its schedule"
+              description: |
+                The last finished run of ch-entry-history-lending-interest-prove-full is older than its
+                cadence allows (lending-interest-prove.timer, daily: 48 h;
+                lending-interest-prove-full.timer, weekly: 8 days): the timer was
+                disabled or stopped firing, or a run has hung (heartbeat_stale
+                covers a dead one). Its proof gauge still shows the last run's
+                verdict, which is no longer current.
