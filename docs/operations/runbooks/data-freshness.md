@@ -84,11 +84,19 @@ Names are `<domain>/<source>` as the gauges label them. Known names: `sep1/issue
 - empty: `stale=0`, `empty=1`, and `stellarindex_data_freshness_absent_by_design=1` so the declaration shows;
 - holding rows: the normal staleness rule, plus `stellarindex_data_freshness_absent_declared_but_present=1` ([below](#stellarindex_data_source_absent_declared_but_present)).
 
-An unknown name voids the whole list (every source is judged normally) and fails `data-freshness.service` (`stellarindex_systemd_unit_failed`); `journalctl -u data-freshness.service` names it. The list does not cover `stellarindex_completeness_incomplete`: the ADR-0033 verdict for a source with no on-chain activity still reads "no evidence".
+An unknown `<domain>/<source>` name voids that half of the list (every source is judged normally) and fails `data-freshness.service` (`stellarindex_systemd_unit_failed`); `journalctl -u data-freshness.service` names it.
+
+The same list carries completeness sources by their bare name, for [`stellarindex_completeness_incomplete`](#stellarindex_completeness_incomplete): a source with no on-chain activity (no SDEX trade ever on a quiet test net) otherwise reads "projection: no evidence" forever. A quiet test net that also has no trades:
+
+```yaml
+stellarindex_sources_absent_by_design: [sep1/issuers, sep41_supply/supply_flows, sdex]
+```
+
+The `compute-completeness*` units pass the bare names as `-absent-by-design`. For a declared source with an empty served tier, each run re-derives the expected side from the lake over the source's whole `[genesis, tip]`, so declare only sources the network truly lacks. With substrate and recognition verified and zero rows found, the verdict is complete with detail `projection: absent by design on this network (declared); lake holds no <tables> in [a,b]`, and `/v1/coverage` shows `absent_by_design: true`. A name that is not a completeness source fails the run and its unit, and no verdicts are written. If the lake or served tier holds rows, the declaration is ignored, the normal verdict stands, and the source exports `stellarindex_data_freshness_absent_declared_but_present{domain="completeness"}=1`.
 
 ## stellarindex_data_source_absent_declared_but_present
 
-Trips: `stellarindex_data_freshness_absent_declared_but_present == 1` for 1 h. The host lists the source in `stellarindex_sources_absent_by_design`, but it holds rows, so the network does have it. The source is judged by its normal staleness rule meanwhile, but the declaration would excuse it again the day its table empties (a reset). Remove the entry from the host's inventory and re-apply `--tags ops-jobs`.
+Trips: `stellarindex_data_freshness_absent_declared_but_present == 1` for 1 h. The host lists the source in `stellarindex_sources_absent_by_design`, but it holds rows, so the network does have it. The source keeps its normal staleness rule (or, for `domain="completeness"`, its normal completeness verdict) meanwhile, but the declaration would excuse it again the day it empties (a reset). Remove the entry from the host's inventory and re-apply `--tags ops-jobs`.
 
 ## stellarindex_supply_assets_stale
 

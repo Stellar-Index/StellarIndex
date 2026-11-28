@@ -519,7 +519,7 @@ fi
 
 # ─── 8. a single psql query failure must not take down the whole tick ─
 #
-# Seven bare `"$PSQL" ... >> "$TMP" <<'SQL'` invocations (six now, plus the
+# Seven bare `"$PSQL" ... >> "$TMP" <<'SQL'` invocations (seven now, plus the
 # stellarindex-ops cagg-history call) ran under this
 # script's own `set -euo pipefail` with none of the `if ! …; then …; fi`
 # guard the ClickHouse probe uses. Any one of the seven — a lock timeout,
@@ -539,10 +539,10 @@ QSRC="$WORK/queries.sh"
 } > "$QSRC"
 guarded_count="$(grep -c '^if ! PGDSN=' "$QSRC")"
 # shellcheck disable=SC2016  # the literal "$OPS" in the script is what is matched
-if [[ "$guarded_count" == 6 ]] && grep -q '^if "$OPS" cagg-history ' "$QSRC"; then
-  ok "extracted region carries all 6 guarded psql invocations and the guarded cagg-history call"
+if [[ "$guarded_count" == 7 ]] && grep -q '^if "$OPS" cagg-history ' "$QSRC"; then
+  ok "extracted region carries all 7 guarded psql invocations and the guarded cagg-history call"
 else
-  bad "extraction found $guarded_count guarded psql invocations (want 6) or no guarded cagg-history call — the markers drifted"
+  bad "extraction found $guarded_count guarded psql invocations (want 7) or no guarded cagg-history call — the markers drifted"
 fi
 
 # Stub stellarindex-ops: writes one sample to its -textfile path, or fails (writing
@@ -592,10 +592,10 @@ if [[ $QRC -eq 0 ]]; then
 else
   bad "rc=$QRC (want 0): a single psql failure still aborts the whole tick"
 fi
-if [[ "$(grep -c '^stellarindex_test_sample 1$' "$QTMP")" == 6 ]]; then
-  ok "the other 5 queries' and cagg-history's output still reach the textfile"
+if [[ "$(grep -c '^stellarindex_test_sample 1$' "$QTMP")" == 7 ]]; then
+  ok "the other 6 queries' and cagg-history's output still reach the textfile"
 else
-  bad "expected 6 surviving samples, textfile has: $(cat "$QTMP")"
+  bad "expected 7 surviving samples, textfile has: $(cat "$QTMP")"
 fi
 
 # A failed cagg-history run appends nothing (its gauges go absent) and is tallied like a
@@ -603,9 +603,9 @@ fi
 : > "$QTMP"
 OERR="$(PSQL_FAIL_MARKER='no-such-query' OPS_FAIL=1 bash "$WORK/queries-ops-tally.sh" "$WORK/psqlbin/psql" "$QTMP" "$OPS_STUB" 2>&1 >"$WORK/ops-tally.out" ||
   echo "region aborted rc=$?")"
-if grep -qx 'PROBE_FAILED=1' "$WORK/ops-tally.out" && [[ "$(grep -c '^stellarindex_test_sample 1$' "$QTMP")" == 6 ]] &&
+if grep -qx 'PROBE_FAILED=1' "$WORK/ops-tally.out" && [[ "$(grep -c '^stellarindex_test_sample 1$' "$QTMP")" == 7 ]] &&
   [[ "$OERR" == *"stellarindex-ops cagg-history) failed"* ]]; then
-  ok "a failed cagg-history run is tallied and named, and the 6 psql samples still publish"
+  ok "a failed cagg-history run is tallied and named, and the 7 psql samples still publish"
 else
   bad "cagg-history failure: tally=$(cat "$WORK/ops-tally.out") samples=$(grep -c . "$QTMP") stderr=$OERR"
 fi
@@ -772,6 +772,24 @@ SQL
     ok "declared sources holding rows: declared_but_present=1 and the normal age rule (supply 40 h stays stale)"
   else
     bad "declared + rows: $out"
+  fi
+
+  # The completeness half: compute-completeness stores the declaration's outcome per verdict.
+  CSQL="$WORK/compl-absent.sql"
+  awk '/^SELECT .stellarindex_data_freshness_absent_by_design\{domain="completeness"/ { p = 1 } p && /^SQL$/ { exit } p' "$SRC" > "$CSQL"
+  dpsql -q > /dev/null <<'SQL'
+ALTER TABLE completeness_snapshots ADD COLUMN absent_by_design boolean NOT NULL DEFAULT false,
+  ADD COLUMN absent_declared_but_present boolean NOT NULL DEFAULT false;
+INSERT INTO completeness_snapshots VALUES ('sdex', now(), true, false), ('soroswap', now(), false, true), ('blend', now(), false, false);
+SQL
+  out="$(dpsql < "$CSQL")"
+  cd_sdex='stellarindex_data_freshness_absent_by_design{domain="completeness",source="sdex"} 1'
+  cp_sdex='stellarindex_data_freshness_absent_declared_but_present{domain="completeness",source="sdex"} 0'
+  cp_soro='stellarindex_data_freshness_absent_declared_but_present{domain="completeness",source="soroswap"} 1'
+  if [[ -n "$(line "$out" "$cd_sdex")" && -n "$(line "$out" "$cp_sdex")" && -n "$(line "$out" "$cp_soro")" && -z "$(line "$out" 'source="blend"')" ]]; then
+    ok "completeness: declared-and-absent sdex reads present=0, declared soroswap with rows reads present=1, undeclared blend emits nothing"
+  else
+    bad "completeness absent-by-design: $out"
   fi
   docker rm -f "$PGC" > /dev/null 2>&1
 fi
