@@ -385,9 +385,13 @@ func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 	if st.Exists {
 		fillAccountStateView(&out, st)
 	}
-	snapStale := pastTTL && swrServedStale(st.CachedAt, clickhouse.AccountStateCacheTTL,
-		clickhouse.AccountStateRefreshTimeout, st.RefreshFailed)
-	h.writeJSONAt(w, out, stale || snapStale, out.DirectoryUnavailable, time.Time{})
+	var fr servedFreshness
+	if pastTTL {
+		fr = expiredFreshness(swrServedStale(st.CachedAt, clickhouse.AccountStateCacheTTL,
+			clickhouse.AccountStateRefreshTimeout, st.RefreshFailed), st.RefreshFailed, false, st.RefreshRefused)
+	}
+	fr.note(w)
+	h.writeJSONAt(w, out, stale || fr.stale, out.DirectoryUnavailable || fr.degraded, time.Time{})
 }
 
 // fillAccountStateView renders a live account's state onto the wire view.

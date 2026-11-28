@@ -23,6 +23,7 @@ import {
   Container,
   Section,
   PageHeader,
+  Segmented,
   Breadcrumbs,
   EmptyState,
   Skeleton,
@@ -35,6 +36,28 @@ import {
 // Tailwind classes, which a redesign is expected to change. The net's job is
 // to catch a primitive's *contract* breaking during a restructure, not to
 // freeze its look.
+describe('Segmented', () => {
+  it('scrolls inside its own box rather than overflowing a narrow parent', () => {
+    render(
+      <Segmented
+        ariaLabel="Range"
+        value="a"
+        onChange={() => {}}
+        options={[
+          { label: '30 days', value: 'a' },
+          { label: '7 days (hourly)', value: 'b' },
+        ]}
+      />,
+    );
+    const group = screen.getByRole('group', { name: 'Range' });
+    expect(group).toHaveClass('max-w-full', 'overflow-x-auto');
+    expect(screen.getByRole('button', { name: '30 days' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+});
+
 describe('ui primitives — render + semantics', () => {
   it('Badge renders its children', () => {
     render(<Badge tone="up">Live</Badge>);
