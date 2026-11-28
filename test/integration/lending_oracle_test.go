@@ -141,14 +141,17 @@ func TestLendingOracle_EndToEnd(t *testing.T) {
 	st := loCEXState(t, ctx, er)
 	round := time.UnixMilli(int64(st.LastTimestampMs)).UTC()
 	prev := round.Add(-300 * time.Second)
-	xlm, _, _ := st.AssetIndex(oracleagg.Asset{Symbol: "XLM"})
-	xlmAt := func(ts time.Time) *big.Int {
-		p, ok := st.CachedPrice(xlm, uint64(ts.UnixMilli()))
-		if !ok {
-			t.Fatalf("XLM not in the chain cache at %s", ts)
+	cachedAt := func(sym string) func(time.Time) *big.Int {
+		idx, _, _ := st.AssetIndex(oracleagg.Asset{Symbol: sym})
+		return func(ts time.Time) *big.Int {
+			p, ok := st.CachedPrice(idx, uint64(ts.UnixMilli()))
+			if !ok {
+				t.Fatalf("%s not in the chain cache at %s", sym, ts)
+			}
+			return p
 		}
-		return p
 	}
+	xlmAt, usdcAt := cachedAt("XLM"), cachedAt("USDC")
 
 	dsn := startTimescale(t, ctx)
 	applyMigrations(t, dsn)
@@ -160,9 +163,10 @@ func TestLendingOracle_EndToEnd(t *testing.T) {
 	seeds := []c.OracleUpdate{
 		loUpdate(t, loCEXFeed, "crypto:XLM", round, loLedger-10, xlmAt(round), 0),
 		loUpdate(t, loCEXFeed, "crypto:XLM", prev, loLedger-70, xlmAt(prev), 0),
-		// Same asset, same source name, a foreign contract: must not price the pool.
-		loUpdate(t, loFXFeed, "crypto:USDC", round, loLedger-10, big.NewInt(1e14), 1),
-		loUpdate(t, loFXFeed, "crypto:USDC", prev, loLedger-70, big.NewInt(1e14), 1),
+		// Same asset, same source name, the very prices the pool's feed cached, a foreign contract: the chain
+		// cross-check cannot tell these apart, so only the contract key keeps them from pricing the pool.
+		loUpdate(t, loFXFeed, "crypto:USDC", round, loLedger-10, usdcAt(round), 1),
+		loUpdate(t, loFXFeed, "crypto:USDC", prev, loLedger-70, usdcAt(prev), 1),
 		// A raw row on the pool's own feed: marks the round, never prices.
 		loUpdate(t, loCEXFeed, "raw:EURC", round, loLedger-10, big.NewInt(1e14), 2),
 		// Applied after the evaluation ledger: invisible to it.
