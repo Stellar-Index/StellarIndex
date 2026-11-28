@@ -146,7 +146,12 @@ describe('emissions', () => {
   it('renders the panel, the unavailable state and the error state', async () => {
     const client = () =>
       new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    vi.mocked(apiGet).mockResolvedValueOnce({ data: emissions() });
+    // The current-rate endpoint answers per test; the history is not this test's subject.
+    let current: () => Promise<unknown> = async () => ({ data: emissions() });
+    vi.mocked(apiGet).mockImplementation(async (path: string) => {
+      if (path.endsWith('/history')) throw new Error('404 not found');
+      return current() as never;
+    });
     const { unmount } = render(
       <QueryClientProvider client={client()}>
         <EmissionsPanel pool="P" />
@@ -156,7 +161,7 @@ describe('emissions', () => {
       expect(screen.getByLabelText(/per day by stream/)).toBeInTheDocument(),
     );
     unmount();
-    vi.mocked(apiGet).mockResolvedValueOnce({
+    current = async () => ({
       data: emissions({
         storage_available: false,
         storage_unavailable_reason: 'blend_v1_emission_storage_unverified',
@@ -173,7 +178,9 @@ describe('emissions', () => {
       expect(screen.getByText(/Blend v1 emission storage/)).toBeInTheDocument(),
     );
     r2.unmount();
-    vi.mocked(apiGet).mockRejectedValueOnce(new Error('boom'));
+    current = async () => {
+      throw new Error('boom');
+    };
     render(
       <QueryClientProvider client={client()}>
         <EmissionsPanel pool="P" />

@@ -84,7 +84,8 @@ export function Segmented({
       role="group"
       aria-label={ariaLabel}
       className={cn(
-        'bg-surface-subtle inline-flex rounded-lg p-0.5',
+        // Scrolls inside itself on a narrow screen, as Tabs does, instead of clipping.
+        'bg-surface-subtle inline-flex max-w-full overflow-x-auto rounded-lg p-0.5',
         className,
       )}
     >
