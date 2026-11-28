@@ -1,0 +1,79 @@
+# promtool unit tests for the lending pool-health read alert:
+#
+#   stellarindex_lending_health_fill_failing
+#
+# Both rule trees carry the rule unfiltered by job, so one series fires it once per tree.
+#
+#   promtool test rules deploy/monitoring/rule-tests/lending-health-fill-failing_test.yml
+
+rule_files:
+  - ../rules/api.yml
+  - ../../../configs/prometheus/rules.r1/api.yml
+
+evaluation_interval: 1m
+
+tests:
+  # Route disabled (the default) or never asked: the counter has no series.
+  - interval: 1m
+    name: lending_health_fill_failing — no series when the route is off stays quiet
+    input_series:
+      - series: 'up{job="stellarindex-api",instance="r1:8080"}'
+        values: '1x120'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_lending_health_fill_failing
+        exp_alerts: []
+
+  - interval: 1m
+    name: lending_health_fill_failing — a counter that never moves stays quiet
+    input_series:
+      - series: 'stellarindex_lending_health_fill_failures_total{job="stellarindex-api",instance="r1:8080",pool="CPOOL"}'
+        values: '0x120'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_lending_health_fill_failing
+        exp_alerts: []
+
+  # One failed read at 11m: the 15m window holds it under the 30m for:.
+  - interval: 1m
+    name: lending_health_fill_failing — a single failed read does not ticket
+    input_series:
+      - series: 'stellarindex_lending_health_fill_failures_total{job="stellarindex-api",instance="r1:8080",pool="CPOOL"}'
+        values: '0x10 1x120'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_lending_health_fill_failing
+        exp_alerts: []
+      - eval_time: 1h
+        alertname: stellarindex_lending_health_fill_failing
+        exp_alerts: []
+
+  # A failure every minute from 11m: pending from 11m, tickets at 41m.
+  - interval: 1m
+    name: lending_health_fill_failing — sustained failures ticket per pool
+    input_series:
+      - series: 'stellarindex_lending_health_fill_failures_total{job="stellarindex-api",instance="r1:8080",pool="CPOOL"}'
+        values: '0x10 1+1x110'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: stellarindex_lending_health_fill_failing
+        exp_alerts: []
+      - eval_time: 42m
+        alertname: stellarindex_lending_health_fill_failing
+        exp_alerts:
+          - exp_labels: &fill_labels
+              severity: ticket
+              team: stellarindex
+              component: api
+              instance: r1:8080
+              pool: CPOOL
+            exp_annotations: &fill_annotations
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_lending_health_fill_failing"
+              summary: "Lending pool health reads failing for CPOOL on r1:8080 for 30m"
+              description: |
+                GET /v1/lending/pools/{pool}/health has answered with an error
+                for this pool for at least 30 minutes because its positions
+                snapshot could not be read. The API logs the cause on the
+                "lending health failed" line.
+          - exp_labels: *fill_labels
+            exp_annotations: *fill_annotations

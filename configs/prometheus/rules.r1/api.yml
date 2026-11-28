@@ -1536,6 +1536,27 @@ groups:
             borrowed totals. A contract upgrade that changed the reserve
             layout, or a corrupt lake row, are the likely causes.
 
+      # Each increment is a pool-health request answered with an error because
+      # the positions snapshot could not be read. One failed read is retried by
+      # the next request; 30 min of them means the route is down for that pool.
+      # A disabled route or an unread pool never increments, so stays silent.
+      - alert: stellarindex_lending_health_fill_failing
+        expr: |
+          sum by (instance, pool) (rate(stellarindex_lending_health_fill_failures_total[15m])) > 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_lending_health_fill_failing
+          summary: "Lending pool health reads failing for {{ $labels.pool }} on {{ $labels.instance }} for 30m"
+          description: |
+            GET /v1/lending/pools/{pool}/health has answered with an error
+            for this pool for at least 30 minutes because its positions
+            snapshot could not be read. The API logs the cause on the
+            "lending health failed" line.
+
       # Explorer reader lake-schema probes: an "absent" answer from a process
       # that never saw the object latches until restart, so an API started
       # before the lake DDL serves that surface from the slow fallback (or
