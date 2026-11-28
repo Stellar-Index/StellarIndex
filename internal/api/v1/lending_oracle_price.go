@@ -204,13 +204,14 @@ func readAdapter(ctx context.Context, lake lendingOracleLake, oracle string, led
 	if a.hash == "" {
 		return a, verdictErr{oracleagg.VerdictUnsupported, "oracle " + oracle + " is a Stellar Asset Contract"}
 	}
-	program := oracleagg.ProgramForHash(a.hash)
-	if program == oracleagg.ProgramUnknown {
+	switch oracleagg.ProgramForHash(a.hash) {
+	case oracleagg.ProgramUnknown:
 		return a, verdictErr{oracleagg.VerdictUnsupported, "oracle " + oracle + " runs unaudited wasm " + a.hash}
-	}
-	if program == oracleagg.ProgramV2 {
+	case oracleagg.ProgramV2:
 		a.cfg, err = oracleagg.DecodeV2Instance(inst.Storage)
-	} else {
+	case oracleagg.ProgramYBForkV2:
+		a.cfg, err = oracleagg.DecodeYBForkV2Instance(inst.Storage)
+	case oracleagg.ProgramV1:
 		a.cfg, err = oracleagg.DecodeV1(inst.Storage, func(k scval.ScVal) (scval.ScVal, bool, error) {
 			v, modified, ok, err := lake.ContractPersistentEntry(ctx, oracle, k)
 			if err == nil && modified > ledger {
@@ -337,9 +338,15 @@ func readFeed(ctx context.Context, feeds lendingOracleFeeds, a lendingOracleAdap
 	}
 	to := time.Unix(int64(t), 0).UTC()
 	last := time.UnixMilli(int64(fs.state.LastTimestampMs)).UTC()
-	from := last // v1 reads the last round only
-	if a.cfg.Program == oracleagg.ProgramV2 {
+	from := last // v1, and the fork without max_dev, read the last round only
+	switch a.cfg.Program {
+	case oracleagg.ProgramV2:
 		from = to.Add(-v2Reach(a.cfg.MaxAge, uint64(rule.ResolutionSeconds), fs.state.ResolutionMs))
+	case oracleagg.ProgramYBForkV2:
+		if rule.MaxDev > 0 && rule.MaxDev < 100 {
+			from = last.Add(-oracleagg.YBForkReach(fs.state.ResolutionMs))
+		}
+	case oracleagg.ProgramV1, oracleagg.ProgramUnknown:
 	}
 	lastFrom := last
 	if lastFrom.Before(from) {

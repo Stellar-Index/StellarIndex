@@ -18,9 +18,9 @@ const (
 	VerdictContractPanics        Verdict = "oracle_contract_panics"        // the call traps (arithmetic underflow)
 	VerdictFeedAssetUnknown      Verdict = "oracle_feed_asset_unknown"     // the feed does not quote the feed asset: None
 	VerdictPriceStale            Verdict = "oracle_price_stale"            // no feed round inside the program's window
-	VerdictPriceAbsent           Verdict = "oracle_price_absent"           // v1: the feed's last round has no price for the asset
-	VerdictDeviation             Verdict = "oracle_deviation"              // v2: price moved more than max_dev since the earlier period
-	VerdictDeviationUnverifiable Verdict = "oracle_deviation_unverifiable" // v2: no earlier period to check max_dev against
+	VerdictPriceAbsent           Verdict = "oracle_price_absent"           // the feed has no price for the asset where the program reads one
+	VerdictDeviation             Verdict = "oracle_deviation"              // price moved more than max_dev since the earlier price
+	VerdictDeviationUnverifiable Verdict = "oracle_deviation_unverifiable" // no earlier price to check max_dev against
 
 	// Where we cannot reproduce the answer.
 	VerdictUnsupported    Verdict = "oracle_unsupported"     // program, feed build or asset shape not modelled
@@ -97,6 +97,8 @@ func LastPrice(cfg Config, asset Asset, t uint64, feed Feed) Result {
 		return lastPriceV2(cfg, asset, t, feed)
 	case ProgramV1:
 		return lastPriceV1(cfg, asset, t, feed)
+	case ProgramYBForkV2:
+		return lastPriceYBFork(cfg, asset, t, feed)
 	case ProgramUnknown:
 	}
 	return verdict(VerdictUnsupported, "adapter program %s", cfg.Program)

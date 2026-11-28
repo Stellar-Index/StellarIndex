@@ -1,0 +1,82 @@
+# oracle-8cf43882ff2e6757.wasm  sha256=8cf43882ff2e6757bef1900973ab26efb1b42b832a640a320a9b881fa501cf76
+# decoded with: stellar contract info {meta,env-meta,interface --output rust} --wasm oracle-8cf43882ff2e6757.wasm  (stellar 28.1.0)
+
+Contract meta:
+ • rsver: 1.86.0 (Rust version)
+ • rssdkver: 22.0.7#211569aa49c8d896877dfca1f2eb4fe9071121c8 (Soroban SDK version and its commit hash)
+ • source_repo: github:yieldblox/oracle-aggregator
+
+
+Contract env-meta:
+ • Protocol: v22
+
+
+#[soroban_sdk::contractargs(name = "Args")]
+#[soroban_sdk::contractclient(name = "Client")]
+pub trait Contract {
+    fn __constructor(
+        env: soroban_sdk::Env,
+        admin: soroban_sdk::Address,
+        base: Asset,
+        decimals: u32,
+        max_age: u64,
+    );
+    fn oracles(env: soroban_sdk::Env) -> soroban_sdk::Vec<OracleConfig>;
+    fn asset_configs(env: soroban_sdk::Env) -> soroban_sdk::Map<Asset, AssetConfig>;
+    fn max_age(env: soroban_sdk::Env) -> u64;
+    fn base(env: soroban_sdk::Env) -> Asset;
+    fn decimals(env: soroban_sdk::Env) -> u32;
+    fn assets(env: soroban_sdk::Env) -> soroban_sdk::Vec<Asset>;
+    fn lastprice(env: soroban_sdk::Env, asset: Asset) -> Option<PriceData>;
+    fn set_admin(env: soroban_sdk::Env, admin: soroban_sdk::Address);
+    fn add_oracle(env: soroban_sdk::Env, oracle_id: soroban_sdk::Address);
+    fn add_asset(
+        env: soroban_sdk::Env,
+        asset: Asset,
+        oracle_id: soroban_sdk::Address,
+        oracle_asset: Asset,
+        max_dev: u32,
+    ) -> PriceData;
+    fn add_base_asset(env: soroban_sdk::Env, base: Asset);
+}
+#[soroban_sdk::contracttype]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct PriceData {
+    pub price: i128,
+    pub timestamp: u64,
+}
+#[soroban_sdk::contracttype]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct AssetConfig {
+    pub asset: Asset,
+    pub max_dev: u32,
+    pub oracle_index: u32,
+}
+#[soroban_sdk::contracttype]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct OracleConfig {
+    pub address: soroban_sdk::Address,
+    pub decimals: u32,
+    pub index: u32,
+    pub resolution: u32,
+}
+#[soroban_sdk::contracttype]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub enum Asset {
+    Stellar(soroban_sdk::Address),
+    Other(soroban_sdk::Symbol),
+}
+#[soroban_sdk::contracterror]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub enum OracleAggregatorErrors {
+    NotImplemented = 100,
+    InvalidAssetOracle = 101,
+    MaxAssetsExceeded = 102,
+    AssetExists = 103,
+    AssetNotFound = 104,
+    InvalidMaxAge = 105,
+    OracleExists = 106,
+    OracleNotFound = 107,
+    MaxOraclesExceeded = 108,
+}
+
