@@ -8,6 +8,7 @@ import { Badge, Container, PageHeader } from '@/components/ui';
 import { protocolMeta } from '@/app/protocols/registry';
 
 import { LendingPoolsTable } from './LendingPoolsTable';
+import { LendingProtocolEmissions } from './LendingProtocolEmissions';
 import { LendingProtocolRevenue } from './LendingProtocolRevenue';
 import { LendingProtocolStats } from './LendingProtocolStats';
 
@@ -161,6 +162,7 @@ export function LendingProtocolPage({
       />
       <LendingProtocolStats protocol={protocol} />
       <LendingProtocolRevenue protocol={protocol} />
+      <LendingProtocolEmissions protocol={protocol} />
       <Panel
         headingLevel={2}
         title={`About ${p.name}`}
