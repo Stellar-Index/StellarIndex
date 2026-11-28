@@ -316,6 +316,96 @@ empty collateral map. Held collateral that values to zero in the oracle base is 
   panicking. No mainnet account is known to reach that size.
 - **BLNT** is closed source; see [blnt.md](blnt.md#health-factor).
 
+## Yields
+
+What `internal/sources/blend/yield.go` computes, read from the same pinned sources as [Health factor](#health-factor)
+(`v2:`/`v1:` paths under `pool/src/`). A rate is a fraction (0.05 = 5%); a rendered rate is 4 dp, half away from zero.
+
+### Model rate, from the stored state
+
+| Figure | Definition | Source |
+|---|---|---|
+| Utilisation `U` | `ceil(liabilities·1e7 / supply)`; 0 with no debt, 1e7 when liabilities ≥ supply | `v2:pool/reserve.rs:113-124` |
+| Borrow rate `cur_ir` | Piecewise in `U` around `util` and 0.95, times `ir_mod`, every step rounded up | `v2:pool/interest.rs:30-56` |
+| Supply rate | `floor(floor(cur_ir·U/1e7)·(1e7 − bstop_rate)/1e7)` | `interest.go` `SupplyRate`; split at `v2:pool/reserve.rs:97-106` |
+
+- Exact at the stored state, approximate as "now": `U` and `ir_mod` move only when the reserve is touched, so a model
+  rate is served with its state's `last_time`.
+- **V1 is withheld.** Its `ir_mod` is 9 dp (`v1:pool/interest.rs:41`, `:84`) and `cur_ir` enters the accrual as
+  `cur_ir·100` at 9 dp (`v1:pool/interest.rs:108-112`). There is no verified port, so `Metrics` serves no V1 APR.
+- **BLNT** is closed source. From chain data it appears to take a 0.2% protocol fee off gross interest before the
+  backstop share (inferred, `blnt/reserves.go:23-27`), so a BLNT model supply rate is approximate (`fee_rate_inferred`).
+
+### How interest compounds
+
+Each load multiplies `d_rate` by `1e12 + ceil(floor(Δt·1e12 / SECONDS_PER_YEAR)·cur_ir / 1e7)`
+(`v2:pool/interest.rs:93-97`), rounded up (`v2:pool/reserve.rs:72`). The new interest, less the backstop's floor share,
+raises `b_rate` (`v2:pool/reserve.rs:97-106`). `SECONDS_PER_YEAR = 31536000`, a 365-day year (`constants.rs:10` in
+both); `yield.go`'s `SecondsPerYear` and the emissions APR use the same year. Interest is simple within one touch and
+compounds across touches, which come at irregular times. So the APR is canonical and every APY is a convention,
+named by `apy_convention`. Which one the API serves for a model rate is decided there; `yield.go` implements only
+`realised`. An APY is display-only: never summed, compared for a decision or fed into another figure.
+
+| `apy_convention` | APY |
+|---|---|
+| `realised` | `(r1/r0)^(1/years) − 1` over a realised window |
+| `daily` | `(1 + APR/365)^365 − 1` from a model rate |
+| `continuous` | `e^APR − 1` from a model rate |
+
+### Realised rate over a window: growth of the claim
+
+`RealisedAPR = (r1/r0 − 1) · SECONDS_PER_YEAR / (t1 − t0)`, exact in `big.Rat`, where `r` is one reserve's `b_rate`
+(supply) or `d_rate` (borrow). `RealisedAPY = (r1/r0)^(SECONDS_PER_YEAR / (t1 − t0)) − 1`, display only.
+
+- **It measures what a supplier is owed, not what they can withdraw.** The claim and the withdrawable amount part
+  when the reserve is 100% utilised (nothing left to withdraw), the pool is not active, or the backstop carries debt
+  in the reserve: debt moved to the backstop (`v1:pool/bad_debt.rs:18-52`; V2 `v2:pool/bad_debt.rs:53-75`, until
+  `default_liabilities`) keeps accruing through `d_rate` into `b_rate` though no one may repay it. A frozen,
+  fully utilised reserve holding such debt shows a high realised rate nobody can collect. `ComposeNetYield` takes these
+  facts and sets named `Caveats`; `Rankable` is the gate for any "earns most" list and refuses a yield with any caveat,
+  or with an unknown fact.
+- **It depends on the window's length** (compounding and quiet stretches both enter), so pools compared side by side
+  must share one window; the API fixes the window per comparison.
+- **`t0` and `t1` are the two states' `last_time`**, not the query bounds: a stored rate is as of its last touch, so
+  dividing by the query window would understate a quiet reserve's rate.
+- **Linear over the window**, so it includes the compounding inside it. Two halves' `APR·years` add up to the whole
+  only with the cross term `(a1·y1)(a2·y2)`. A 12.11% model supply rate held over 30 days of hourly accruals realises
+  12.17% (`TestRealisedAPR_MatchesModelSupplyRate`, which pins the compounded model within its derived bound, 2.4e-7).
+- **What it includes.** After creation, only accrual and defaults write `b_rate` (`v2:pool/reserve.rs:102`,
+  `v2:pool/user.rs:112`; `v1:pool/reserve.rs:106`). The backstop's take is already out of it. On BLNT (closed source)
+  the fee is inferred to come out before `b_rate` too. A gulp of donated tokens goes to `backstop_credit`, not `b_rate` (`v2:pool/gulp.rs:33`).
+- **Defaults.** A V2 default lowers `b_rate` by `ceil(default·1e12 / b_supply)`, clamped at 0
+  (`v2:pool/user.rs:110-115`). The negative realised supply rate is real and is never clamped. V1 has no write that
+  lowers `b_rate` (its bad debt moves to the backstop, `v1:pool/bad_debt.rs`), so V1 realised supply is never negative on paper.
+  Only accrual writes `d_rate` (`v2:pool/reserve.rs:72`), so realised borrow is never negative.
+- **Validity.** Both rates come from one reserve at one scale: 1e12 on V2, 1e9 on V1 (`constants.rs:4` in both), and
+  1e12 on BLNT as inferred (closed source); the ratio itself is scale-free. Refused: `r0 ≤ 0` (a `b_rate` defaulted to
+  0 has no ratio after it), `r1 < 0`, a window under one hour (`MinRealisedInterval`, the stored grain), and
+  `ErrLowResolution` unless one unit of this `r0` annualised over this window is below half the 4th decimal
+  (`r0·years > 20000`). A partial default can leave `b_rate` far below the scalar: `r0 = 1000, r1 = 1001` over an hour
+  would render 8.7600, so the caller shows "insufficient resolution", never a number. With no b-tokens or no debt a load accrues nothing (`v2:pool/reserve.rs:50-60`,
+  `v1:pool/reserve.rs:67-77`), so 0 over that time is true. Both rates start at the scalar when a reserve is created and
+  are never reset (`config.rs:136-145` in both); a config change resets only `ir_mod` (`config.rs:125-133`).
+
+### Emissions APR and net yield
+
+- **Emissions APR**, as `/v1/lending/pools/{pool}/emissions` serves it: `eps·31536000 / 10^(7+d) · P ÷ USD(side)`,
+  where the side is the supplied underlying for a supply stream and the borrowed one for a borrow stream, `d` and `P`
+  the emission token's decimals and price; exact until 4 dp (`lending_emissions_usd.go:40`, `:159-190`). A thin,
+  unverified or missing price gives no APR (`:44-64`), nor does an unread, unpriced, empty or sub-$1 side (`:28-36`).
+- **Tokens per 1000 USD per year** is `eps·31536000 / 10^(7+d) · 1000 ÷ USD(side)`: free of the emission token's
+  price, so it stays true when that price is thin.
+- **Net yield** (`ComposeNetYield`), higher is better on both sides: supply = base + emissions; borrow = emissions −
+  borrow rate. The base is a model or a realised rate.
+
+| Missing | Net | Why |
+|---|---|---|
+| Nothing | The value | |
+| Emissions | The rest, `lower_bound`, `excluded: [{kind: emissions, reason}]` | Emissions are ≥ 0, so they only add |
+| Base | Null; `excluded` names it | A base can be negative or is a cost: no bound either way |
+
+A missing component is never read as zero, and no thin-market price enters either figure.
+
 ## Pool factories (trust roots)
 
 A contract's events are attributed to Blend only if the contract is one of
