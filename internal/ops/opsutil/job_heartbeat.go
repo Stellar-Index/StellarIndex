@@ -44,6 +44,8 @@ type JobHeartbeat struct {
 	running  bool
 	finished bool
 	exitOK   bool
+	writeErr error // last write's error
+	warned   bool  // the first failure has been logged
 
 	lock *os.File // held for the process lifetime; see claimPath
 	stop chan struct{}
@@ -73,6 +75,7 @@ func NewJobHeartbeat(job, path string, now func() time.Time) *JobHeartbeat {
 func claimPath(path string) (string, *os.File) {
 	f, err := atomicfile.OpenLock(path+".lock", 0o644)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARNING heartbeat lock %s.lock unusable, writing %s unlocked: %v\n", path, path, err)
 		return path, nil
 	}
 	if lerr := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); lerr == nil {
@@ -387,11 +390,35 @@ func (h *JobHeartbeat) render() string {
 	return b.String()
 }
 
-// write renders + atomically replaces the textfile. Fail-soft by
-// contract — see the type doc.
+// write renders + atomically replaces the textfile. A failure never stops the job, but it is logged once per run
+// (the ticker would repeat it every minute) and the latest error is kept for [JobHeartbeat.FinalWriteErr].
 func (h *JobHeartbeat) write() {
 	body := h.render()
-	_ = atomicfile.WriteBytes(h.path, 0o644, []byte(body))
+	err := atomicfile.WriteBytes(h.path, 0o644, []byte(body))
+	h.mu.Lock()
+	h.writeErr = err
+	first := err != nil && !h.warned
+	if first {
+		h.warned = true
+	}
+	h.mu.Unlock()
+	if first {
+		fmt.Fprintf(os.Stderr, "%s: WARNING heartbeat write to %s failed, liveness is NOT being published: %v\n", h.job, h.path, err)
+	}
+}
+
+// FinalWriteErr is the error of the last heartbeat write, which [JobHeartbeat.Stop] makes the terminal-state write; nil when
+// it landed or the heartbeat is inert. A caller whose work is already durable returns it so the unit shows as failed.
+func (h *JobHeartbeat) FinalWriteErr() error {
+	if !h.Enabled() {
+		return nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.writeErr == nil {
+		return nil
+	}
+	return fmt.Errorf("heartbeat %s: %w", h.path, h.writeErr)
 }
 
 // sanitizeJobName reduces a subcommand name to the characters that are
