@@ -7,10 +7,30 @@ import (
 	"time"
 )
 
-// LendingRevenueUSDSpan is one pool's days to sum, [FromDay, ThroughDay], bucketed back from WindowEnd.
-type LendingRevenueUSDSpan struct {
+// LendingUSDSpan is one pool's stored days to sum, [FromDay, ThroughDay], bucketed back from WindowEnd.
+type LendingUSDSpan struct {
 	Pool                           string
 	FromDay, ThroughDay, WindowEnd time.Time
+}
+
+// LendingRevenueUSDSpan is a revenue block's span.
+type LendingRevenueUSDSpan = LendingUSDSpan
+
+// lendingUSDWindowBucket is a day's bucket back from its span's window_end: 0 that day, 1 the six before it, 2 the 23
+// before those, 3 every earlier day, so buckets 0..i sum the protocol windows 1d, 7d, 30d and all_time.
+const lendingUSDWindowBucket = `CASE WHEN d.day > t.window_end - 1 THEN 0 WHEN d.day > t.window_end - 7 THEN 1
+			WHEN d.day > t.window_end - 30 THEN 2 ELSE 3 END`
+
+// lendingUSDSpanArrays are spans as the four parallel arrays a query unnests as t(pool, from_day, through_day, window_end).
+func lendingUSDSpanArrays(spans []LendingUSDSpan) (pools, from, through, end []string) {
+	pools = make([]string, len(spans))
+	from, through, end = make([]string, len(spans)), make([]string, len(spans)), make([]string, len(spans))
+	for i, sp := range spans {
+		pools[i] = sp.Pool
+		from[i], through[i] = sp.FromDay.UTC().Format(time.DateOnly), sp.ThroughDay.UTC().Format(time.DateOnly)
+		end[i] = sp.WindowEnd.UTC().Format(time.DateOnly)
+	}
+	return pools, from, through, end
 }
 
 // LendingRevenueUSDBucketSum is one (pool, asset, bucket, current) group of lending_revenue_usd_daily. Bucket counts back
@@ -34,8 +54,7 @@ type LendingRevenueUSDBucketSum struct {
 // LendingRevenueUSDBucketSumsQuery is the one GROUP BY behind [Store.LendingRevenueUSDBucketSums]; each span reads its
 // pool's primary-key range (pool, day BETWEEN from AND through) for every asset.
 const LendingRevenueUSDBucketSumsQuery = `SELECT d.pool, d.asset,
-		CASE WHEN d.day > t.window_end - 1 THEN 0 WHEN d.day > t.window_end - 7 THEN 1
-			WHEN d.day > t.window_end - 30 THEN 2 ELSE 3 END AS bucket,
+		` + lendingUSDWindowBucket + ` AS bucket,
 		(d.valuation_rev = $5 AND d.interest_derive_rev = $6) AS current,
 		sum(d.interest_accrued_usd)::text, sum(d.supplier_share_usd)::text, sum(d.supplier_credited_usd)::text,
 		sum(d.backstop_take_usd)::text, sum(d.protocol_fee_usd)::text, sum(d.backstop_drawn_usd)::text,
@@ -54,13 +73,7 @@ func (s *Store) LendingRevenueUSDBucketSums(ctx context.Context, spans []Lending
 	if len(spans) == 0 {
 		return nil, nil
 	}
-	pools := make([]string, len(spans))
-	from, through, end := make([]string, len(spans)), make([]string, len(spans)), make([]string, len(spans))
-	for i, sp := range spans {
-		pools[i] = sp.Pool
-		from[i], through[i] = sp.FromDay.UTC().Format(time.DateOnly), sp.ThroughDay.UTC().Format(time.DateOnly)
-		end[i] = sp.WindowEnd.UTC().Format(time.DateOnly)
-	}
+	pools, from, through, end := lendingUSDSpanArrays(spans)
 	rows, err := s.db.QueryContext(ctx, LendingRevenueUSDBucketSumsQuery, pools, from, through, end, valuationRev, deriveRev, withheld)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: lending revenue usd bucket sums: %w", err)

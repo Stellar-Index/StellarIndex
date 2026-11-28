@@ -88,6 +88,7 @@ type protocolsCase struct {
 	blntListsBlendOne bool
 	thinBLNT          bool // BLND 0.05 clears the substance floor, BLNT 0.01 trades below it
 	revenue           v1.ProtocolStatsReader
+	completeness      v1.CompletenessReader // the writers' history verdicts; nil leaves every writer unverified
 }
 
 type protocolsFixture struct {
@@ -144,6 +145,7 @@ func newProtocolsServer(t *testing.T, c protocolsCase) protocolsFixture {
 		Supply:             &stubSupplyLooker{hit: true, snap: supply.Supply{CirculatingSupply: big.NewInt(1e14), TotalSupply: big.NewInt(2e14)}},
 		VerifiedCurrencies: cat,
 		ProtocolStats:      c.revenue,
+		CompletenessReader: c.completeness,
 	})
 	return protocolsFixture{ratesFixture: f, explorer: ex, srv: srv}
 }
