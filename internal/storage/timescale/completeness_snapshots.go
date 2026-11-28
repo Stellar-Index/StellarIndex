@@ -39,11 +39,17 @@ type CompletenessSnapshot struct {
 	// ProjectionEvidencedNow is write-only (no column): this run reconciled the whole served range cleanly, so the write stamps
 	// projection_evidenced_at with the same now() as computed_at and ignores ProjectionEvidencedAt.
 	ProjectionEvidencedNow bool
-	SubstrateOK            bool
-	RecognitionOK          bool
-	ProjectionOK           bool
-	Detail                 string
-	ComputedAt             time.Time
+	// AbsentByDesign: ProjectionOK rests on the operator's declaration that this network has none of the source, confirmed by a
+	// lake read over [Genesis, Tip] that found no row (migration 0241).
+	AbsentByDesign bool
+	// AbsentDeclaredButPresent: the source is declared absent, yet the lake or the served tier holds its rows, so the
+	// declaration was ignored and is wrong for this network.
+	AbsentDeclaredButPresent bool
+	SubstrateOK              bool
+	RecognitionOK            bool
+	ProjectionOK             bool
+	Detail                   string
+	ComputedAt               time.Time
 }
 
 // upsertCompletenessSnapshotQuery is the verdict write, shared so [Store.UpsertCompletenessSnapshot]
@@ -54,9 +60,11 @@ const upsertCompletenessSnapshotQuery = `
             coverage_pct, complete, lake_complete, first_problem_ledger,
             projection_verified_from,
             substrate_ok, recognition_ok, projection_ok, detail, computed_at,
-            projection_reconciled_from, projection_evidenced_at
+            projection_reconciled_from, projection_evidenced_at,
+            absent_by_design, absent_declared_but_present
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, now(),
-            $15, CASE WHEN $16::boolean THEN now() ELSE $17::timestamptz END)
+            $15, CASE WHEN $16::boolean THEN now() ELSE $17::timestamptz END,
+            $18, $19)
         ON CONFLICT (source) DO UPDATE SET
             genesis_ledger           = EXCLUDED.genesis_ledger,
             -- tip_ledger is network head and monotonic: GREATEST keeps a
@@ -75,7 +83,9 @@ const upsertCompletenessSnapshotQuery = `
             detail                   = EXCLUDED.detail,
             computed_at              = now(),
             projection_reconciled_from = EXCLUDED.projection_reconciled_from,
-            projection_evidenced_at  = EXCLUDED.projection_evidenced_at
+            projection_evidenced_at  = EXCLUDED.projection_evidenced_at,
+            absent_by_design         = EXCLUDED.absent_by_design,
+            absent_declared_but_present = EXCLUDED.absent_declared_but_present
         -- CS-083: never let a regressive-window run (a smaller -to, or a
         -- mid-walk stall) overwrite a more-advanced verdict — that's how a
         -- source read complete=true pinned at a STALE tip. Apply the update
@@ -110,6 +120,7 @@ func execCompletenessSnapshot(ctx context.Context, ex snapshotExecer, snap Compl
 		snap.foundProblem(),
 		int64(snap.ProjectionReconciledFrom), snap.ProjectionEvidencedNow,
 		sql.NullTime{Time: snap.ProjectionEvidencedAt, Valid: !snap.ProjectionEvidencedAt.IsZero()},
+		snap.AbsentByDesign, snap.AbsentDeclaredButPresent,
 	)
 	if err != nil {
 		return false, err
@@ -185,7 +196,8 @@ func (s *Store) ListCompletenessSnapshots(ctx context.Context) ([]CompletenessSn
                coverage_pct, complete, lake_complete, first_problem_ledger,
                projection_verified_from,
                substrate_ok, recognition_ok, projection_ok, detail, computed_at,
-               projection_reconciled_from, projection_evidenced_at
+               projection_reconciled_from, projection_evidenced_at,
+               absent_by_design, absent_declared_but_present
         FROM completeness_snapshots
         ORDER BY source`
 	rows, err := s.db.QueryContext(ctx, q)
@@ -207,6 +219,7 @@ func (s *Store) ListCompletenessSnapshots(ctx context.Context) ([]CompletenessSn
 			&projFrom,
 			&snap.SubstrateOK, &snap.RecognitionOK, &snap.ProjectionOK, &snap.Detail, &snap.ComputedAt,
 			&reconciledFrom, &evidencedAt,
+			&snap.AbsentByDesign, &snap.AbsentDeclaredButPresent,
 		); err != nil {
 			return nil, fmt.Errorf("timescale: ListCompletenessSnapshots scan: %w", err)
 		}

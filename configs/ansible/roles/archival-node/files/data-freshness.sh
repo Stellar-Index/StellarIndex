@@ -296,6 +296,23 @@ then
   PROBE_FAILED=$((PROBE_FAILED + 1))
 fi
 
+# Completeness sources declared absent by design (compute-completeness -absent-by-design), as
+# compute-completeness stored them: domain "completeness" on the same two gauges as above. A
+# declared source the lake or served tier holds rows for reads _declared_but_present 1.
+# Its own query: it reads migration 0241's columns and must not take the verdict gauge down.
+if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -v ON_ERROR_STOP=1 -tA -F$'\t' >> "$TMP" <<'SQL'
+SELECT 'stellarindex_data_freshness_absent_by_design{domain="completeness",source="'||source||'"} 1'
+  FROM completeness_snapshots WHERE absent_by_design OR absent_declared_but_present
+UNION ALL
+SELECT 'stellarindex_data_freshness_absent_declared_but_present{domain="completeness",source="'||source||'"} '
+       ||absent_declared_but_present::int::text
+  FROM completeness_snapshots WHERE absent_by_design OR absent_declared_but_present;
+SQL
+then
+  echo "data-freshness: completeness absent-by-design query failed — its gauges skipped this tick, others unaffected" >&2
+  PROBE_FAILED=$((PROBE_FAILED + 1))
+fi
+
 # Per-source recognition verdict, the OWNED bucket. attributeRecognitionGaps puts gaps on
 # contracts a source OWNS on that source's recognition axis and unowned ones in the system
 # `recognition` census. Only the owned kind is a defect: an indexed protocol emitted an

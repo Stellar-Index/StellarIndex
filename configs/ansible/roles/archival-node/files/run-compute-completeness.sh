@@ -72,6 +72,11 @@ if [ "$#" -gt 0 ]; then
 else
   MODE=(-pass -timeout "$PASS_TIMEOUT")
 fi
+# COMPLETENESS_ABSENT_BY_DESIGN (the unit renders it from stellarindex_sources_absent_by_design):
+# every unit must pass it, or the weekly -source re-proof rewrites the declared verdict red.
+if [ -n "${COMPLETENESS_ABSENT_BY_DESIGN:-}" ]; then
+  MODE+=(-absent-by-design "$COMPLETENESS_ABSENT_BY_DESIGN")
+fi
 
 echo "compute-completeness: ${MODE[*]} refresh to tip=$TIP"
 if ! "$OPS" compute-completeness -config "$CONFIG" -ch -ch-addr "$CH_ADDR" \

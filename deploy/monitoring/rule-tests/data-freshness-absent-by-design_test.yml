@@ -37,9 +37,43 @@ tests:
               summary: "sep1/issuers is declared absent by design but holds rows"
               description: |
                 stellarindex_data_freshness_absent_declared_but_present{domain="sep1",source="issuers"} = 1
-                — futurenet lists sep1/issuers in
-                stellarindex_sources_absent_by_design, but the source has data. It is judged
-                by its normal staleness rule meanwhile. Remove it from the host's list.
+                — futurenet declares sep1/issuers in
+                stellarindex_sources_absent_by_design (domain "completeness": listed by its bare
+                source name), but the source has data. It keeps its normal staleness rule or
+                completeness verdict meanwhile. Remove it from the host's list.
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_data_source_absent_declared_but_present
+
+  # The completeness half: compute-completeness records a declared source whose lake or served
+  # tier holds rows, and data-freshness.sh exports it under domain="completeness".
+  - interval: 1m
+    name: a declared-absent completeness source that holds rows fires after 1h
+    input_series:
+      - series: 'stellarindex_data_freshness_absent_declared_but_present{domain="completeness",source="sdex",instance="testnet",job="node"}'
+        values: '1x90'
+      - series: 'stellarindex_data_freshness_absent_declared_but_present{domain="completeness",source="soroswap",instance="testnet",job="node"}'
+        values: '0x90'
+    alert_rule_test:
+      - eval_time: 75m
+        alertname: stellarindex_data_source_absent_declared_but_present
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: data-freshness
+              domain: completeness
+              source: sdex
+              instance: testnet
+              job: node
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_data_source_absent_declared_but_present
+              summary: "completeness/sdex is declared absent by design but holds rows"
+              description: |
+                stellarindex_data_freshness_absent_declared_but_present{domain="completeness",source="sdex"} = 1
+                — testnet declares completeness/sdex in
+                stellarindex_sources_absent_by_design (domain "completeness": listed by its bare
+                source name), but the source has data. It keeps its normal staleness rule or
+                completeness verdict meanwhile. Remove it from the host's list.
 
                 Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_data_source_absent_declared_but_present
 

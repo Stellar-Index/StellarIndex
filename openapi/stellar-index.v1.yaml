@@ -8675,6 +8675,17 @@ paths:
                                     carried from a verdict that predates this
                                     field). An old or `null` value under a clean
                                     claim raises `flags.stale`.
+                                absent_by_design:
+                                  type: boolean
+                                  description: |
+                                    `true` when `projection_ok` rests on the
+                                    operator declaring that this network has none
+                                    of the source (a quiet test net with, say, no
+                                    SDEX trade ever) AND a lake read over the whole
+                                    `[genesis_ledger, tip_ledger]` finding no row.
+                                    It is a verified absence, not a reconciled
+                                    projection. Read from the stored verdict.
+                                    Omitted otherwise; pubnet declares nothing.
                                 coverage_pct:
                                   type: number
                                   minimum: 0
