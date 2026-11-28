@@ -100,6 +100,17 @@ func DecodeV2Instance(storage []scval.ScMapEntry) (Config, error) {
 	return cfg, nil
 }
 
+// DecodeYBForkV2Instance decodes a YieldBlox-fork adapter's instance storage: its storage.rs and types.rs
+// contracttypes are v2.0.0's byte for byte, so only the program differs.
+func DecodeYBForkV2Instance(storage []scval.ScMapEntry) (Config, error) {
+	cfg, err := DecodeV2Instance(storage)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Program = ProgramYBForkV2
+	return cfg, nil
+}
+
 type oracleV2 struct {
 	address              string
 	decimals, resolution uint32
@@ -185,7 +196,7 @@ func decodeAssetV2(v scval.ScVal, oracles []oracleV2) (AssetRule, error) {
 
 // IsBase reports whether a v2 adapter prices the asset as exactly one Base without reading a feed.
 func (c Config) IsBase(a Asset) bool {
-	return c.Program == ProgramV2 && (a == c.Base || containsAsset(c.BaseAssets, a))
+	return c.Program.v2Storage() && (a == c.Base || containsAsset(c.BaseAssets, a))
 }
 
 func (c *Config) markUnreadable(a Asset, err error) {

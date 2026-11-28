@@ -315,6 +315,22 @@ func TestPoolOraclePrices_RoundMissingHere(t *testing.T) {
 	}
 }
 
+// The YieldBlox fork's max_dev path compares with the feed's previous record however far back it is, so the read
+// window covers the feed's whole history: here XLM (max_dev 60) last priced 100 periods before the newest round.
+func TestPoolOraclePrices_YBForkReadsPreviousRecordFarBack(t *testing.T) {
+	far := oracleRound.Add(-100 * 300 * time.Second)
+	rows := []fakeOracleRow{
+		cexRow(oracleCEXFeed, "crypto:XLM", oracleRound, oracleLedger-10, 2e14),
+		cexRow(oracleCEXFeed, "crypto:XLM", far, oracleLedger-6000, 15e13),
+	}
+	s, _ := newOracleServer(t, oracleagg.HashYBForkV2, rows, oracleFeedStorage(t, oracleRound, 300_000, feedPeriods{cexXLM: {0, 100}}))
+	x, basis := priceXLM(t, s)
+	// |2e14 − 1.5e14| = 5e13 < 1.5e14·60/100 = 9e13 → the newest record, 2e14 / 10^7.
+	if basis.Program != oracleagg.ProgramYBForkV2 || x.Verdict != "" || x.Price.Price.String() != "20000000" {
+		t.Fatalf("XLM = %+v basis %+v", x, basis)
+	}
+}
+
 // The feed's live resolution comes from its instance: at 60 s, R−300 is period 5, not period 1.
 func TestPoolOraclePrices_FeedResolutionFromChain(t *testing.T) {
 	rows := []fakeOracleRow{
