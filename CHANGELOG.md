@@ -20,6 +20,22 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.145.0] - 2026-11-28
+
+Tested against Stellar protocol 27. Migration 0240 (schema version 240): two new tables, `lending_emissions_usd_daily` and `lending_emissions_usd_coverage`, and their API-role grants; nothing existing is altered. No `pkg/*` break. No ClickHouse DDL change. No API shape change: one `usd_reason` description is widened.
+
+### Added
+
+- **api:** the lending emissions USD daily rollup worker stores, per pool and UTC day, the same USD the emissions history endpoint serves for that day, with per-pool coverage. It runs on the shared day-rollup skeleton, is off unless `stellarindex_lending_emissions_rollup_enabled` is set, and nothing reads its rows yet. A day whose read lands off the UTC day, or whose emission-token decimals read failed, is not stored and is retried; a pool with no coverage row is unknown, never zero. Alerts `stellarindex_lending_emissions_rollup_stalled` and `stellarindex_lending_emissions_rollup_sweep_mismatch` (tickets) in both rule trees (#4456).
+
+### Changed
+
+- **api:** the day-rollup cycle log carries `pools_skipped`; a pool whose planning read fails is a contained per-pool failure rather than a failed cycle (#4456).
+
+### Fixed
+
+- **api:** a token-decimals read that fails is no longer served or stored as `decimals_unknown`. It now reads `price_read_failed`, the response is degraded and not cached, and the lending revenue rollup leaves the day unstored and retries it. Affects `/v1/lending/pools/{pool}/revenue`, `/reserves`, reserve and pool history, backstop and auction USD, `/emissions`, and the TVL exclusion on `/v1/lending/protocols`. Reserve history reads the scale once, so a null `decimals` can no longer sit beside an exact USD value. Revenue rows already stored with a false `decimals_unknown` are rewritten by the daily sweep within a day; `stellarindex_lending_revenue_rollup_sweep_mismatch` may raise its ticket during that period, where it means a stored row was corrected (#4457).
+
 ## [v0.144.0] - 2026-11-27
 
 Tested against Stellar protocol 27. No migration (schema version stays 239). No `pkg/*` break. No ClickHouse DDL change. No API contract change: several responses now carry the correct UTC day or month where a non-UTC ClickHouse server zone shifted it.
@@ -111,23 +127,3 @@ Tested against Stellar protocol 27. One additive migration, 0238 (schema version
 
 - **storage:** a rollup partition holding more than one build is no longer served. After a restart inside `old_parts_lifetime` (480 s) of a `REPLACE PARTITION`, the replaced parts came back beside the new ones and `account_op_type_counts` partition 65 served doubled counts for about 35 minutes. The counts rollups (op types, movements) now read such a partition from the source with `FINAL`, and the job replaces it without `-shrink-ok`; a genuine shrink in a single build still refuses. The `contracts_census_daily` directory query takes one row per (day, contract) before summing. `ErrCountsShrink` no longer says the lake lost rows. The restart runbook gains a pre-restart and a post-restart check. Open: `asset_stats_daily` has the same exposure and no served reader (#4417).
 - **indexer:** `TestRecordHashdb_DurationExcludesMarshal` reads a fake clock instead of sleeping, so it no longer fails on a loaded machine (#4418).
-
-## [v0.140.0] - 2026-11-26
-
-Tested against Stellar protocol 27. One additive migration, 0237 (schema version 237): the new empty table `aquarius_pools`, applied automatically by the deploy. No `pkg/*` break (no change under `pkg/`). No ClickHouse DDL change, so no operator DDL. Operators: the stored `aquarius_liquidity` rows for the 63 concentrated Aquarius pools (ledger 62,339,683 onward) keep their old, mis-ordered amounts until the liquidity-only `projected-rebuild -only-kinds aquarius.liquidity` procedure in `docs/operations/runbooks/projector.md` is run; the decoder fix alone does not rewrite them. No served route reads those amounts or shares, and pool reserves and TVL are unchanged.
-
-### Added
-
-- **aquarius:** migration 0237 adds `aquarius_pools (contract_id, pool_type, first_ledger, observed_at)`, the raw `add_pool` type of each pool. The live indexer writes it, the boot warm reads it, and rebuild and audit tools only read it, so a pool announced after the in-code census keeps its liquidity layout across restarts. A live type that contradicts the in-code list is not written (ERROR and a failure counter); a stored row that contradicts it leaves only that pool's liquidity refused. The ingestion-sink runbook has the recovery SQL (#4411).
-- **ops:** `projected-rebuild -only-kinds <kind,...>` limits a run to the named decoder output kinds, so a decoder fix to one kind no longer rewrites every trade's `usd_volume`. Checkpoints carry the kind list, an empty or undeclared kind is refused before any work, aggregates refresh only when a trade kind is written, and the summary reports written and failed counts per kind and the run's `derive_generation`. For aquarius it lists every gated pool whose layout is not established. The projector runbook gains the liquidity-only correction procedure (#4413).
-- **supply:** skip reasons `topic_not_token_shaped` (no alert) and `topic_unparseable` (alerts, including an unreadable `topic[0]`); `ch-cap67-movements` moves a contract's topic-shape skips to `token_topic_not_token_shaped` (alerts) when the same window decoded a movement for it (#4412).
-
-### Changed
-
-- **supply:** an event with too few topics no longer counts under `not_token_shaped`, so pool mints stop counting toward the supply skip alerts; both skip alerts exclude `topic_not_token_shaped` in both rule trees. The two judged-non-token pool entries are removed, since the topic rule skips their burns first. `supply_flows` rows are unchanged (#4412).
-- **ops:** the Aquarius router build `2f8e7d7f` (upgraded in place at ledger 65,663,788) is recorded as audited in the WASM audit record, with four post-upgrade router events and the matching pool-side events as fixtures; the daily wasm-drift run no longer reports it (#4409).
-
-### Fixed
-
-- **aquarius:** concentrated pools emit `deposit_liquidity` and `withdraw_liquidity` as `[liquidity, amount0, amount1]`, not `[amounts..., shares]`, and were stored shares-last. They now decode in their own order and store shares NULL, and an event whose layout is unknown is refused. Layouts come from the `add_pool` type or two in-code lists that match the census of 395 pools (332 classic, 63 concentrated); boot logs a WARN for any warmed pool in neither. The audit record corrects the earlier sign-off of the four concentrated builds. Stored rows are corrected by the runbook procedure above (#4410).
-- **monitoring:** `stellarindex_textfile_producer_stale` no longer fires on the heartbeats of one-off jobs without a timer (`ch_backfill`, `supply_seed_sac_balances`, `supply_seed_claimable_balances`); unknown and scheduled producers still alert (#4414).
