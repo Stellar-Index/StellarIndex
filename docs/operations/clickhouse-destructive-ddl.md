@@ -119,3 +119,25 @@ clickhouse-client --port 9300 -q "SELECT name,value FROM system.server_settings 
 sudo grep -rn 'size_to_drop' /etc/clickhouse-server/config.xml /etc/clickhouse-server/config.d/
 ls -la /var/lib/clickhouse/flags/   # no stale force_drop_table
 ```
+
+## System log retention
+
+The server's own `system.*_log` tables carry a bounded TTL from
+`/etc/clickhouse-server/config.d/si-system-log-ttl.xml`, rendered from
+`clickhouse_system_log_retention_days` in the role's `defaults/main.yml`
+(days: query_log 14, part_log 30, text_log 7, trace_log 3,
+processors_profile_log 1, query_views_log / metric_log /
+asynchronous_metric_log / query_metric_log / background_schedule_pool_log 7,
+error_log and crash_log 30). Change a value there and apply
+`--tags clickhouse-system-log-ttl`.
+
+- The role does not restart ClickHouse. Log table definitions load at server
+  start, so the new TTLs apply at the next restart you schedule (not within
+  ~10 min of a REPLACE PARTITION). That restart renames each changed table to
+  `<name>_N`.
+- Every apply runs `/usr/local/sbin/ch-system-log-leftovers --apply`, which drops
+  only `system.<allowlisted log>_<digits>`, using the one-shot force flag above
+  for a table over the drop limit. List without dropping:
+  `ch-system-log-leftovers <log names>`.
+- Readers need at most 1 day of `query_log` (the runbooks and the `default`-user
+  check in `20-clickhouse-serving-profile.yml`).

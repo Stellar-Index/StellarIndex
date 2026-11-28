@@ -1,0 +1,12 @@
+<!-- Managed by ansible (archival-node/tasks/25-clickhouse-system-log-ttl.yml).
+     Bounded retention for ClickHouse's own system log tables, which have no
+     TTL by default. Values: clickhouse_system_log_retention_days in
+     defaults/main.yml. Applies at the next server restart (a changed table
+     definition renames the old table to <name>_N; the role drops those). -->
+<clickhouse>
+{% for name, days in clickhouse_system_log_retention_days.items() | sort %}
+    <{{ name }}>
+        <ttl>event_date + INTERVAL {{ days | int }} DAY DELETE</ttl>
+    </{{ name }}>
+{% endfor %}
+</clickhouse>

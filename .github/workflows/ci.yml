@@ -2329,6 +2329,11 @@ jobs:
         # carries maxsize; the stock postgresql-common conffile has none.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-pg-logrotate-cap-test.sh
+      - name: clickhouse system-log TTL test
+        # Every system log table needs a bounded ttl and the leftover
+        # cleanup may only match <allowlisted log>_<digits>.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-clickhouse-system-log-ttl-test.sh
       - name: prometheus port var wiring test (SL19)
         # prometheus.yml.j2, prometheus.service.j2 and 06-firewall.yml
         # hardcoded literal 9090/9093 instead of referencing

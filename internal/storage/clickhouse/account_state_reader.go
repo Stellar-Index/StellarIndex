@@ -44,9 +44,11 @@ type AccountState struct {
 	// that bypasses the cache gets 0, as does an unreadable watermark.
 	AsOfLedger uint32
 	// CachedAt and RefreshFailed are stamped on a cache read ([ExplorerReader.AccountStateCached]):
-	// when the entry was filled, and whether the last finished refresh failed or was skipped.
-	CachedAt      time.Time
-	RefreshFailed bool
+	// when the entry was filled, and whether the last finished refresh failed. RefreshRefused is
+	// per serve: this read's refresh was turned away by the gate; the entry's outcome is untouched.
+	CachedAt       time.Time
+	RefreshFailed  bool
+	RefreshRefused bool
 }
 
 type AccountSigner struct {

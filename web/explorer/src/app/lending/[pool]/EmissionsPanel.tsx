@@ -10,6 +10,7 @@ import type { paths } from '@/api/types';
 import { formatBaseUnits, formatCompactTokenUnits } from '@/lib/format';
 import { shortAssetText } from '@/lib/asset-label';
 import { useAssetText } from '../lendingUsd';
+import { EmissionsHistory } from './EmissionsHistory';
 
 export type Emissions =
   paths['/lending/pools/{pool}/emissions']['get']['responses'][200]['content']['application/json']['data'];
@@ -105,10 +106,14 @@ export function EmissionsPanel({ pool }: { pool: string }) {
     <Panel
       headingLevel={2}
       title="Emissions"
-      hint={`${token} emitted per day to each side of each reserve and to the backstop, from contract storage`}
+      hint={`${token} emitted over time by stream, then the current rate per day to each side of each reserve and to the backstop, from contract storage`}
       source={asExample(`/v1/lending/pools/${pool}/emissions`, {})}
       bodyClassName="space-y-3"
     >
+      <EmissionsHistory pool={pool} />
+      <h3 className="text-ink-body pt-2 text-xs font-medium">
+        Current rate per day
+      </h3>
       {q.isLoading && (
         <p className="text-ink-muted text-sm">Loading emissions…</p>
       )}

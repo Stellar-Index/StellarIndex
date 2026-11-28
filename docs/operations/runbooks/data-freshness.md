@@ -71,6 +71,25 @@ Fix, by domain:
 4. `trades`: connector/dispatcher stopped, check the indexer. For `phoenix`/`comet` first confirm it is not a quiet market (query the lake for swap events on a known pool).
 5. `sep41_supply`: live `supply_flows` write into ClickHouse stalled. `curl -s http://localhost:8123/ --data-binary "SELECT 1"`, then the `ch-supply` gap-fill timer. If the whole `data_freshness.prom` looks frozen, go to [probe_frozen](#stellarindex_data_freshness_probe_frozen).
 
+## Absent-by-design sources
+
+A network can have none of a source: a reset futurenet has no SEP-1 issuers and no SEP-41 supply flows, so on a chain older than the threshold their empty tables read stale forever. On pubnet an empty one of these is a fault, so the rule is not loosened; instead the host declares which sources its network lacks, in its inventory:
+
+```yaml
+stellarindex_sources_absent_by_design: [sep1/issuers, sep41_supply/supply_flows]
+```
+
+Names are `<domain>/<source>` as the gauges label them. Known names: `sep1/issuers`, `supply/asset_supply_history`, `sep41_supply/supply_flows`. Apply with `--tags ops-jobs` (it renders `data-freshness.service`). Effect per declared source:
+
+- empty: `stale=0`, `empty=1`, and `stellarindex_data_freshness_absent_by_design=1` so the declaration shows;
+- holding rows: the normal staleness rule, plus `stellarindex_data_freshness_absent_declared_but_present=1` ([below](#stellarindex_data_source_absent_declared_but_present)).
+
+An unknown name voids the whole list (every source is judged normally) and fails `data-freshness.service` (`stellarindex_systemd_unit_failed`); `journalctl -u data-freshness.service` names it. The list does not cover `stellarindex_completeness_incomplete`: the ADR-0033 verdict for a source with no on-chain activity still reads "no evidence".
+
+## stellarindex_data_source_absent_declared_but_present
+
+Trips: `stellarindex_data_freshness_absent_declared_but_present == 1` for 1 h. The host lists the source in `stellarindex_sources_absent_by_design`, but it holds rows, so the network does have it. The source is judged by its normal staleness rule meanwhile, but the declaration would excuse it again the day its table empties (a reset). Remove the entry from the host's inventory and re-apply `--tags ops-jobs`.
+
 ## stellarindex_supply_assets_stale
 
 Trips: `stellarindex_supply_assets_stale > 0`, `for: 2h`. Value = watched assets with no supply snapshot for over 30 h (worst age: `stellarindex_supply_asset_max_age_seconds`); the watched set is assets with rows in the 30 days before the newest supply row. Those assets serve a FROZEN supply (and market cap/FDV); the whole-table `supply` gauge usually stays green. MTTR 30 min-hours.

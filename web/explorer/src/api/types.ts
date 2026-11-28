@@ -7529,6 +7529,167 @@ export interface components {
             /** @description Days, hours or versions as `reason` says; null for a reason without one. */
             count: number | null;
         };
+        /**
+         * @description The protocol's lending emissions over complete UTC days, summed from the stored day-by-day valuation
+         *     (`lending_emissions_usd_daily`, written by the emissions rollup; see `/v1/lending/pools/{pool}/emissions/history`
+         *     for the streams). Windows end on the same `through_day` as the revenue block's rule: the latest day any of the
+         *     protocol's pools is valued through, with a pool short of a window named `days_not_valued`. Each stream is its own
+         *     layer of the same tokens (scheduled to reserves, allocated by the backstop, claimed), so there is no summed
+         *     "emissions" figure: adding the streams would count tokens more than once. Until the rollup has run every stream is
+         *     null with `usd_reason` `not_valued`, never zero.
+         */
+        LendingProtocolEmissions: {
+            /** @description True when a read behind the block failed or ran past its budget (`price_read_failed`, `emissions_read_failed`, `emissions_timed_out`, `pool_list_read_failed`, `history_verdict_unread`); the response is then also `degraded` and not cached as good. */
+            degraded: boolean;
+            /** @description C-strkey of the one emission token every summed row is in (BLND's or BLNT's SAC); null when the rows name none or several. */
+            emission_token: string | null;
+            /** @description Decimals of `emission_token`; every `amount` is in its base units. */
+            emission_token_decimals: number | null;
+            "1d": components["schemas"]["LendingProtocolEmissionsWindow"];
+            "7d": components["schemas"]["LendingProtocolEmissionsWindow"];
+            "30d": components["schemas"]["LendingProtocolEmissionsWindow"];
+            all_time: components["schemas"]["LendingProtocolEmissionsWindow"];
+        };
+        /**
+         * @description One window, [`from_day`, `through_day`] inclusive.
+         * @example {
+         *       "from_day": "2026-11-14",
+         *       "through_day": "2026-11-20",
+         *       "streams": {
+         *         "reserve_schedule": {
+         *           "amount_usd": "412.37",
+         *           "lower_bound": false,
+         *           "usd_reason": null,
+         *           "amount": "941484000000.0000000",
+         *           "amount_lower_bound": false,
+         *           "amount_reason": null,
+         *           "approximate": false
+         *         },
+         *         "pool_claims": {
+         *           "amount_usd": "96.10",
+         *           "lower_bound": true,
+         *           "usd_reason": null,
+         *           "amount": "219406000000",
+         *           "amount_lower_bound": false,
+         *           "amount_reason": null,
+         *           "approximate": false
+         *         },
+         *         "backstop_alloc_backstop": {
+         *           "amount_usd": "0.00",
+         *           "lower_bound": false,
+         *           "usd_reason": null,
+         *           "amount": "0",
+         *           "amount_lower_bound": false,
+         *           "amount_reason": null,
+         *           "approximate": false
+         *         },
+         *         "backstop_alloc_pool": {
+         *           "amount_usd": "0.00",
+         *           "lower_bound": false,
+         *           "usd_reason": null,
+         *           "amount": "0",
+         *           "amount_lower_bound": false,
+         *           "amount_reason": null,
+         *           "approximate": false
+         *         },
+         *         "backstop_claims": {
+         *           "amount_usd": null,
+         *           "lower_bound": true,
+         *           "usd_reason": "stream_unavailable",
+         *           "amount": null,
+         *           "amount_lower_bound": true,
+         *           "amount_reason": "stream_unavailable",
+         *           "approximate": false
+         *         }
+         *       },
+         *       "excluded": [
+         *         {
+         *           "pool": "CDVQVKOY2YSXS2IC7KN6MNASSHPAO7UN2UR2ON4OI2SKMFJNVAILDX7G",
+         *           "stream": "pool_claims",
+         *           "reason": "no_price_within_bound",
+         *           "count": 1
+         *         },
+         *         {
+         *           "pool": "CDVQVKOY2YSXS2IC7KN6MNASSHPAO7UN2UR2ON4OI2SKMFJNVAILDX7G",
+         *           "stream": "backstop_claims",
+         *           "reason": "backstop_claim_names_no_pool",
+         *           "count": null
+         *         }
+         *       ]
+         *     }
+         */
+        LendingProtocolEmissionsWindow: {
+            /**
+             * Format: date
+             * @description First UTC day summed; null when no pool is valued.
+             */
+            from_day: string | null;
+            /**
+             * Format: date
+             * @description Last UTC day summed, the same in every window; null when no pool is valued.
+             */
+            through_day: string | null;
+            /** @description The stored streams by their stored names. `pool_claims` includes the single-reserve claims `/emissions/history` also lists by reserve; those are not a stream here. */
+            streams: {
+                reserve_schedule: components["schemas"]["LendingProtocolEmissionAmounts"];
+                pool_claims: components["schemas"]["LendingProtocolEmissionAmounts"];
+                backstop_alloc_backstop: components["schemas"]["LendingProtocolEmissionAmounts"];
+                backstop_alloc_pool: components["schemas"]["LendingProtocolEmissionAmounts"];
+                backstop_claims: components["schemas"]["LendingProtocolEmissionAmounts"];
+            };
+            /** @description What the window leaves out; an entry sets `lower_bound` on the streams it names (every stream when `stream` is null). */
+            excluded: components["schemas"]["LendingProtocolEmissionsExclusion"][];
+        };
+        /** @description One stream's window: `amount_usd` is the exact USD sum of the stored days rounded once to cents, `amount` the exact base-unit sum. Each is null with its reason when nothing of it can be summed; never `"0.00"` for days that were not valued. A covered day with no stored row had nothing, so a window of such days is an exact zero. */
+        LendingProtocolEmissionAmounts: {
+            /** @description USD of the stream's tokens, each hour at that hour's emission-token price. */
+            amount_usd: string | null;
+            /** @description True when `excluded` names anything of this stream or of a pool as a whole: `amount_usd` is a floor. */
+            lower_bound: boolean;
+            /**
+             * @description Why `amount_usd` is null. `not_valued`: no pool is valued inside the window (every host before the rollup has run). `stream_unavailable`: no valued pool serves the stream; `excluded` names each pool's reason. `all_excluded`: every stored row was left out; `excluded` names why.
+             * @enum {string|null}
+             */
+            usd_reason: "not_valued" | "stream_unavailable" | "all_excluded" | null;
+            /** @description Base units of `emission_token`, exact (a schedule carries up to 7 fractional digits). */
+            amount: string | null;
+            /** @description True when tokens are left out of `amount` (a pool or its days not valued, a stream not served, rows of an older revision, or a stream the stored day itself bounds); a USD-only exclusion leaves it false. */
+            amount_lower_bound: boolean;
+            /**
+             * @description Why `amount` is null: as `usd_reason`, or the block cannot name one emission token for its rows (`emission_token` is then null), which nulls every stream's `amount` while the USD is summed as usual: `emission_token_mixed` the rows are in different tokens, `emission_token_not_stored` a row names no token, `emission_token_decimals_unknown` a row names its token but not its decimals.
+             * @enum {string|null}
+             */
+            amount_reason: "not_valued" | "stream_unavailable" | "all_excluded" | "emission_token_mixed" | "emission_token_not_stored" | "emission_token_decimals_unknown" | "emissions_read_failed" | null;
+            /** @description True when some tokens summed are an approximate schedule's (BLNT's, rebuilt from events to dust); not a lower bound. */
+            approximate: boolean;
+        };
+        /** @description What an emissions window leaves out and why. */
+        LendingProtocolEmissionsExclusion: {
+            /** @description Pool contract C-strkey; null for `pool_list_read_failed` and the writer verdicts, which judge every pool's stream. */
+            pool: string | null;
+            /** @description The stream left short; null when the reason covers all of the pool's streams. */
+            stream: string | null;
+            /**
+             * @description Pool-level (`stream` null): `not_valued` the pool has no valued day at the current valuation revision;
+             *     `days_not_valued` window days outside the pool's valued days (`count` days); `emissions_read_failed` the stored
+             *     days could not be read; `emissions_timed_out` the block's reads ran past their budget. Protocol-level (`pool`
+             *     null): `pool_list_read_failed`; and per stream, the stream's writer verdict judged now, as
+             *     `/emissions/history` judges it: `history_unverified` (the writer's projection is not verified back to its first
+             *     ledger), `history_verdict_stale` or `history_verdict_unread`. While a writer is not verified a stored day with
+             *     no row is not proven empty, so the stream is a floor. Stream-level: the reason `/emissions/history` gives for a
+             *     stream it does not serve (e.g. `backstop_claim_names_no_pool`); `valuation_stale` rows stored at an older
+             *     valuation revision, left out until re-valued; a stored row's `usd_reason` (e.g. `no_price_within_bound`,
+             *     `reads_disagree`), its USD left out and its tokens kept; the refusal of the emission token judged now:
+             *     `emission_token_unverified` it is not the protocol token's verified SAC (`emission_token_unread` when the row
+             *     names none), `withheld` or `price_read_failed` the
+             *     refusal the token's walk gives over its latest stored day with USD;
+             *     a reason the stored day's stream was bounded by (e.g. `amount_unread`, `writer_behind_lake`); `price_missing`
+             *     hours with tokens but no price (`count` hours). Otherwise `count` is stored rows (one per stream line and day).
+             */
+            reason: string;
+            /** @description Days, hours or stored rows as `reason` says; null for a reason without one. */
+            count: number | null;
+        };
         /** @description What a lending figure leaves out and why. */
         LendingStatsExclusion: {
             /** @enum {string} */
@@ -19654,6 +19815,7 @@ export interface operations {
                             /** @description Kinds `pool_list`, `pool`, `reserve`, `backstop` and `token`; `supply` and `borrow` are an account's earnings legs. */
                             excluded?: components["schemas"]["LendingStatsExclusion"][];
                             revenue?: components["schemas"]["LendingProtocolRevenue"];
+                            emissions?: components["schemas"]["LendingProtocolEmissions"];
                         }[];
                     };
                 };

@@ -1,0 +1,49 @@
+---
+# Bounded retention for ClickHouse's own system log tables, plus removal of the
+# renamed leftovers (system.<log>_<N>) a changed log definition leaves behind.
+#
+# Deliberately NO `notify: Restart clickhouse-server`: log-table definitions are
+# read at server start only, so the new TTLs take effect at the next restart the
+# operator schedules (never within ~10 min of a REPLACE PARTITION). Applying this
+# tag never bounces the lake. On that restart the server renames each changed
+# table to <name>_N and creates a fresh bounded one; the next apply (or this
+# tag re-run) drops the renamed copies. Same gate as the other CH-config files,
+# so r1 (run_clickhouse false, ClickHouse present) is reached:
+#
+#   ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
+#     --tags clickhouse-system-log-ttl --check --diff
+
+- name: Render ClickHouse system log TTL config
+  when: clickhouse_system_log_ttl_enabled | default(true) | bool
+  ansible.builtin.template:
+    src: clickhouse-system-log-ttl.xml.j2
+    dest: /etc/clickhouse-server/config.d/si-system-log-ttl.xml
+    owner: root
+    group: root
+    mode: "0644"
+  tags: [clickhouse, clickhouse-system-log-ttl]
+
+- name: Install the system-log leftover cleanup script
+  when: clickhouse_system_log_ttl_enabled | default(true) | bool
+  ansible.builtin.copy:
+    src: ch-system-log-leftovers.sh
+    dest: /usr/local/sbin/ch-system-log-leftovers
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [clickhouse, clickhouse-system-log-ttl]
+
+- name: Drop renamed system log leftovers (allowlisted names only)
+  # Not run under --check: command modules do not run there.
+  when:
+    - clickhouse_system_log_ttl_enabled | default(true) | bool
+    - not ansible_check_mode
+  ansible.builtin.command:
+    argv: >-
+      {{ ['/usr/local/sbin/ch-system-log-leftovers', '--apply']
+         + (clickhouse_system_log_retention_days.keys() | sort | list) }}
+  environment:
+    CLICKHOUSE_PORT: "{{ clickhouse_tcp_port | default(9300) }}"
+  register: ch_system_log_leftovers
+  changed_when: "'DROPPED ' in ch_system_log_leftovers.stdout"
+  tags: [clickhouse, clickhouse-system-log-ttl]

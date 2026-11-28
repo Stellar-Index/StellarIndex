@@ -113,23 +113,15 @@ func revenueCovered(covs map[string]timescale.LendingRevenueUSDCoverage, p reven
 	return c, ok && current && p.skip == "" && !c.ThroughDay.Before(c.FloorDay)
 }
 
-// protocolRevenueSpan is the block's day range: through the latest valued day of any of its pools, from the earliest floor.
-// A pool valued through an earlier day is named for the days it lacks, so the latest day is never hidden by the slowest pool.
+// protocolRevenueSpan is the block's [coveredSpan] over its valued pools.
 func protocolRevenueSpan(pools []revenuePool, covs map[string]timescale.LendingRevenueUSDCoverage) (floor, through time.Time, ok bool) {
+	var cs []coveredDays
 	for _, p := range pools {
-		c, covered := revenueCovered(covs, p)
-		if !covered {
-			continue
+		if c, covered := revenueCovered(covs, p); covered {
+			cs = append(cs, coveredDays{c.FloorDay, c.ThroughDay})
 		}
-		if !ok || c.FloorDay.Before(floor) {
-			floor = c.FloorDay
-		}
-		if !ok || c.ThroughDay.After(through) {
-			through = c.ThroughDay
-		}
-		ok = true
 	}
-	return floor, through, ok
+	return coveredSpan(cs)
 }
 
 // revenueAcc is one set of exact USD sums: covered counts pools valued inside the window, summed the reserves added.
@@ -235,7 +227,6 @@ func (f *revenueWindowFold) each(pool string, fn func(a *revenueAcc)) {
 
 // pools names every pool left out of, or short in, [from, through] and counts the pools valued inside it.
 func (f *revenueWindowFold) pools(in protocolRevenueInput, from, through time.Time) {
-	windowDays := int64(through.Sub(from)/day24) + 1
 	if in.listFailed {
 		f.exclude("", "", exclusionPoolListFailed, nil)
 	}
@@ -250,9 +241,8 @@ func (f *revenueWindowFold) pools(in protocolRevenueInput, from, through time.Ti
 			f.exclude(p.pool, "", protocolRevenueNotValued, nil)
 			continue
 		}
-		lo, hi := maxTime(from, c.FloorDay), minTime(through, c.ThroughDay)
-		overlap := max(int64(hi.Sub(lo)/day24)+1, 0)
-		if missing := windowDays - overlap; missing > 0 {
+		overlap, missing := coveredDays{c.FloorDay, c.ThroughDay}.overlap(from, through)
+		if missing > 0 {
 			f.exclude(p.pool, "", protocolRevenueDaysNotValued, &missing)
 		}
 		if !c.RedoFrom.IsZero() && !c.RedoFrom.After(through) {
@@ -293,12 +283,7 @@ func foldProtocolRevenue(in protocolRevenueInput) LendingProtocolRevenue {
 	floor, through, ok := protocolRevenueSpan(in.pools, in.covs)
 	out := LendingProtocolRevenue{FeeRateInferred: in.fee}
 	for i, w := range [...]*LendingProtocolRevenueWindow{&out.Day, &out.Week, &out.Month, &out.AllTime} {
-		days := protocolRevenueWindows[i]
-		from := floor
-		if days > 0 {
-			from = through.Add(-time.Duration(days-1) * day24)
-		}
-		*w = foldRevenueWindow(in, from, through, ok, i)
+		*w = foldRevenueWindow(in, protocolWindowFrom(i, floor, through), through, ok, i)
 	}
 	for _, e := range out.AllTime.Excluded { // all_time holds every pool and reserve the others do
 		switch e.Reason {

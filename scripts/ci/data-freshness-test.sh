@@ -96,7 +96,7 @@ PROBE="$WORK/probe.sh"
   # shellcheck disable=SC2016  # emitted into the harness verbatim; $1 must not expand here
   printf 'TMP="$1"\n'
   # shellcheck disable=SC2016  # emitted into the harness verbatim
-  printf 'CH_NETRC=/dev/null\nPROBE_FAILED=0\nCHAIN_AGE="${CHAIN_AGE_TEST-NULL}"\n'
+  printf 'CH_NETRC=/dev/null\nPROBE_FAILED=0\nCHAIN_AGE="${CHAIN_AGE_TEST-NULL}"\nABSENT="${ABSENT_TEST-}"\n'
   awk '/^SF_AGE/ { p = 1 } /^chmod 0644 "\$TMP"$/ { p = 0 } p' "$SRC"
 } > "$PROBE"
 if grep -q 'stellar.supply_flows' "$PROBE" && grep -q 'curl' "$PROBE" \
@@ -140,7 +140,7 @@ export PATH="$WORK/bin:$PATH"
 run() {
   PROM="$WORK/out.$RANDOM.prom"
   printf 'stellarindex_data_freshness_stale{domain="oracle",source="coingecko"} 0\n' > "$PROM"
-  ERR="$(CURL_RC="$1" CURL_OUT="$2" CHAIN_AGE_TEST="${3-NULL}" bash "$PROBE" "$PROM" 2>&1 >/dev/null)"
+  ERR="$(CURL_RC="$1" CURL_OUT="$2" CHAIN_AGE_TEST="${3-NULL}" ABSENT_TEST="${4-}" bash "$PROBE" "$PROM" 2>&1 >/dev/null)"
   RC=$?
 }
 sep41_lines() { grep -c 'sep41_supply' "$PROM"; }
@@ -217,6 +217,62 @@ else
 fi
 run 0 "7200" 100
 if [[ "$(gauge stellarindex_data_freshness_stale)" == 1 ]]; then ok "non-empty and overdue on a young chain stays stale=1"; else bad "file: $(cat "$PROM")"; fi
+
+# ─── 5c. a source declared absent by design ──────────────────────────
+#
+# Empty + declared is excused on any chain age; declared + rows is the misconfiguration and
+# keeps the age rule; undeclared is unchanged (5b).
+echo "data-freshness-test: supply_flows declared absent by design"
+DECL="sep1/issuers sep41_supply/supply_flows"
+run 0 "empty" 1700000000 "$DECL"
+if [[ $RC -eq 0 && "$(gauge stellarindex_data_freshness_stale)" == 0 && "$(gauge stellarindex_data_freshness_empty)" == 1 \
+   && "$(gauge stellarindex_data_freshness_absent_by_design)" == 1 && "$(gauge stellarindex_data_freshness_absent_declared_but_present)" == 0 ]]; then
+  ok "declared + empty on an old chain → stale=0, empty=1, absent_by_design=1, declared_but_present=0"
+else
+  bad "rc=$RC file: $(cat "$PROM")"
+fi
+run 0 "7200" 1700000000 "$DECL"
+if [[ "$(gauge stellarindex_data_freshness_stale)" == 1 && "$(gauge stellarindex_data_freshness_absent_declared_but_present)" == 1 && -z "$(gauge stellarindex_data_freshness_empty)" ]]; then
+  ok "declared + rows → normal age rule (stale=1 at 7200 s) and declared_but_present=1"
+else
+  bad "file: $(cat "$PROM")"
+fi
+run 0 "42" 1700000000 "$DECL"
+if [[ "$(gauge stellarindex_data_freshness_stale)" == 0 && "$(gauge stellarindex_data_freshness_absent_declared_but_present)" == 1 ]]; then
+  ok "declared + fresh rows → stale=0, declared_but_present=1"
+else
+  bad "file: $(cat "$PROM")"
+fi
+run 0 "empty" 1700000000 "sep1/issuers"
+if [[ "$(gauge stellarindex_data_freshness_stale)" == 1 && -z "$(gauge stellarindex_data_freshness_absent_by_design)" ]]; then
+  ok "a declaration naming OTHER sources leaves an empty supply_flows stale"
+else
+  bad "file: $(cat "$PROM")"
+fi
+run 7 "" 1700000000 "$DECL"
+if [[ "$(sep41_lines)" == 0 ]]; then ok "probe failure with a declaration emits no sep41_supply sample at all"; else bad "file: $(cat "$PROM")"; fi
+
+# The declared list is validated by name; an unknown one voids the list and fails the unit.
+DREG="$WORK/declare.sh"
+{
+  printf 'set -euo pipefail\nPROBE_FAILED=0\n'
+  awk '/^ABSENT_KNOWN=/ { p = 1 } p; p && /^if \[ -n "\$\{ABSENT_INVALID/ { exit }' "$SRC"
+  # shellcheck disable=SC2016  # emitted into the harness verbatim
+  printf 'printf "%%s|%%s\\n" "$ABSENT" "$PROBE_FAILED"\n'
+} > "$DREG"
+declare_out() { DATA_FRESHNESS_ABSENT_BY_DESIGN="$1" bash "$DREG" 2> "$WORK/declare.err"; }
+if [[ "$(declare_out "")" == "|0" ]]; then ok "no declaration → empty list, no failure"; else bad "empty: $(declare_out "")"; fi
+if [[ "$(declare_out "sep1/issuers  sep41_supply/supply_flows")" == "sep1/issuers sep41_supply/supply_flows|0" ]]; then
+  ok "known names are accepted"
+else
+  bad "known: $(declare_out "sep1/issuers  sep41_supply/supply_flows")"
+fi
+out="$(declare_out "sep1/issuers sep1/issuer")"
+if [[ "$out" == "|1" ]] && grep -q "'sep1/issuer'" "$WORK/declare.err"; then
+  ok "an unknown name voids the whole declaration, names itself on stderr and counts as a failed probe"
+else
+  bad "unknown: $out / $(cat "$WORK/declare.err")"
+fi
 
 # ─── 6. the FX staleness budget must MIRROR the serving code ─────────
 #
@@ -478,7 +534,7 @@ QSRC="$WORK/queries.sh"
 {
   printf '%s\n' "${STRICT:-set -euo pipefail}"
   # shellcheck disable=SC2016  # emitted into the harness verbatim; must not expand here
-  printf 'PSQL="$1"\nSTELLARINDEX_POSTGRES_DSN="postgres://dummy"\nTMP="$2"\nOPS="$3"\nCONFIG=/dev/null\nPROBE_FAILED=0\nCHAIN_AGE=NULL\n'
+  printf 'PSQL="$1"\nSTELLARINDEX_POSTGRES_DSN="postgres://dummy"\nTMP="$2"\nOPS="$3"\nCONFIG=/dev/null\nPROBE_FAILED=0\nCHAIN_AGE=NULL\nABSENT=\n'
   awk '/^# shellcheck disable=SC2129/ { p = 1; next } /^SF_AGE=""$/ { p = 0 } p' "$SRC"
 } > "$QSRC"
 guarded_count="$(grep -c '^if ! PGDSN=' "$QSRC")"
@@ -652,7 +708,7 @@ CREATE TABLE asset_supply_history (asset_key text, time timestamptz);
 CREATE TABLE completeness_snapshots (source text, computed_at timestamptz);
 CREATE TABLE issuers (sep1_payload_fetched_at timestamptz);
 SQL
-  fresh() { dpsql -v chain_age="$1" < "$FSQL"; }
+  fresh() { dpsql -v chain_age="$1" -v absent_by_design="${2-}" < "$FSQL"; }
   line() { grep -F "$2" <<< "$1"; }
   s_sep1='stellarindex_data_freshness_stale{domain="sep1",source="issuers"}'
   s_sup='stellarindex_data_freshness_stale{domain="supply",source="asset_supply_history"}'
@@ -683,6 +739,16 @@ SQL
   else
     bad "unmeasurable chain + empty: $out"
   fi
+  d_sep1='stellarindex_data_freshness_absent_by_design{domain="sep1",source="issuers"}'
+  p_sep1='stellarindex_data_freshness_absent_declared_but_present{domain="sep1",source="issuers"}'
+  p_sup='stellarindex_data_freshness_absent_declared_but_present{domain="supply",source="asset_supply_history"}'
+  out="$(fresh 1700000000 "sep1/issuers")"
+  if [[ "$(line "$out" "$s_sep1")" == "$s_sep1 0" && -n "$(line "$out" "$e_sep1")" && "$(line "$out" "$d_sep1")" == "$d_sep1 1" \
+     && "$(line "$out" "$p_sep1")" == "$p_sep1 0" && "$(line "$out" "$s_sup")" == "$s_sup 1" && -z "$(line "$out" "$p_sup")" ]]; then
+    ok "declared + empty sep1 on an old chain: stale=0, empty=1, absent_by_design=1; undeclared supply stays stale"
+  else
+    bad "declared + empty: $out"
+  fi
 
   dpsql -q > /dev/null <<'SQL'
 INSERT INTO issuers VALUES (now() - interval '1 hour');
@@ -699,6 +765,13 @@ SQL
     ok "oracle rows (never empty) keep their age verdicts"
   else
     bad "oracle: $out"
+  fi
+  out="$(fresh 1700000000 "sep1/issuers supply/asset_supply_history")"
+  if [[ "$(line "$out" "$p_sep1")" == "$p_sep1 1" && "$(line "$out" "$s_sep1")" == "$s_sep1 0" \
+     && "$(line "$out" "$p_sup")" == "$p_sup 1" && "$(line "$out" "$s_sup")" == "$s_sup 1" ]]; then
+    ok "declared sources holding rows: declared_but_present=1 and the normal age rule (supply 40 h stays stale)"
+  else
+    bad "declared + rows: $out"
   fi
   docker rm -f "$PGC" > /dev/null 2>&1
 fi

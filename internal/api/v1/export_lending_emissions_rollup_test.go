@@ -12,6 +12,9 @@ func EmissionUSDFromRowForTest(d timescale.LendingEmissionsUSDDay) (LendingEmiss
 	return emissionUSDFromRow(d)
 }
 
+// LendingEmissionsValuationRevForTest is the stored rows' current valuation revision.
+const LendingEmissionsValuationRevForTest = lendingEmissionsValuationRev
+
 // SetNowForTest replaces the worker's clock.
 func (r *LendingEmissionsRollup) SetNowForTest(now func() time.Time) { r.now = now }
 
