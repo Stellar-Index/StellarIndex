@@ -23,7 +23,8 @@ type DeviationRule struct {
 	// MaxLookbackPeriods is how many periods before the returned price the comparison price may lie (v2: the
 	// adapter's cached resolution; the fork: the feed's).
 	MaxLookbackPeriods uint64
-	// RejectsAtLimit is true when a move of exactly MaxDevPercent is refused.
+	// RejectsAtLimit is true when a move at or above trunc(p1·max_dev/100) is refused; the truncation can refuse a
+	// move just under MaxDevPercent.
 	RejectsAtLimit bool
 }
 

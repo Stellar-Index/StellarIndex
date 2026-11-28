@@ -21,7 +21,7 @@ deployed bytes against `gh release download`). None exports an upgrade function 
 the same instance entry it decodes the config from, so the gate and the config are one read.
 
 The adapters below are the ones found so far, not a census: no record says how the first four were chosen, and
-the fifth (`CD74A3C5`, the YieldBlox pool's) was missed by it. An adapter on an unlisted build answers
+the fifth (`CD74A3C5`, the YieldBlox pool's) was missed by that selection. An adapter on an unlisted build answers
 `oracle_unsupported`, never a price.
 
 ## Builds
@@ -174,6 +174,8 @@ written yet is caught by the feed-state cross-check above and reported, not repl
    Known availability limit: the entries are read at the lake tip, not as of `L`, and the feed instance changes
    every round, so roughly 5–10% of reads land between a round's write and the watermark reaching it and return
    `oracle_state_newer`. Reading entries as of `L` from `ledger_entry_changes` would remove this; not done.
+   Known exclusion limit: operator source exclusions are checked at the returned record's round only, not back to
+   the comparison record's round (v2 too; wider for the fork, whose comparison record can be 255 periods back).
 2. Config failures fail the whole pool only when the instance itself cannot be read or decoded; one malformed
    or newer `AssetConfig` / `Blocked` entry fails that reserve alone.
 3. Feed rows come from `Store.OracleFeedRounds`, keyed on the feed CONTRACT from the adapter config, every stored

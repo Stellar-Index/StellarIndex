@@ -131,7 +131,7 @@ func febFeed(lastS uint64, asset string) Feed {
 	return withRows(dexFeed(lastS, u, x), rows)
 }
 
-// The manipulated rounds as pure inputs: the adapter's answer at each, from its source. These reproduce the
+// The manipulated rounds as pure inputs, run under the Reflector v7.1 feed model. These reproduce the
 // contract; they do not judge the price. The feed then ran an older Reflector build (df88820e), which this package
 // does not model, so the reader cannot replay that day from the lake; only the recipe is exercised here.
 func TestLastPriceYBFork_Feb22Rounds(t *testing.T) {
