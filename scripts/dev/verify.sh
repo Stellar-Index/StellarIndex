@@ -505,6 +505,8 @@ lane_a() { # doc lints
     echo "=== Docs ==="          && ./scripts/ci/lint-docs.sh
     echo "=== Alerts catalogue self-test ===" && ./scripts/ci/lint-alerts-catalog-test.sh
     echo "=== Alerts catalogue ===" && python3 ./scripts/ci/lint-alerts-catalog.py
+    echo "=== Long-cadence textfiles self-test ===" && ./scripts/ci/lint-long-cadence-textfiles-test.sh
+    echo "=== Long-cadence textfiles ===" && ./scripts/ci/lint-long-cadence-textfiles.sh
     echo "=== Doc links ===" && ./scripts/ci/lint-doc-links.sh
     echo "=== Doc links self-test ===" && ./scripts/ci/lint-doc-links-test.sh
     echo "=== ADR refs ===" && ./scripts/ci/lint-adr-refs.sh

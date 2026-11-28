@@ -600,6 +600,7 @@ if [ "${#rules_files[@]}" -gt 0 ]; then
     add_step "lint-rule-equivalence" "whole tree; ${#rules_files[@]} rule file(s) changed" \
         go run ./scripts/ci/lint-rule-equivalence deploy/monitoring/rules configs/prometheus/rules.r1 scripts/ci/rule-equivalence.baseline
     add_step "lint-alerts-catalog" "" python3 "$ci_dir/lint-alerts-catalog.py"
+    add_step "lint-long-cadence-textfiles" "" "$ci_dir/lint-long-cadence-textfiles.sh"
     add_step "lint-runbook-annotations" "" python3 "$ci_dir/lint-runbook-annotations.py"
     add_step "lint-rule-structure" "" python3 "$ci_dir/lint-rule-structure.py"
     add_step "lint-timer-staleness" "" "$ci_dir/lint-timer-staleness.sh"

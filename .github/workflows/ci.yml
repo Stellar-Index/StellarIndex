@@ -1164,6 +1164,12 @@ jobs:
         # Same reason: the alerts-catalogue Severity column must not drift from
         # labels.severity with only the opt-in hook to catch it.
         run: python3 ./scripts/ci/lint-alerts-catalog.py
+      - name: lint-long-cadence-textfiles
+        # A weekly or monthly timer added without its exclusion makes the 24h
+        # stale-textfile ticket fire for most of every interval.
+        run: |
+          ./scripts/ci/lint-long-cadence-textfiles-test.sh
+          ./scripts/ci/lint-long-cadence-textfiles.sh
       - name: lint-yaml-duplicate-keys
         # Same reason: a duplicate mapping key in a rule file (later key
         # silently wins) must not merge through CI unseen.
