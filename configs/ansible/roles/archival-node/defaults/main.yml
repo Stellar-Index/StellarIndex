@@ -625,6 +625,17 @@ stellarindex_enabled_sources:
 # /v1/coverage, the permanently-red row that teaches everyone to ignore the board.
 stellarindex_sources_not_yet_enabled: {}
 
+# Sources this NETWORK has none of, as "<domain>/<source>" exactly as the
+# data-freshness gauges label them. An empty declared source does not read
+# stale; one that holds rows raises
+# stellarindex_data_source_absent_declared_but_present and keeps its normal staleness rule. Known names: sep1/issuers,
+# supply/asset_supply_history, sep41_supply/supply_flows; any other name
+# fails data-freshness.service and voids the list. Empty on pubnet, where an
+# empty one of these is a fault. Futurenet after a reset:
+#   stellarindex_sources_absent_by_design: [sep1/issuers, sep41_supply/supply_flows]
+# Runbook: docs/operations/runbooks/data-freshness.md#absent-by-design-sources
+stellarindex_sources_absent_by_design: []
+
 # Earliest ledger to backfill from on a fresh install (no persisted cursor). 0 =
 # refuse to start without a cursor, to avoid an accidental genesis re-ingest.
 # [Per-region: each region picks its own backfill floor — r1's live
