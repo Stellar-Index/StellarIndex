@@ -17,8 +17,11 @@ type LendingAccountPositions struct {
 	// Readable is false when the entry or the pool's reserve list is archived or undecodable; the maps are then empty and
 	// mean nothing. An absent entry is readable and empty: the contract reads it as no position.
 	Readable bool
-	Supply   map[string]*big.Int // b-tokens, collateral and non-collateral summed
-	Borrow   map[string]*big.Int // d-tokens
+	Supply   map[string]*big.Int // b-tokens: Collateral + NonCollateral, per reserve
+	// Collateral is the b-tokens counted toward the account's borrowing power; NonCollateral the rest of Supply.
+	Collateral    map[string]*big.Int
+	NonCollateral map[string]*big.Int
+	Borrow        map[string]*big.Int // d-tokens
 	// Ledger is the entry's last-modified ledger, or its removal ledger; 0 when the lake never saw the key.
 	Ledger uint32
 }
@@ -60,7 +63,7 @@ func (r *ExplorerReader) LendingAccountPositions(ctx context.Context, pool, acco
 }
 
 func assembleAccountPositions(vals map[string]xdr.ScVal, archived map[string]bool, posKey, listKey string) LendingAccountPositions {
-	out := LendingAccountPositions{Supply: map[string]*big.Int{}, Borrow: map[string]*big.Int{}}
+	out := emptyAccountPositions()
 	if archived[posKey] {
 		return out
 	}
@@ -78,10 +81,16 @@ func assembleAccountPositions(vals map[string]xdr.ScVal, archived map[string]boo
 		return out
 	}
 	if err := decodePositions(pos, list, &out); err != nil {
-		return LendingAccountPositions{Supply: map[string]*big.Int{}, Borrow: map[string]*big.Int{}}
+		return emptyAccountPositions()
 	}
 	out.Readable = true
 	return out
+}
+
+func emptyAccountPositions() LendingAccountPositions {
+	return LendingAccountPositions{
+		Supply: map[string]*big.Int{}, Collateral: map[string]*big.Int{}, NonCollateral: map[string]*big.Int{}, Borrow: map[string]*big.Int{},
+	}
 }
 
 func decodeReserveList(v xdr.ScVal) ([]string, error) {
@@ -100,7 +109,8 @@ func decodeReserveList(v xdr.ScVal) ([]string, error) {
 	return out, nil
 }
 
-// decodePositions decodes Positions {collateral, liabilities, supply: Map<u32, i128>} into out by asset.
+// decodePositions decodes Positions {collateral, liabilities, supply: Map<u32, i128>} into out by asset. The contract's
+// "supply" field is the non-collateral b-tokens; out.Supply is it plus collateral. out must come from emptyAccountPositions.
 func decodePositions(v xdr.ScVal, list []string, out *LendingAccountPositions) error {
 	entries, err := scval.AsMap(v)
 	if err != nil {
@@ -109,13 +119,21 @@ func decodePositions(v xdr.ScVal, list []string, out *LendingAccountPositions) e
 	for _, f := range []struct {
 		name string
 		dst  map[string]*big.Int
-	}{{"collateral", out.Supply}, {"supply", out.Supply}, {"liabilities", out.Borrow}} {
+	}{{"collateral", out.Collateral}, {"supply", out.NonCollateral}, {"liabilities", out.Borrow}} {
 		mv, ok := scval.MapField(entries, f.name)
 		if !ok {
 			return fmt.Errorf("positions entry missing %q", f.name)
 		}
 		if err := addIndexedBalances(mv, list, f.dst); err != nil {
 			return fmt.Errorf("positions entry %s: %w", f.name, err)
+		}
+	}
+	for _, m := range []map[string]*big.Int{out.Collateral, out.NonCollateral} {
+		for asset, amt := range m {
+			if out.Supply[asset] == nil {
+				out.Supply[asset] = new(big.Int)
+			}
+			out.Supply[asset].Add(out.Supply[asset], amt)
 		}
 	}
 	return nil

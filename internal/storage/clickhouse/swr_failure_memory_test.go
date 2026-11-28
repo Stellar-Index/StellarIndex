@@ -53,26 +53,46 @@ func TestAccountStateCached_ExpiredWithHealthyRefreshReportsNoFailure(t *testing
 	}
 }
 
-// A refresh skipped because the shared gate is full sets the failure memory, on that serve and after.
-func TestAccountStateCached_SkippedRefreshSetsFailure(t *testing.T) {
+// A refresh the gate refused is not a failed refresh: only that serve is flagged, the entry's outcome is untouched, and the next
+// serve with a free slot refreshes.
+func TestAccountStateCached_RefusedRefreshIsNotAFailure(t *testing.T) {
 	t.Parallel()
-	r := expiredStateReader(1)
-	if !r.refreshGate.TryAcquire() {
-		t.Fatal("could not saturate the gate")
-	}
-	st, pastTTL, err := r.AccountStateCached(context.Background(), swrTestAccount)
-	if err != nil || !pastTTL {
-		t.Fatalf("got (pastTTL=%t, %v), want the expired entry served", pastTTL, err)
-	}
-	if !st.RefreshFailed {
-		t.Error("the serve whose refresh was skipped did not report the failure")
-	}
-	if again, _, _ := r.stateCache.get(swrTestAccount); !again.RefreshFailed {
-		t.Error("the skip was not remembered on the entry")
-	}
-	r.stateCache.put(swrTestAccount, AccountState{Exists: true}, time.Now())
-	if after, _, _ := r.stateCache.get(swrTestAccount); after.RefreshFailed {
-		t.Error("a complete successful fill did not clear the failure memory")
+	for _, priorFailed := range []bool{false, true} {
+		r := expiredStateReader(1)
+		if priorFailed {
+			r.stateCache.markRefreshFailed(swrTestAccount)
+		}
+		if !r.refreshGate.TryAcquire() {
+			t.Fatal("could not saturate the gate")
+		}
+		for range 2 { // refused on every request: never served clean
+			st, pastTTL, err := r.AccountStateCached(context.Background(), swrTestAccount)
+			if err != nil || !pastTTL {
+				t.Fatalf("got (pastTTL=%t, %v), want the expired entry served", pastTTL, err)
+			}
+			if !st.RefreshRefused {
+				t.Error("the serve whose refresh was refused did not report the refusal")
+			}
+			if st.RefreshFailed != priorFailed {
+				t.Errorf("RefreshFailed = %t after a refusal, want the earlier outcome %t", st.RefreshFailed, priorFailed)
+			}
+			if again, _, _ := r.stateCache.get(swrTestAccount); again.RefreshFailed != priorFailed || again.RefreshRefused {
+				t.Errorf("the refusal leaked onto the entry: failed=%t refused=%t", again.RefreshFailed, again.RefreshRefused)
+			}
+		}
+		r.refreshGate.Release()
+		st, _, err := r.AccountStateCached(context.Background(), swrTestAccount)
+		if err != nil || st.RefreshRefused {
+			t.Fatalf("next serve with a free slot: refused=%t err=%v, want it to try again", st.RefreshRefused, err)
+		}
+		waitStateFlight(t, r) // the refresh ran (nil conn panics: a real failure), proving a slot was taken
+		if after, _, _ := r.stateCache.get(swrTestAccount); !after.RefreshFailed {
+			t.Error("the retried refresh did not run")
+		}
+		r.stateCache.put(swrTestAccount, AccountState{Exists: true}, time.Now())
+		if after, _, _ := r.stateCache.get(swrTestAccount); after.RefreshFailed {
+			t.Error("a complete successful fill did not clear the failure memory")
+		}
 	}
 }
 

@@ -572,6 +572,7 @@ lane_d() { # everything else
     echo "=== Ansible textfile-collector dir mode self-test ===" && ./scripts/ci/ansible-textfile-dir-mode-test.sh
     echo "=== Ansible ZFS ARC cap self-test ===" && ./scripts/ci/ansible-zfs-arc-cap-test.sh
     echo "=== Ansible Postgres log size-cap self-test ===" && ./scripts/ci/ansible-pg-logrotate-cap-test.sh
+    echo "=== Ansible ClickHouse system-log TTL self-test ===" && ./scripts/ci/ansible-clickhouse-system-log-ttl-test.sh
     echo "=== Ansible prometheus port var self-test ===" && ./scripts/ci/ansible-prometheus-port-var-test.sh
     echo "=== Ansible local prometheus rules self-test ===" && ./scripts/ci/ansible-local-prometheus-rules-test.sh
     echo "=== Ansible absent-by-design list split self-test ===" && ./scripts/ci/ansible-absent-by-design-split-test.sh

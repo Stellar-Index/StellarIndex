@@ -1,5 +1,7 @@
 'use client';
 
+import { useId } from 'react';
+
 import { cn } from '@/lib/cn';
 
 // Shared horizontal-bar primitives for categorical magnitude comparisons —
@@ -455,6 +457,12 @@ export type StackedBucket = {
   label: string;
   /** Segment magnitudes (>= 0), bottom to top, one per `series` entry. */
   values: number[];
+  /** The column is a lower bound: its segments draw hatched. */
+  hatched?: boolean;
+  /** The bucket has no known value: a faint hatched band, never a zero. */
+  missing?: boolean;
+  /** Plain-words detail appended to the bucket's tooltips. */
+  note?: string;
 };
 
 /**
@@ -466,6 +474,7 @@ export function StackedColumns({
   series,
   formatValue = (n) => n.toLocaleString('en-US'),
   height = 140,
+  max: maxProp,
   ariaLabel,
   className,
 }: {
@@ -473,32 +482,39 @@ export function StackedColumns({
   series: { label: string; color: string }[];
   formatValue?: (n: number) => string;
   height?: number;
+  /** Fixed scale maximum, so sibling charts share one scale. Default: the tallest column. */
+  max?: number;
   ariaLabel: string;
   className?: string;
 }) {
+  const hatchId = `hatch${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
   const totals = buckets.map((b) =>
     b.values.reduce((s, v) => s + (Number.isFinite(v) ? v : 0), 0),
   );
-  const max = Math.max(0, ...totals);
+  const max = maxProp ?? Math.max(0, ...totals);
   if (buckets.length === 0 || max <= 0) return null;
 
   const plotH = height - 16;
   const colW = 100 / buckets.length;
+  const note = (b: StackedBucket) => (b.note ? ` (${b.note})` : '');
 
   return (
     <div className={cn('space-y-1.5', className)}>
-      <ul className="text-ink-muted flex flex-wrap gap-x-4 gap-y-1 text-xs">
-        {series.map((s) => (
-          <li key={s.label} className="flex items-center gap-1.5">
-            <span
-              aria-hidden
-              className="inline-block h-2 w-2 rounded-full"
-              style={{ background: s.color }}
-            />
-            {s.label}
-          </li>
-        ))}
-      </ul>
+      {/* One series is named by the chart's heading; a legend would repeat it. */}
+      {series.length > 1 && (
+        <ul className="text-ink-muted flex flex-wrap gap-x-4 gap-y-1 text-xs">
+          {series.map((s) => (
+            <li key={s.label} className="flex items-center gap-1.5">
+              <span
+                aria-hidden
+                className="inline-block h-2 w-2 rounded-full"
+                style={{ background: s.color }}
+              />
+              {s.label}
+            </li>
+          ))}
+        </ul>
+      )}
       <svg
         role="img"
         aria-label={ariaLabel}
@@ -507,7 +523,57 @@ export function StackedColumns({
         className="w-full"
         style={{ height }}
       >
+        {buckets.some((b) => b.hatched || b.missing) && (
+          <defs>
+            <pattern
+              id={hatchId}
+              width="2"
+              height="4"
+              patternUnits="userSpaceOnUse"
+              patternTransform="rotate(45)"
+            >
+              <rect width="0.8" height="4" fill="var(--color-ink-faint)" />
+            </pattern>
+            {/* No value: a neutral cross-hatch with a dashed outline, so it reads as neither a zero nor a lower bound. */}
+            <pattern
+              id={`${hatchId}-none`}
+              width="3"
+              height="3"
+              patternUnits="userSpaceOnUse"
+              patternTransform="rotate(45)"
+            >
+              <rect
+                width="3"
+                height="3"
+                fill="var(--color-ink-muted)"
+                fillOpacity={0.15}
+              />
+              <rect width="1" height="3" fill="var(--color-ink-muted)" />
+              <rect width="3" height="0.6" fill="var(--color-ink-muted)" />
+            </pattern>
+          </defs>
+        )}
         {buckets.map((b, i) => {
+          const x = i * colW + colW * 0.12;
+          const w = colW * 0.76;
+          if (b.missing)
+            return (
+              <rect
+                key={b.label}
+                data-mark="missing"
+                x={x}
+                y={0}
+                width={w}
+                height={plotH}
+                fill={`url(#${hatchId}-none)`}
+                stroke="var(--color-ink-muted)"
+                strokeWidth={1}
+                strokeDasharray="3 2"
+                vectorEffect="non-scaling-stroke"
+              >
+                <title>{`${b.label}: no value${note(b)}`}</title>
+              </rect>
+            );
           let y = plotH;
           return (
             <g key={b.label}>
@@ -515,17 +581,31 @@ export function StackedColumns({
                 if (!(v > 0)) return null;
                 const h = (v / max) * (plotH - 2);
                 y -= h;
+                const title = `${b.label} — ${series[j]?.label}: ${b.hatched ? 'at least ' : ''}${formatValue(v)}${note(b)}`;
                 return (
-                  <rect
-                    key={series[j]?.label ?? j}
-                    x={i * colW + colW * 0.12}
-                    y={y}
-                    width={colW * 0.76}
-                    height={h}
-                    fill={series[j]?.color}
-                  >
-                    <title>{`${b.label} — ${series[j]?.label}: ${formatValue(v)}`}</title>
-                  </rect>
+                  <g key={series[j]?.label ?? j}>
+                    <rect
+                      x={x}
+                      y={y}
+                      width={w}
+                      height={h}
+                      fill={series[j]?.color}
+                    >
+                      <title>{title}</title>
+                    </rect>
+                    {b.hatched && (
+                      <rect
+                        data-mark="lower-bound"
+                        x={x}
+                        y={y}
+                        width={w}
+                        height={h}
+                        fill={`url(#${hatchId})`}
+                      >
+                        <title>{title}</title>
+                      </rect>
+                    )}
+                  </g>
                 );
               })}
             </g>
