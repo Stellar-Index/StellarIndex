@@ -500,18 +500,21 @@ export function StackedColumns({
 
   return (
     <div className={cn('space-y-1.5', className)}>
-      <ul className="text-ink-muted flex flex-wrap gap-x-4 gap-y-1 text-xs">
-        {series.map((s) => (
-          <li key={s.label} className="flex items-center gap-1.5">
-            <span
-              aria-hidden
-              className="inline-block h-2 w-2 rounded-full"
-              style={{ background: s.color }}
-            />
-            {s.label}
-          </li>
-        ))}
-      </ul>
+      {/* One series is named by the chart's heading; a legend would repeat it. */}
+      {series.length > 1 && (
+        <ul className="text-ink-muted flex flex-wrap gap-x-4 gap-y-1 text-xs">
+          {series.map((s) => (
+            <li key={s.label} className="flex items-center gap-1.5">
+              <span
+                aria-hidden
+                className="inline-block h-2 w-2 rounded-full"
+                style={{ background: s.color }}
+              />
+              {s.label}
+            </li>
+          ))}
+        </ul>
+      )}
       <svg
         role="img"
         aria-label={ariaLabel}
@@ -520,17 +523,36 @@ export function StackedColumns({
         className="w-full"
         style={{ height }}
       >
-        <defs>
-          <pattern
-            id={hatchId}
-            width="2"
-            height="4"
-            patternUnits="userSpaceOnUse"
-            patternTransform="rotate(45)"
-          >
-            <rect width="0.8" height="4" fill="var(--color-ink-faint)" />
-          </pattern>
-        </defs>
+        {buckets.some((b) => b.hatched || b.missing) && (
+          <defs>
+            <pattern
+              id={hatchId}
+              width="2"
+              height="4"
+              patternUnits="userSpaceOnUse"
+              patternTransform="rotate(45)"
+            >
+              <rect width="0.8" height="4" fill="var(--color-ink-faint)" />
+            </pattern>
+            {/* No value: a neutral cross-hatch with a dashed outline, so it reads as neither a zero nor a lower bound. */}
+            <pattern
+              id={`${hatchId}-none`}
+              width="3"
+              height="3"
+              patternUnits="userSpaceOnUse"
+              patternTransform="rotate(45)"
+            >
+              <rect
+                width="3"
+                height="3"
+                fill="var(--color-ink-muted)"
+                fillOpacity={0.15}
+              />
+              <rect width="1" height="3" fill="var(--color-ink-muted)" />
+              <rect width="3" height="0.6" fill="var(--color-ink-muted)" />
+            </pattern>
+          </defs>
+        )}
         {buckets.map((b, i) => {
           const x = i * colW + colW * 0.12;
           const w = colW * 0.76;
@@ -543,8 +565,11 @@ export function StackedColumns({
                 y={0}
                 width={w}
                 height={plotH}
-                fill={`url(#${hatchId})`}
-                opacity={0.35}
+                fill={`url(#${hatchId}-none)`}
+                stroke="var(--color-ink-muted)"
+                strokeWidth={1}
+                strokeDasharray="3 2"
+                vectorEffect="non-scaling-stroke"
               >
                 <title>{`${b.label}: no value${note(b)}`}</title>
               </rect>

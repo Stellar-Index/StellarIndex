@@ -231,7 +231,9 @@ function totalText(
     return `${exact ? '' : 'at least '}${formatReadable(s.totalUsd, true) ?? '—'}`;
   }
   const exact = !unserved && s.lowerBound.length === 0;
-  return `${exact ? '' : 'at least '}${tokenText(s.totalTokens ?? '0')}`;
+  const tokens = `${exact ? '' : 'at least '}${tokenText(s.totalTokens ?? '0')}`;
+  // USD asked for but none served: say so rather than switch units silently.
+  return unit === 'usd' ? `${tokens} (not priced)` : tokens;
 }
 
 /** One sentence over the streams shown: what was scheduled and what was claimed. */

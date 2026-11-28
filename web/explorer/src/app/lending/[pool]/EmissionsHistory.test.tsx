@@ -254,8 +254,10 @@ describe('insightText', () => {
       tokenText,
     );
     expect(text).toContain('at least $2.50 scheduled');
-    // Nothing valued: falls back to the exact tokens, not "$0".
-    expect(text).toContain('20000000 BLND claimed from the pool');
+    // Nothing valued: the exact tokens, labelled as unpriced, never "$0".
+    expect(text).toContain(
+      '; 20000000 BLND (not priced) claimed from the pool',
+    );
     expect(text).toContain('; $3.00 claimed by backstop');
   });
 

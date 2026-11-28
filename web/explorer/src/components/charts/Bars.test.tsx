@@ -27,6 +27,27 @@ describe('StackedColumns', () => {
       'c: no value (not read)',
     ]);
   });
+  it('draws a legend only for more than one series', () => {
+    const one = render(
+      <StackedColumns
+        ariaLabel="one"
+        series={series}
+        buckets={[{ label: 'a', values: [1] }]}
+      />,
+    );
+    expect(one.container.querySelector('ul')).toBeNull();
+    one.unmount();
+    const two = render(
+      <StackedColumns
+        ariaLabel="two"
+        series={[...series, { label: 'T', color: 'blue' }]}
+        buckets={[{ label: 'a', values: [1, 2] }]}
+      />,
+    );
+    expect(
+      [...two.container.querySelectorAll('li')].map((l) => l.textContent),
+    ).toEqual(['S', 'T']);
+  });
   it('scales to a fixed max so sibling charts compare', () => {
     const { container } = render(
       <StackedColumns
