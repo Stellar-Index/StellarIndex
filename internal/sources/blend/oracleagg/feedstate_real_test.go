@@ -33,7 +33,7 @@ func TestDecodeFeedState_RealEntries(t *testing.T) {
 		probe         Asset
 	}{
 		{feedCEX, Asset{Symbol: "USD"}, 16, 16, Asset{Symbol: "XLM"}},
-		// 52 listed assets, 49 index entries: the last three were added without one.
+		// 52 listed assets, 49 legacy index entries: the last three were added under v7.1.0, which writes none.
 		{feedDEX, Stellar(usdcSAC), 52, 49, Stellar(xlmSAC)},
 	} {
 		e := feedInstance(t, c.feed)
@@ -45,9 +45,9 @@ func TestDecodeFeedState_RealEntries(t *testing.T) {
 			t.Fatalf("%s: %v", c.feed, err)
 		}
 		if s.LastTimestampMs != lastRound || s.ResolutionMs != 300_000 || s.Decimals != 14 || s.Protocol != ReflectorProtocol ||
-			s.Base != c.base || len(s.Assets) != c.assets || len(s.Indexed) != c.index || len(s.Cache) != 2 {
-			t.Fatalf("%s state = last %d res %d dp %d protocol %d base %s, %d assets, %d indexed, %d cached",
-				c.feed, s.LastTimestampMs, s.ResolutionMs, s.Decimals, s.Protocol, s.Base, len(s.Assets), len(s.Indexed), len(s.Cache))
+			s.Base != c.base || len(s.Assets) != c.assets || len(s.LegacyIndex) != c.index || len(s.Cache) != 2 {
+			t.Fatalf("%s state = last %d res %d dp %d protocol %d base %s, %d assets, %d legacy, %d cached",
+				c.feed, s.LastTimestampMs, s.ResolutionMs, s.Decimals, s.Protocol, s.Base, len(s.Assets), len(s.LegacyIndex), len(s.Cache))
 		}
 		if s.Cache[0].TimestampMs != lastRound || s.Cache[1].TimestampMs != lastRound-300_000 {
 			t.Fatalf("%s cache rounds %d, %d", c.feed, s.Cache[0].TimestampMs, s.Cache[1].TimestampMs)
@@ -65,9 +65,43 @@ func TestDecodeFeedState_RealEntries(t *testing.T) {
 		if priced == 0 || priced != len(s.Cache[0].Prices) {
 			t.Fatalf("%s: %d assets priced in the last round, cache carries %d prices", c.feed, priced, len(s.Cache[0].Prices))
 		}
-		if _, indexed, listed := s.AssetIndex(c.probe); !indexed || !listed {
-			t.Fatalf("%s does not index %s", c.feed, c.probe)
+		if _, ok := s.AssetIndex(c.probe); !ok {
+			t.Fatalf("%s does not list %s", c.feed, c.probe)
 		}
+	}
+}
+
+// Every DEX-feed asset resolves by list position (assets.rs::resolve_asset_index), the three without a legacy entry
+// included; every legacy entry that exists agrees with that position; a duplicate resolves to its FIRST position.
+func TestFeedAssetIndex_RealDEX(t *testing.T) {
+	s, err := DecodeFeedState(storageOf(t, feedInstance(t, feedDEX)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlisted := 0
+	for i, a := range s.Assets {
+		idx, ok := s.AssetIndex(a)
+		if !ok || int(idx) != i {
+			t.Fatalf("asset %d (%s) resolves to %d (ok %v)", i, a, idx, ok)
+		}
+		if legacy, has := s.LegacyIndex[a]; !has {
+			unlisted++
+		} else if int(legacy) != i {
+			t.Errorf("legacy entry %s = %d, list position %d", a, legacy, i)
+		}
+	}
+	if len(s.Assets) != 52 || unlisted != 3 {
+		t.Fatalf("%d assets, %d without a legacy entry; want 52 and 3", len(s.Assets), unlisted)
+	}
+	for _, i := range []int{49, 50, 51} {
+		if _, has := s.LegacyIndex[s.Assets[i]]; has {
+			t.Fatalf("position %d unexpectedly has a legacy entry", i)
+		}
+	}
+	dup := s
+	dup.Assets = append(append([]Asset{}, s.Assets...), s.Assets[7])
+	if idx, ok := dup.AssetIndex(s.Assets[7]); !ok || idx != 7 {
+		t.Fatalf("duplicate of position 7 resolves to %d (ok %v), want the first index", idx, ok)
 	}
 }
 
@@ -114,11 +148,10 @@ func TestDecodeFeedState_Rejects(t *testing.T) {
 		return out
 	}
 	for name, st := range map[string][]xdr.ScMapEntry{
-		"unknown string key":        with(xdr.ScMapEntry{Key: str("paused"), Val: scval.NewU32(1)}),
-		"index entry off the list":  with(xdr.ScMapEntry{Key: symbolKey("ZZZ"), Val: scval.NewU32(3)}),
-		"index entry past the list": with(xdr.ScMapEntry{Key: symbolKey("ZZZ"), Val: scval.NewU32(99)}),
-		"resolution missing":        without("resolution"),
-		"non-String non-asset key":  with(xdr.ScMapEntry{Key: scval.NewU32(7), Val: scval.NewU32(1)}),
+		"unknown string key":       with(xdr.ScMapEntry{Key: str("paused"), Val: scval.NewU32(1)}),
+		"legacy entry not a u32":   with(xdr.ScMapEntry{Key: symbolKey("ZZZ"), Val: symbolKey("x")}),
+		"resolution missing":       without("resolution"),
+		"non-String non-asset key": with(xdr.ScMapEntry{Key: scval.NewU32(7), Val: scval.NewU32(1)}),
 	} {
 		if _, err := DecodeFeedState(st); !errors.Is(err, ErrConfig) {
 			t.Errorf("%s: err = %v, want ErrConfig", name, err)

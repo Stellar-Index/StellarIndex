@@ -142,7 +142,7 @@ func TestLendingOracle_EndToEnd(t *testing.T) {
 	round := time.UnixMilli(int64(st.LastTimestampMs)).UTC()
 	prev := round.Add(-300 * time.Second)
 	cachedAt := func(sym string) func(time.Time) *big.Int {
-		idx, _, _ := st.AssetIndex(oracleagg.Asset{Symbol: sym})
+		idx, _ := st.AssetIndex(oracleagg.Asset{Symbol: sym})
 		return func(ts time.Time) *big.Int {
 			p, ok := st.CachedPrice(idx, uint64(ts.UnixMilli()))
 			if !ok {

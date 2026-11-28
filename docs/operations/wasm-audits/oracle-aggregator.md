@@ -69,8 +69,7 @@ the underlying feed's rounds. Each rule and the upstream line it reproduces:
 
 The feed's own instance entry (Reflector v7.1.0, `oracleagg.DecodeFeedState`; an unknown String key fails the
 decode) carries everything the recipe needs from it: `last_timestamp` (ms), `resolution` (ms), `decimals`,
-`protocol` (only 2 is modelled), `base_asset`, `assets` (index order), one `Symbol`/`Address` → index entry per
-asset, `history` (32 bytes per asset, bit `p` = priced `p` periods before `last_timestamp`) and `cache` (the
+`protocol` (only 2 is modelled), `base_asset`, `assets`, `expiration`, `history` (32 bytes per asset, bit `p` = priced `p` periods before `last_timestamp`) and `cache` (the
 recent rounds' update masks and prices). Our stored rounds are cross-checked against it, and any disagreement is
 `oracle_feed_incomplete`, never a price:
 
@@ -79,8 +78,19 @@ recent rounds' update masks and prices). Our stored rounds are cross-checked aga
 - for every round the recipe touches, a stored row exists iff the asset's history bit is set;
 - where the round is in `cache`, the stored integer equals the cached one.
 
-Both real feeds (`test/fixtures/lending_oracle/reflector-instances.tsv`) decode, and their history mask agrees
-with the cached last round's update mask asset by asset.
+An asset's index is `assets.rs::resolve_asset_index`, `load_all_assets(e).first_index_of(asset)`: its first
+position in `assets`. The instance also holds `Symbol`/`Address` → `u32` entries that v7.1.0 neither reads nor
+writes in the source copy; they are decoded as `LegacyIndex` and never used to resolve. The real DEX feed lists 52 assets with 49
+such entries (positions 49-51, added after the upgrade, have none), and every entry present equals its list
+position. Any other String key is an error. The allowed set is what `settings.rs`, `assets.rs` and `prices.rs`
+define (`cache_size` included; absent on both feeds, default 2), plus `admin`, `protocol` and `protocol_update`,
+whose modules are not in the source copy: they are accepted by name from the real entries, and only `protocol` is
+read.
+
+Both real feeds (`test/fixtures/lending_oracle/reflector-instances.tsv`) decode, all 52 DEX assets resolve, and
+their history mask agrees with the cached last round's update mask asset by asset. Source files:
+`oracle_src_assets.rs`, `oracle_src_settings.rs` (sha256 `dc482728…`, fetched from
+`reflector-network/reflector-contract` tag `v7.1.0`, `oracle/src/settings.rs`).
 
 Verdicts the contract itself would give: `oracle_asset_missing`, `oracle_asset_blocked`, `oracle_contract_panics`
 (the call traps on underflow), `oracle_feed_asset_unknown` (the feed does not list the asset), `oracle_price_stale`,
@@ -112,9 +122,8 @@ Verdicts per pool and reason: `stellarindex_lending_oracle_verdicts_total{pool,r
 
 ## Not verified, and modelled as explicit inputs
 
-- **Asset index entries.** The DEX feed lists 52 assets but carries index entries for 49; the last three (positions
-  49-51) were added without one. `assets.rs` (`resolve_asset_index`) is not in the audited source copy, so a
-  listed asset without an entry is `oracle_unsupported` rather than assumed to resolve by position.
+- **Asset expiry.** `assets.rs` keeps an `expiration` vector per asset; the price read path (`price`,
+  `lastprice`) does not consult it, so it is decoded for the key check only.
 - **Reflector build.** The v6.0.x hashes are recorded only by prefix in [`reflector.md`](reflector.md), so only a
   feed running the attested v7.1.0 build (`25fc3060…`) is modelled; the v6 rule is implemented and tested but
   reachable only by explicit input.

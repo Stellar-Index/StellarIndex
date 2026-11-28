@@ -15,12 +15,11 @@ type FeedState struct {
 	Decimals        uint32
 	Protocol        uint32
 	Base            Asset
-	Assets          []Asset // "assets": the feed's asset list in index order
-	// Indexed holds the instance's asset → index entries, each checked against Assets. A listed asset without one is
-	// resolved by code outside the audited source copy (assets.rs), so it is not priced.
-	Indexed map[Asset]uint32
-	History []byte // "history": 32 bytes per asset, bit p = priced p periods before LastTimestampMs
-	Cache   []CachedRound
+	Assets          []Asset // "assets": the feed's asset list; an asset's index is its first position (assets.rs)
+	// LegacyIndex holds Symbol/Address → u32 entries an older build wrote; v7.1.0 never reads them.
+	LegacyIndex map[Asset]uint32
+	History     []byte // "history": 32 bytes per asset, bit p = priced p periods before LastTimestampMs
+	Cache       []CachedRound
 }
 
 // CachedRound is one "cache" record: a recent round's update mask and its prices in mask order.
@@ -34,13 +33,14 @@ type CachedRound struct {
 // legacy per-price path (prices.rs:34), which is not reproduced.
 const ReflectorProtocol = 2
 
+// feedStringKeys is every instance key settings.rs, assets.rs and prices.rs define, plus admin and the protocol keys.
 var feedStringKeys = []string{
-	"admin", "assets", "base_asset", "cache", "decimals", "expiration", "history", "last_timestamp",
+	"admin", "assets", "base_asset", "cache", "cache_size", "decimals", "expiration", "history", "last_timestamp",
 	"period", "protocol", "protocol_update", "resolution", "retention",
 }
 
 // DecodeFeedState decodes a Reflector feed's instance storage. String keys outside the v7.1.0 set are an error;
-// Symbol and Address keys are the asset-index entries and must agree with the "assets" order.
+// Symbol and Address keys with a u32 value are legacy index entries, kept in LegacyIndex and never used to resolve.
 func DecodeFeedState(storage []scval.ScMapEntry) (FeedState, error) {
 	str, index, err := splitFeedKeys(storage)
 	if err != nil {
@@ -61,12 +61,7 @@ func DecodeFeedState(storage []scval.ScMapEntry) (FeedState, error) {
 	if s.Assets, err = decodeAssetVec(str["assets"]); err != nil {
 		return FeedState{}, fmt.Errorf("%w: feed assets: %w", ErrConfig, err)
 	}
-	for a, idx := range index {
-		if int(idx) >= len(s.Assets) || s.Assets[idx] != a {
-			return FeedState{}, fmt.Errorf("%w: feed index entry %s = %d does not match the assets list", ErrConfig, a, idx)
-		}
-	}
-	s.Indexed = index
+	s.LegacyIndex = index
 	if v, ok := str["history"]; ok {
 		if s.History, err = scval.AsBytes(v); err != nil {
 			return FeedState{}, fmt.Errorf("%w: feed history: %w", ErrConfig, err)
@@ -168,13 +163,14 @@ func decodeFeedCache(v scval.ScVal) ([]CachedRound, error) {
 	return out, nil
 }
 
-// AssetIndex is the asset's index from its instance index entry; listed reports whether the asset is in the feed's
-// list at all, so a listed asset with no entry can be told from one the feed does not quote.
-func (s FeedState) AssetIndex(a Asset) (index uint32, indexed, listed bool) {
-	if idx, ok := s.Indexed[a]; ok {
-		return idx, true, true
+// AssetIndex is assets.rs::resolve_asset_index, load_all_assets(e).first_index_of(asset); ok=false when not listed.
+func (s FeedState) AssetIndex(a Asset) (uint32, bool) {
+	for i, x := range s.Assets {
+		if x == a {
+			return uint32(i), true
+		}
 	}
-	return 0, false, containsAsset(s.Assets, a)
+	return 0, false
 }
 
 // HasPrice is mapping.rs::check_history_updated: whether the asset was priced `period` periods before the last round.

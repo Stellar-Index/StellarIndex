@@ -239,12 +239,9 @@ func newFeedQuery(feed Feed, rule AssetRule) (feedQuery, *Result) {
 		// price_oracle.rs:212-214: v7.1 quotes its base as 1 at the last round; not modelled.
 		return feedQuery{}, verdictPtr(VerdictUnsupported, "%s is feed %s's own base asset", rule.FeedAsset, rule.Feed)
 	}
-	idx, indexed, listed := st.AssetIndex(rule.FeedAsset)
-	switch {
-	case !listed:
+	idx, ok := st.AssetIndex(rule.FeedAsset)
+	if !ok {
 		return feedQuery{}, verdictPtr(VerdictFeedAssetUnknown, "feed %s does not quote %s", rule.Feed, rule.FeedAsset)
-	case !indexed:
-		return feedQuery{}, verdictPtr(VerdictUnsupported, "feed %s lists %s without an instance index entry", rule.Feed, rule.FeedAsset)
 	}
 	return feedQuery{feed: feed, asset: rule.FeedAsset, index: idx}, nil
 }

@@ -65,12 +65,9 @@ func consistent(lastS, resMs uint64, prices map[uint64]*big.Int) Feed {
 		Program: FeedReflectorV7,
 		State: FeedState{
 			LastTimestampMs: lastS * 1000, ResolutionMs: resMs, Decimals: 14, Protocol: ReflectorProtocol,
-			Base: Asset{Symbol: "USD"}, Assets: feedAssets, Indexed: map[Asset]uint32{}, History: make([]byte, 32*len(feedAssets)),
+			Base: Asset{Symbol: "USD"}, Assets: feedAssets, History: make([]byte, 32*len(feedAssets)),
 		},
 		Prices: prices,
-	}
-	for i, a := range feedAssets {
-		f.State.Indexed[a] = uint32(i)
 	}
 	for ts := range prices {
 		if ts > f.StoredLastRoundMs {
@@ -206,7 +203,11 @@ func TestLastPriceV2(t *testing.T) {
 		{name: "feed program unknown", cfg: cfg, asset: xlm, t: r, feed: Feed{}, verdict: VerdictUnsupported},
 		{name: "feed asset is the feed base", cfg: cfg, asset: xlm, t: r, feed: withBase(feed(r, nil), Asset{Symbol: "XLM"}), verdict: VerdictUnsupported},
 		{name: "feed does not quote the asset", cfg: cfg, asset: xlm, t: r, feed: withAssets(feed(r, nil), Asset{Symbol: "BTC"}), verdict: VerdictFeedAssetUnknown},
-		{name: "listed without an index entry", cfg: cfg, asset: xlm, t: r, feed: unindexed(feed(r, nil), Asset{Symbol: "XLM"}), verdict: VerdictUnsupported},
+		// assets.rs:31 resolves by list position; a legacy index entry does not move it.
+		{
+			name: "legacy index entry ignored", cfg: cfg, asset: xlm, t: r,
+			feed: withLegacyIndex(feed(r, map[uint64]int64{r: 1e14, r - 300: 1e14})), price: "10000000", ts: r,
+		},
 		{name: "storage protocol 1", cfg: cfg, asset: xlm, t: r, feed: withProtocol(feed(r, nil), 1), verdict: VerdictUnsupported},
 		{
 			name: "max_age above the ledger time traps", cfg: cfg, asset: xlm, t: 899,
@@ -217,22 +218,13 @@ func TestLastPriceV2(t *testing.T) {
 
 func withBase(f Feed, b Asset) Feed { f.State.Base = b; return f }
 
-func withAssets(f Feed, a ...Asset) Feed {
-	f.State.Assets, f.State.Indexed = a, map[Asset]uint32{}
-	for i, x := range a {
-		f.State.Indexed[x] = uint32(i)
-	}
-	return f
-}
+func withAssets(f Feed, a ...Asset) Feed { f.State.Assets = a; return f }
 
-func unindexed(f Feed, a Asset) Feed {
-	idx := map[Asset]uint32{}
-	for k, v := range f.State.Indexed {
-		if k != a {
-			idx[k] = v
-		}
-	}
-	f.State.Indexed = idx
+// withLegacyIndex gives XLM a stale legacy entry pointing at BTC's slot, whose history is cleared: resolving by
+// the entry would read "never priced" against our XLM rows.
+func withLegacyIndex(f Feed) Feed {
+	f.State.LegacyIndex = map[Asset]uint32{{Symbol: "XLM"}: 2}
+	clear(f.State.History[2*32 : 3*32])
 	return f
 }
 
