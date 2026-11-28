@@ -68,6 +68,7 @@ var nightlyOnlyIntegrationImports = map[string]string{
 	"internal/sources/aquarius":                  nightlyUnitTested,
 	"internal/sources/band":                      nightlyUnitTested,
 	"internal/sources/blend":                     nightlyUnitTested,
+	"internal/sources/blend/oracleagg":           nightlyUnitTested,
 	"internal/sources/blnt":                      nightlyUnitTested,
 	"internal/sources/cctp":                      nightlyUnitTested,
 	"internal/sources/classicmovements":          nightlyUnitTested,

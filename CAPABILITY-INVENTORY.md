@@ -38,6 +38,7 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 - i128/u128/u256 → amount → `AsAmountFromI128`/`AsAmountFromU128`/`AsAmountFromU256` (never `int64(parts.Lo)`)
 - map/vec/tuple/address/symbol/… → `AsMap`, `MapField`, `MustMapField` (decode-by-NAME, schema-safe), `AsVec`, `AsTupleN`, `AsAddressStrkey`, `AsSymbol`, `AsString`, `AsU32/U64`, `AsBytes`, `AsBool`
 - Encode call args → `EncodeArgsAsScVec`, `DecodeScVecToArgs`
+- Build a storage key without importing xdr → `NewSymbol`, `NewVec` (enum variant = `NewVec(NewSymbol(tag), args...)`), `NewContractAddress`, `NewU32`
 
 ## XDR ledger/op JSON — `internal/xdrjson`  ⚠ (was absent from AGENTS.md)
 - Decode classic op body → `xdrjson.DecodeOperationBody(bodyB64)`
@@ -86,6 +87,8 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 - Served tier (Timescale/PG) → `timescale.Open(ctx, dsn)` → `*Store`
 - One daemon per database → `Store.HoldInstanceLock(ctx, name, onLost, logger)` (session advisory lock, re-verified; indexer + aggregator use it)
 - ClickHouse lake → `clickhouse.NewExplorerReader`, `NewSupplyReader`, `clickhouse.Open` (sink), `NewLiveSink`
+- A contract's current entries by exact key → `ExplorerReader.ContractInstanceStorage`, `ContractPersistentEntry` (archived = error, never absent); its current WASM hash → `ContractWasmHash`
+- A lending pool's own-oracle price (Blend `oracle-aggregator` v1/v2 only) → `oracleagg.ProgramForHash` gate, `DecodeV2Instance`/`DecodeV1`, pure `oracleagg.LastPrice` over `Store.OracleFeedRounds` (keyed on the feed contract); API glue `poolOraclePrices` (`internal/api/v1/lending_oracle_price.go`)
 - Redis client from config → `redisclient.Build(cfg)`, `redisclient.Mode(cfg)` ⚠ (not in AGENTS.md; handles sentinel vs single; installs the command-error metrics hook — never construct a go-redis client directly)
 
 ## Ingest / decode — `ledgerstream`, `dispatcher`, `pipeline`, `projector`

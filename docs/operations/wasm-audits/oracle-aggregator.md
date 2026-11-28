@@ -69,6 +69,23 @@ Verdicts, one per None or panic: `oracle_asset_missing`, `oracle_asset_blocked`,
 `oracle_price_absent` (v1: the asset sat out the last round), `oracle_deviation`,
 `oracle_deviation_unverifiable` (v2: no earlier period), plus `oracle_unsupported` and `oracle_read_failed`.
 
+## Read path
+
+`poolOraclePrices` (`internal/api/v1/lending_oracle_price.go`), per pool:
+
+1. The oracle's current WASM hash (`ExplorerReader.ContractWasmHash`) must be one of the two builds; the hash, the
+   decoded config and each feed's build are cached per (server, oracle) and re-read whenever the lake watermark
+   moves. A read failure is `oracle_read_failed` and is not cached.
+2. The evaluation ledger is the lake watermark, held back to each feed's `projector` cursor when that is behind,
+   since an unwritten round would make the recipe read an older one; its close time is `t`.
+3. Feed rows come from `Store.OracleFeedRounds`, keyed on the feed CONTRACT from the adapter config, every stored
+   identity of the feed asset (`canonical.AssetAliasStrings`), a bounded `ts` window and `ledger <= L`. The feed's
+   last round counts every row of the contract, raw ones included; a raw row never prices, and a feed symbol that
+   maps only to `raw:` is `oracle_unsupported`. A v1 window is 24 h, the pool's own price bound.
+4. The quote is the adapter's base, served verbatim: `fiat:USD`, or the USDC SAC for `CDN7JD6S`.
+
+Verdicts per pool and reason: `stellarindex_lending_oracle_verdicts_total{pool,reason}`.
+
 ## Not verified, and modelled as explicit inputs
 
 - **Feed resolution.** Reflector normalises by its own live resolution; the adapter steps by the copy it cached.

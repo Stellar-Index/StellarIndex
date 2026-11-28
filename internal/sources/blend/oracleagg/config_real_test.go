@@ -234,6 +234,19 @@ func TestDecode_RejectsUnknownKeys(t *testing.T) {
 	}
 }
 
+// A feed symbol the decoder stores as raw:<symbol> has no key: raw rows never price.
+func TestFeedAssetKey(t *testing.T) {
+	if k, err := FeedAssetKey(Asset{Symbol: "XLM"}); err != nil || k.String() != "crypto:XLM" {
+		t.Fatalf("Other(XLM) = %v, %v", k, err)
+	}
+	if k, err := FeedAssetKey(Stellar(xlmSAC)); err != nil || k.String() != xlmSAC {
+		t.Fatalf("Stellar(XLM SAC) = %v, %v", k, err)
+	}
+	if k, err := FeedAssetKey(Asset{Symbol: "ZZQ1"}); err == nil {
+		t.Fatalf("unmapped symbol keyed as %s", k)
+	}
+}
+
 func TestProgramForHash_RejectsForeign(t *testing.T) {
 	// The Blend V2 pool WASM: a real contract, not an audited adapter.
 	if p := ProgramForHash("a41fc53d6753b6c04eb15b021c55052366a4c8e0e21bc72700f461264ec1350e"); p != ProgramUnknown {
